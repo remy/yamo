@@ -18,6 +18,23 @@ import (
 //     point backwards and are unaffected.
 //  3. Otherwise rebuild the file and patch every chunk offset by the delta.
 func writeMP4(path string, e *Edit) error {
+	return updateMP4(path, func(items []mp4Item, cur *Metadata) []mp4Item {
+		return applyEditToILST(items, e, cur)
+	})
+}
+
+// mp4Item is one entry of the iTunes metadata item list.
+type mp4Item struct {
+	Name string // atom name, or "----" for a freeform item
+	Body []byte // the item's contents, excluding its own atom header
+}
+
+// mp4Mutator rewrites the item list. cur holds the values already in the file,
+// so an edit can merge against them.
+type mp4Mutator func(items []mp4Item, cur *Metadata) []mp4Item
+
+// updateMP4 rewrites an MP4 file's metadata item list.
+func updateMP4(path string, mutate mp4Mutator) error {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
@@ -47,7 +64,7 @@ func writeMP4(path string, e *Edit) error {
 	if _, err := f.ReadAt(old, moov.off); err != nil && err != io.EOF {
 		return err
 	}
-	newMoov, err := rebuildMoov(old, e)
+	newMoov, err := rebuildMoov(old, mutate)
 	if err != nil {
 		return err
 	}
@@ -157,7 +174,7 @@ func atom(typ string, body ...[]byte) []byte {
 
 // rebuildMoov returns a new moov atom with the edit applied to its ilst,
 // creating the udta/meta/ilst chain if the file has none.
-func rebuildMoov(moov []byte, e *Edit) ([]byte, error) {
+func rebuildMoov(moov []byte, mutate mp4Mutator) ([]byte, error) {
 	if len(moov) < 8 || string(moov[4:8]) != "moov" {
 		return nil, errors.New("tags: expected a moov atom")
 	}
@@ -172,7 +189,7 @@ func rebuildMoov(moov []byte, e *Edit) ([]byte, error) {
 			return true
 		}
 		sawUdta = true
-		rebuilt, err := rebuildUdta(b, e)
+		rebuilt, err := rebuildUdta(b, mutate)
 		if err != nil {
 			walkErr = err
 			return false
@@ -184,7 +201,7 @@ func rebuildMoov(moov []byte, e *Edit) ([]byte, error) {
 		return nil, walkErr
 	}
 	if !sawUdta {
-		rebuilt, err := rebuildUdta(nil, e)
+		rebuilt, err := rebuildUdta(nil, mutate)
 		if err != nil {
 			return nil, err
 		}
@@ -193,7 +210,7 @@ func rebuildMoov(moov []byte, e *Edit) ([]byte, error) {
 	return atom("moov", children...), nil
 }
 
-func rebuildUdta(udta []byte, e *Edit) ([]byte, error) {
+func rebuildUdta(udta []byte, mutate mp4Mutator) ([]byte, error) {
 	var children [][]byte
 	sawMeta := false
 	walkAtoms(udta, func(typ string, b []byte) bool {
@@ -202,11 +219,11 @@ func rebuildUdta(udta []byte, e *Edit) ([]byte, error) {
 			return true
 		}
 		sawMeta = true
-		children = append(children, rebuildMeta(b, e))
+		children = append(children, rebuildMeta(b, mutate))
 		return true
 	})
 	if !sawMeta {
-		children = append(children, rebuildMeta(nil, e))
+		children = append(children, rebuildMeta(nil, mutate))
 	}
 	return atom("udta", children...), nil
 }
@@ -221,7 +238,7 @@ func mdirHandler() []byte {
 	return atom("hdlr", body)
 }
 
-func rebuildMeta(meta []byte, e *Edit) []byte {
+func rebuildMeta(meta []byte, mutate mp4Mutator) []byte {
 	// meta is a full box: four bytes of version and flags precede its children.
 	versionFlags := []byte{0, 0, 0, 0}
 	var rest []byte
@@ -236,7 +253,7 @@ func rebuildMeta(meta []byte, e *Edit) []byte {
 		switch typ {
 		case "ilst":
 			sawIlst = true
-			children = append(children, rebuildILST(b, e))
+			children = append(children, rebuildILST(b, mutate))
 		case "hdlr":
 			sawHdlr = true
 			children = append(children, atom(typ, b))
@@ -249,20 +266,37 @@ func rebuildMeta(meta []byte, e *Edit) []byte {
 		children = append([][]byte{mdirHandler()}, children...)
 	}
 	if !sawIlst {
-		children = append(children, rebuildILST(nil, e))
+		children = append(children, rebuildILST(nil, mutate))
 	}
 	return atom("meta", append([][]byte{versionFlags}, children...)...)
 }
 
-// rebuildILST applies the edit to the item list, keeping unrecognised items.
-func rebuildILST(ilst []byte, e *Edit) []byte {
+// rebuildILST parses the item list, hands it to the mutator, and re-serialises
+// whatever comes back.
+func rebuildILST(ilst []byte, mutate mp4Mutator) []byte {
 	var cur Metadata
+	var items []mp4Item
 	if ilst != nil {
 		parseILST(ilst, &cur)
+		walkAtoms(ilst, func(typ string, body []byte) bool {
+			items = append(items, mp4Item{Name: typ, Body: body})
+			return true
+		})
 	}
+	out := mutate(items, &cur)
 
-	// Collect the replacements this edit implies, keyed by atom name. An entry
-	// present with a nil value means "delete".
+	encoded := make([][]byte, 0, len(out))
+	for _, it := range out {
+		encoded = append(encoded, atom(it.Name, it.Body))
+	}
+	return atom("ilst", encoded...)
+}
+
+// applyEditToILST folds an edit into the item list, keeping every item the
+// edit does not mention.
+func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
+	// Replacements keyed by atom name. A key present with a nil value means
+	// the item should be dropped.
 	repl := map[string][]byte{}
 	setText := func(name string, v *string) {
 		if v == nil {
@@ -272,7 +306,7 @@ func rebuildILST(ilst []byte, e *Edit) []byte {
 			repl[name] = nil
 			return
 		}
-		repl[name] = mp4TextItem(name, *v)
+		repl[name] = mp4TextBody(*v)
 	}
 	setText(atomTitle, e.Title)
 	setText(atomArtist, e.Artist)
@@ -283,44 +317,40 @@ func rebuildILST(ilst []byte, e *Edit) []byte {
 
 	if e.Genre != nil {
 		setText(atomGenreText, e.Genre)
-		repl[atomGenreID] = nil // the numeric genre would shadow the text one
+		repl[atomGenreID] = nil // a numeric genre would shadow the text one
 	}
 	if e.Year != nil {
 		if *e.Year > 0 {
-			repl[atomDate] = mp4TextItem(atomDate, itoa(int64(*e.Year)))
+			repl[atomDate] = mp4TextBody(itoa(int64(*e.Year)))
 		} else {
 			repl[atomDate] = nil
 		}
 	}
 	if e.Track != nil || e.TrackTotal != nil {
-		n, t := pick(e.Track, cur.Track), pick(e.TrackTotal, cur.TrackTotal)
-		repl[atomTrack] = mp4NumberItem(atomTrack, n, t, 8)
+		repl[atomTrack] = mp4NumberBody(pick(e.Track, cur.Track), pick(e.TrackTotal, cur.TrackTotal), 8)
 	}
 	if e.Disc != nil || e.DiscTotal != nil {
-		n, t := pick(e.Disc, cur.Disc), pick(e.DiscTotal, cur.DiscTotal)
-		repl[atomDisc] = mp4NumberItem(atomDisc, n, t, 6)
+		repl[atomDisc] = mp4NumberBody(pick(e.Disc, cur.Disc), pick(e.DiscTotal, cur.DiscTotal), 6)
 	}
 
-	var items [][]byte
+	out := make([]mp4Item, 0, len(items)+len(repl))
 	seen := map[string]bool{}
-	walkAtoms(ilst, func(typ string, b []byte) bool {
-		if v, ok := repl[typ]; ok {
-			if !seen[typ] && v != nil {
-				items = append(items, v)
+	for _, it := range items {
+		if v, ok := repl[it.Name]; ok {
+			if !seen[it.Name] && v != nil {
+				out = append(out, mp4Item{Name: it.Name, Body: v})
 			}
-			seen[typ] = true
-			return true // replaced or dropped
+			seen[it.Name] = true
+			continue
 		}
-		items = append(items, atom(typ, b))
-		return true
-	})
-	// Append the items that were not already present.
+		out = append(out, it)
+	}
 	for _, name := range ilstOrder {
 		if v, ok := repl[name]; ok && !seen[name] && v != nil {
-			items = append(items, v)
+			out = append(out, mp4Item{Name: name, Body: v})
 		}
 	}
-	return atom("ilst", items...)
+	return out
 }
 
 // ilstOrder gives newly added items a deterministic order.
@@ -336,17 +366,17 @@ func pick(v *int32, cur int32) int32 {
 	return cur
 }
 
-// mp4TextItem builds a metadata item holding UTF-8 text.
-func mp4TextItem(name, value string) []byte {
+// mp4TextBody builds the body of a metadata item holding UTF-8 text.
+func mp4TextBody(value string) []byte {
 	data := make([]byte, 8, 8+len(value))
 	binary.BigEndian.PutUint32(data[0:4], 1) // well-known type 1: UTF-8
 	data = append(data, value...)
-	return atom(name, atom("data", data))
+	return atom("data", data)
 }
 
-// mp4NumberItem builds a trkn or disk item. Apple writes eight bytes for
-// trkn and six for disk, and some players are fussy about it.
-func mp4NumberItem(name string, num, total int32, payloadLen int) []byte {
+// mp4NumberBody builds the body of a trkn or disk item. Apple writes eight
+// bytes for trkn and six for disk, and some players are fussy about it.
+func mp4NumberBody(num, total int32, payloadLen int) []byte {
 	if num <= 0 && total <= 0 {
 		return nil
 	}
@@ -354,7 +384,7 @@ func mp4NumberItem(name string, num, total int32, payloadLen int) []byte {
 	// Type 0 marks the payload as implicit/binary rather than text.
 	binary.BigEndian.PutUint16(data[8+2:8+4], uint16(clampU16(num)))
 	binary.BigEndian.PutUint16(data[8+4:8+6], uint16(clampU16(total)))
-	return atom(name, atom("data", data))
+	return atom("data", data)
 }
 
 func clampU16(v int32) int32 {

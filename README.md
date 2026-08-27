@@ -126,8 +126,8 @@ an interrupted write cannot leave a damaged track.
 
 ### Stripping
 
-`tagmgr strip` removes every ID3v2 frame that is not on a fixed keep list,
-leaving a uniform tag across the library.
+`tagmgr strip` removes every tag that is not on a keep list, leaving a uniform
+set of metadata across the library.
 
 ```sh
 tagmgr strip                                    # dry run over everything
@@ -138,44 +138,72 @@ tagmgr restore -backup ~/strip.jsonl -apply     # put it all back
 ```
 
 It is a **dry run unless `-apply` is given**, and the dry run reports exactly
-what would go, grouped by frame, with sample values:
+what would go, grouped by format and key, with sample values:
 
 ```
-frame     files       bytes  meaning
-COMM         22     2.7 KiB  comment  ·  iTunSMPB: 00000000 00000210 0000… / iTunNORM:…
-TENC         11       253 B  encoded by  ·  iTunes v4.9 / iTunes v4.2
+fmt   key                       files       bytes  meaning
+flac  DESCRIPTION                   1        24 B  free-text comment  ·  strip me
+mp3   TSSE                          1        24 B  encoder name and settings  ·  Lavf61.7.100
+mp3   TXXX:comment                  1        28 B  free-text comment  ·  comment=strip me
+mp4   ©cmt                          1        32 B  free-text comment  ·  strip me
 ```
 
-The default keep list is sixteen frames — the ones that identify a song, plus
-the ones a library needs to group and sort correctly:
+#### One list, every format
 
-| | |
-| --- | --- |
-| Identity | `TIT2` `TPE1` `TALB` `TPE2` `TRCK` `TPOS` `TCON` `TDRC` `TYER` |
-| Behaviour | `TCMP` `TSOT` `TSOP` `TSOA` `TSO2` `TCOM` `APIC` |
+The keep list is written in canonical names rather than in the identifiers any
+one container uses, so the same list applies everywhere. An album artist is
+kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 
-`TCMP` is the compilation flag; without it a Various Artists album fragments
-into one album per track. The `TSO*` frames are sort orders, which put "The
-Beatles" under B. Change the list with `-keep` or extend it with `-also`.
+| tag | mp3 | flac / ogg / opus | mp4 |
+| --- | --- | --- | --- |
+| `title` | TIT2 | TITLE | ©nam |
+| `artist` | TPE1 | ARTIST PERFORMER | ©ART |
+| `album` | TALB | ALBUM | ©alb |
+| `albumartist` | TPE2 | ALBUMARTIST, ALBUM ARTIST | aART |
+| `track` | TRCK | TRACKNUMBER, TOTALTRACKS | trkn |
+| `disc` | TPOS | DISCNUMBER, TOTALDISCS | disk |
+| `genre` | TCON | GENRE | ©gen, gnre |
+| `date` | TDRC, TYER | DATE, YEAR | ©day |
+| `compilation` | TCMP | COMPILATION | cpil |
+| `composer` | TCOM | COMPOSER | ©wrt |
+| `titlesort` | TSOT | TITLESORT | sonm |
+| `artistsort` | TSOP | ARTISTSORT | soar |
+| `albumsort` | TSOA | ALBUMSORT | soal |
+| `albumartistsort` | TSO2 | ALBUMARTISTSORT | soaa |
+| `artwork` | APIC | METADATA_BLOCK_PICTURE | covr |
 
-Everything else goes: encoder signatures, comments, private blobs, URLs,
-ratings, and external identifiers such as MusicBrainz IDs. Two consequences
-are worth knowing before running it:
+`compilation` is the flag that stops a Various Artists album fragmenting into
+one album per track. The sort tags are what put "The Beatles" under B.
 
-- **`COMM` carries iTunes internals as well as real comments.** `iTunSMPB` is
-  gapless-playback data; removing it breaks gapless on live albums and DJ
-  mixes. Keep it with `-also COMM`, which keeps every comment frame — the keep
-  list works on frame identifiers, not on comment descriptions.
-- **MusicBrainz and AcoustID identifiers are not regenerable** from the audio
-  alone. They live in `TXXX` and `UFID` frames and are removed by default.
+Change the list with `-keep`, extend it with `-also`. Names may be canonical
+(`albumartist`) or native to any format (`TPE2`, `ALBUMARTIST`, `aART`) — you
+should not have to translate a list you already have. `tagmgr strip -list`
+prints the full vocabulary.
 
-Because the tag only ever shrinks, the rewrite happens inside the existing
-padding: the file size does not change and no audio is moved. Stripping the
-whole library is bounded by the cost of one small write per file.
+#### What goes, and what that costs
 
-ID3v2.2 tags are rewritten as v2.3, but only for files that actually lose a
-frame. The frames are translated first, so a v2.2 `TP1` is recognised as an
+Everything else: encoder signatures, comments, private blobs, URLs, ratings,
+and external identifiers. Two consequences are worth knowing beforehand:
+
+- **Comments are not one thing.** iTunes hides private data among them —
+  `iTunSMPB` is gapless-playback information, and losing it breaks gapless on
+  live albums and DJ mixes. The tags are resolved by description rather than by
+  container key, so `-also gapless` keeps exactly that and still drops ordinary
+  comments.
+- **MusicBrainz and AcoustID identifiers are not regenerable** from the audio.
+  `-also musicbrainz,acoustid` keeps them.
+
+Because the metadata only ever shrinks, the rewrite happens inside the padding
+each format reserves: verified on real files, tag and file sizes come out
+byte-identical afterwards and no audio is moved. Stripping a whole library is
+bounded by one small write per file.
+
+ID3v2.2 tags are rewritten as v2.3, but only for files that actually lose
+something. The frames are translated first, so a v2.2 `TP1` is recognised as an
 artist and kept.
+
+WMA, WAV and AIFF are read but not written, so they are counted and skipped
+rather than silently ignored.
 
 ## Format support
 
@@ -260,8 +288,8 @@ python3 -m venv .venv && ./.venv/bin/pip install pyte
 ## Limitations
 
 - WMA, WAV and AIFF are read but not written.
-- `strip` and `restore` handle MP3 only; other formats in the catalogue are
-  counted and skipped.
+- `strip` and `restore` cover MP3, FLAC, MP4, Ogg Vorbis and Opus. WMA, WAV
+  and AIFF are read but not written, so they are reported and skipped.
 - Cover art is detected but not displayed or edited.
 - The catalogue is not watched; run `tagmgr scan` after adding music.
 - One catalogue at a time; use `-catalog` to keep several.

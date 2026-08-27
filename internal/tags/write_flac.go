@@ -12,8 +12,30 @@ const flacPadding = 1 // PADDING block type
 // later edits can be applied in place rather than rewriting the audio.
 const newFlacPadding = 4096
 
+// flacMutator rewrites a FLAC file's metadata. It receives the parsed Vorbis
+// comment and the file's other metadata blocks, and returns the blocks to keep
+// alongside it. Returning changed false leaves the file untouched.
+type flacMutator func(vc *vorbisComment, other []flacBlock) (keep []flacBlock, changed bool)
+
 // writeFLAC applies an edit to a FLAC file's Vorbis comment block.
 func writeFLAC(path string, e *Edit) error {
+	return updateFLAC(path, func(vc *vorbisComment, other []flacBlock) ([]flacBlock, bool) {
+		var cur Metadata
+		vc.applyTo(&cur)
+		applyEditToVorbis(vc, e, &cur)
+		return other, true
+	})
+}
+
+// updateFLAC reads a FLAC file's metadata region, hands it to mutate, and
+// writes the result back.
+//
+// Where the rebuilt region is the same length as the old one — or can be made
+// so by resizing the padding block the format reserves for exactly this — the
+// write is a single pwrite over the head of the file and the audio never
+// moves. That matters here more than anywhere else: FLAC files are large, and
+// rewriting one to change a text field would be absurd.
+func updateFLAC(path string, mutate flacMutator) error {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return err
@@ -26,55 +48,50 @@ func writeFLAC(path string, e *Edit) error {
 	}
 	size := fi.Size()
 
-	region, blocks, audioStart, err := readFLACMetadata(f, size)
+	blocks, audioStart, err := readFLACMetadata(f, size)
 	if err != nil {
 		return err
 	}
-	_ = region
 
-	// Locate or synthesise the comment block.
+	// Split the comment block out from the rest; a file without one gets an
+	// empty comment so an edit has somewhere to land.
 	vc := &vorbisComment{vendor: "tagmgr"}
+	other := make([]flacBlock, 0, len(blocks))
 	for _, b := range blocks {
-		if b.typ == flacVorbisComment {
+		switch b.typ {
+		case flacVorbisComment:
 			if parsed, ok := parseVorbisComment(b.body); ok {
 				vc = parsed
 			}
-			break
+		case flacPadding:
+			// Dropped here and recalculated after the new size is known.
+		default:
+			other = append(other, b)
 		}
 	}
-	var cur Metadata
-	vc.applyTo(&cur)
-	applyEditToVorbis(vc, e, &cur)
+
+	keep, changed := mutate(vc, other)
+	if !changed {
+		return nil
+	}
 	commentBody := encodeVorbisComment(vc)
 
-	// Rebuild the block list: existing blocks in order, the comment block
-	// replaced, and padding dropped so it can be recalculated.
+	// STREAMINFO must come first; the comment block goes immediately after it.
 	type outBlock struct {
 		typ  byte
 		body []byte
 	}
-	out := make([]outBlock, 0, len(blocks)+1)
-	wroteComment := false
-	for _, b := range blocks {
-		switch b.typ {
-		case flacPadding:
-			continue
-		case flacVorbisComment:
-			out = append(out, outBlock{typ: flacVorbisComment, body: commentBody})
-			wroteComment = true
-		default:
+	out := make([]outBlock, 0, len(keep)+1)
+	for _, b := range keep {
+		if b.typ == flacStreamInfo {
 			out = append(out, outBlock{typ: b.typ, body: b.body})
 		}
 	}
-	if !wroteComment {
-		// STREAMINFO must stay first, so insert immediately after it.
-		at := 0
-		if len(out) > 0 && out[0].typ == flacStreamInfo {
-			at = 1
+	out = append(out, outBlock{typ: flacVorbisComment, body: commentBody})
+	for _, b := range keep {
+		if b.typ != flacStreamInfo {
+			out = append(out, outBlock{typ: b.typ, body: b.body})
 		}
-		out = append(out, outBlock{})
-		copy(out[at+1:], out[at:])
-		out[at] = outBlock{typ: flacVorbisComment, body: commentBody}
 	}
 
 	content := 0
@@ -82,8 +99,9 @@ func writeFLAC(path string, e *Edit) error {
 		content += 4 + len(b.body)
 	}
 
-	// Decide the padding size. Keeping the metadata region byte-identical in
-	// length means the audio never moves and the write is a single pwrite.
+	// Keeping the metadata region the same length means the audio stays put.
+	// A leftover of one to three bytes cannot hold a padding block header, so
+	// only an exact fit or four bytes upward can be absorbed.
 	oldContent := int(audioStart) - 4
 	padding := -1
 	if slack := oldContent - content; slack == 0 || slack >= 4 {
@@ -125,7 +143,7 @@ func appendFLACBlock(dst []byte, typ byte, body []byte, last bool) []byte {
 
 // readFLACMetadata reads the complete metadata region, growing the read until
 // the block chain terminates.
-func readFLACMetadata(f *os.File, size int64) (region []byte, blocks []flacBlock, audioStart int64, err error) {
+func readFLACMetadata(f *os.File, size int64) (blocks []flacBlock, audioStart int64, err error) {
 	n := int64(64 << 10)
 	for {
 		if n > size {
@@ -133,20 +151,20 @@ func readFLACMetadata(f *os.File, size int64) (region []byte, blocks []flacBlock
 		}
 		buf := make([]byte, n)
 		if _, err := f.ReadAt(buf, 0); err != nil && err != io.EOF {
-			return nil, nil, 0, err
+			return nil, 0, err
 		}
 		bs, start, truncated, ok := flacBlocks(buf)
 		if !ok {
-			return nil, nil, 0, errors.New("tags: not a FLAC file")
+			return nil, 0, errors.New("tags: not a FLAC file")
 		}
 		if !truncated {
-			return buf[:start], bs, int64(start), nil
+			return bs, int64(start), nil
 		}
 		if n >= size {
-			return nil, nil, 0, errors.New("tags: truncated FLAC metadata")
+			return nil, 0, errors.New("tags: truncated FLAC metadata")
 		}
 		if n > maxHeadSize {
-			return nil, nil, 0, errors.New("tags: FLAC metadata too large")
+			return nil, 0, errors.New("tags: FLAC metadata too large")
 		}
 		n *= 4
 	}

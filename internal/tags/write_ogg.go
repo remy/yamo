@@ -43,6 +43,20 @@ func oggCRC(b []byte) uint32 {
 // header pages, so changing its length re-paginates the stream and every later
 // page needs renumbering. The whole file is therefore rewritten.
 func writeOgg(path string, e *Edit) error {
+	return updateOgg(path, func(vc *vorbisComment) bool {
+		var cur Metadata
+		vc.applyTo(&cur)
+		applyEditToVorbis(vc, e, &cur)
+		return true
+	})
+}
+
+// oggMutator rewrites an Ogg stream's comment header. Returning false leaves
+// the file untouched.
+type oggMutator func(vc *vorbisComment) bool
+
+// updateOgg rewrites an Ogg Vorbis or Opus file's comment header.
+func updateOgg(path string, mutate oggMutator) error {
 	src, err := os.Open(path)
 	if err != nil {
 		return err
@@ -78,9 +92,12 @@ func writeOgg(path string, e *Edit) error {
 	}
 
 	// Rewrite the comment packet, which is always the second one.
-	rewritten, err := rewriteCommentPacket(packets[1], e)
+	rewritten, changed, err := rewriteCommentPacket(packets[1], mutate)
 	if err != nil {
 		return err
+	}
+	if !changed {
+		return nil
 	}
 	packets[1] = rewritten
 
@@ -207,9 +224,9 @@ func collectHeaderPackets(pr *pageReader, first *rawPage, serial uint32, want in
 	}
 }
 
-// rewriteCommentPacket rebuilds the comment header with the edit applied,
+// rewriteCommentPacket rebuilds the comment header with the mutation applied,
 // keeping the codec's magic prefix and framing.
-func rewriteCommentPacket(pkt []byte, e *Edit) ([]byte, error) {
+func rewriteCommentPacket(pkt []byte, mutate oggMutator) ([]byte, bool, error) {
 	var prefix []byte
 	var body []byte
 	framing := false
@@ -220,16 +237,16 @@ func rewriteCommentPacket(pkt []byte, e *Edit) ([]byte, error) {
 	case bytes.HasPrefix(pkt, magicOpusTags):
 		prefix, body = pkt[:8], pkt[8:]
 	default:
-		return nil, errors.New("tags: second Ogg packet is not a comment header")
+		return nil, false, errors.New("tags: second Ogg packet is not a comment header")
 	}
 
 	vc, ok := parseVorbisComment(body)
 	if !ok {
 		vc = &vorbisComment{vendor: "tagmgr"}
 	}
-	var cur Metadata
-	vc.applyTo(&cur)
-	applyEditToVorbis(vc, e, &cur)
+	if !mutate(vc) {
+		return nil, false, nil
+	}
 
 	encoded := encodeVorbisComment(vc)
 	out := make([]byte, 0, len(prefix)+len(encoded)+1)
@@ -238,7 +255,7 @@ func rewriteCommentPacket(pkt []byte, e *Edit) ([]byte, error) {
 	if framing {
 		out = append(out, 1) // Vorbis comment headers end with a framing bit
 	}
-	return out, nil
+	return out, true, nil
 }
 
 // paginate writes packets as Ogg pages and returns how many it emitted.

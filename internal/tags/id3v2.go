@@ -264,10 +264,28 @@ func (t *id3Tag) applyTo(md *Metadata) {
 		case "APIC", "PIC":
 			md.HasArt = true
 		case "TXXX", "TXX":
+			// A user-defined frame is only as good as its description, and
+			// taggers put real metadata here routinely: ffmpeg writes both the
+			// comment and the compilation flag as TXXX rather than in the
+			// frames the specification provides.
 			desc, val := userText(f.payload)
-			switch strings.ToUpper(desc) {
-			case "ALBUMARTIST", "ALBUM ARTIST":
+			if val == "" {
+				break
+			}
+			t, _ := tagForDescription(desc)
+			switch t {
+			case TagAlbumArtist:
 				setIfEmpty(&md.AlbumArtist, val)
+			case TagComment:
+				setIfEmpty(&md.Comment, val)
+			case TagComposer:
+				setIfEmpty(&md.Composer, val)
+			case TagGenre:
+				setIfEmpty(&md.Genre, normaliseGenre(val))
+			case TagDate:
+				if md.Year == 0 {
+					md.Year = parseYear(val)
+				}
 			}
 		}
 	}

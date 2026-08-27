@@ -83,7 +83,7 @@ func cmdRestore(args []string) error {
 		go func() {
 			defer wg.Done()
 			for r := range jobs {
-				n, err := tags.RestoreID3v2(r.Path, r.Frames)
+				n, err := tags.RestoreFile(r.Path, r.Frames)
 				mu.Lock()
 				switch {
 				case err != nil:

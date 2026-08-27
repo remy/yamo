@@ -148,9 +148,9 @@ func has(ids []string, id string) bool {
 
 func TestStripKeepsOnlyTheKeepList(t *testing.T) {
 	path := kitchenSink(t, t.TempDir())
-	keep := NewKeepSet(DefaultKeepFrames)
+	keep := NewKeepSet(DefaultKeepTags)
 
-	rep, err := StripID3v2(path, keep, true)
+	rep, err := StripFile(path, keep, true)
 	if err != nil {
 		t.Fatalf("strip: %v", err)
 	}
@@ -160,11 +160,10 @@ func TestStripKeepsOnlyTheKeepList(t *testing.T) {
 	decodes(t, path)
 
 	got := frameIDs(t, path)
-	for _, want := range DefaultKeepFrames {
-		// TDRC is the v2.4 spelling; this fixture is v2.3 and uses TYER.
-		if want == "TDRC" {
-			continue
-		}
+	for _, want := range []string{
+		"TIT2", "TPE1", "TALB", "TPE2", "TRCK", "TPOS", "TCON", "TYER",
+		"TCMP", "TSOP", "TSOA", "TSOT", "TSO2", "TCOM", "APIC",
+	} {
 		if !has(got, want) {
 			t.Errorf("%s was removed but is on the keep list", want)
 		}
@@ -201,7 +200,7 @@ func TestStripDryRunWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rep, err := StripID3v2(path, NewKeepSet(DefaultKeepFrames), false)
+	rep, err := StripFile(path, NewKeepSet(DefaultKeepTags), false)
 	if err != nil {
 		t.Fatalf("strip: %v", err)
 	}
@@ -220,7 +219,7 @@ func TestStripDryRunWritesNothing(t *testing.T) {
 func TestStripRestoreRoundTrip(t *testing.T) {
 	path := kitchenSink(t, t.TempDir())
 
-	rep, err := StripID3v2(path, NewKeepSet(DefaultKeepFrames), true)
+	rep, err := StripFile(path, NewKeepSet(DefaultKeepTags), true)
 	if err != nil {
 		t.Fatalf("strip: %v", err)
 	}
@@ -229,7 +228,7 @@ func TestStripRestoreRoundTrip(t *testing.T) {
 		t.Fatal("nothing was removed")
 	}
 
-	n, err := RestoreID3v2(path, rep.Removed)
+	n, err := RestoreFile(path, rep.Removed)
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -256,7 +255,7 @@ func TestStripRestoreRoundTrip(t *testing.T) {
 	}
 
 	// Restoring twice must not duplicate anything.
-	again, err := RestoreID3v2(path, rep.Removed)
+	again, err := RestoreFile(path, rep.Removed)
 	if err != nil {
 		t.Fatalf("second restore: %v", err)
 	}
@@ -270,7 +269,7 @@ func TestStripRestoreRoundTrip(t *testing.T) {
 func TestStripUpgradesV22(t *testing.T) {
 	path := writeV22File(t, t.TempDir())
 
-	rep, err := StripID3v2(path, NewKeepSet(DefaultKeepFrames), true)
+	rep, err := StripFile(path, NewKeepSet(DefaultKeepTags), true)
 	if err != nil {
 		t.Fatalf("strip: %v", err)
 	}
@@ -302,14 +301,14 @@ func TestStripUpgradesV22(t *testing.T) {
 
 func TestStripNoTagAndNoChange(t *testing.T) {
 	dir := t.TempDir()
-	keep := NewKeepSet(DefaultKeepFrames)
+	keep := NewKeepSet(DefaultKeepTags)
 
 	// A file with no ID3v2 tag at all.
 	bare := filepath.Join(dir, "bare.mp3")
 	if err := os.WriteFile(bare, bareAudio(t), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	rep, err := StripID3v2(bare, keep, true)
+	rep, err := StripFile(bare, keep, true)
 	if err != nil {
 		t.Fatalf("strip: %v", err)
 	}
@@ -327,7 +326,7 @@ func TestStripNoTagAndNoChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rep, err = StripID3v2(clean, keep, true)
+	rep, err = StripFile(clean, keep, true)
 	if err != nil {
 		t.Fatalf("strip: %v", err)
 	}
@@ -343,12 +342,90 @@ func TestStripNoTagAndNoChange(t *testing.T) {
 	}
 }
 
-func TestKeepSetIsCaseInsensitive(t *testing.T) {
-	k := NewKeepSet([]string{"tit2", " TPE1 ", ""})
-	if !k["TIT2"] || !k["TPE1"] {
-		t.Errorf("keep set = %v", k.Sorted())
+// TestParseKeepSet checks that the list can be written in either vocabulary.
+func TestParseKeepSet(t *testing.T) {
+	k, unknown := ParseKeepSet([]string{"title", " TPE1 ", "", "AlbumArtist", "aART"})
+	if len(unknown) != 0 {
+		t.Fatalf("unexpected unknown names: %v", unknown)
 	}
-	if len(k) != 2 {
-		t.Errorf("blank entries should be ignored: %v", k.Sorted())
+	for _, want := range []Tag{TagTitle, TagArtist, TagAlbumArtist} {
+		if !k[want] {
+			t.Errorf("%s missing from %v", want.Name(), k.Sorted())
+		}
+	}
+	if len(k) != 3 {
+		t.Errorf("aART and AlbumArtist should resolve to one tag: %v", k.Sorted())
+	}
+	if _, unknown := ParseKeepSet([]string{"nonsense"}); len(unknown) != 1 {
+		t.Error("an unknown name should be reported")
+	}
+}
+
+// TestDescriptionsResolveSeparately is what lets gapless data be kept while
+// ordinary comments are dropped: both live in COMM.
+func TestDescriptionsResolveSeparately(t *testing.T) {
+	cases := []struct {
+		desc string
+		want Tag
+	}{
+		{"iTunSMPB", TagGapless},
+		{"iTunNORM", TagSoundCheck},
+		{"REPLAYGAIN_TRACK_GAIN", TagReplayGain},
+		{"MusicBrainz Album Id", TagMusicBrainz},
+		{"Acoustid Id", TagAcoustID},
+		{"ALBUMARTIST", TagAlbumArtist},
+	}
+	for _, c := range cases {
+		got, ok := tagForDescription(c.desc)
+		if !ok || got != c.want {
+			t.Errorf("tagForDescription(%q) = %v, want %v", c.desc, got.Name(), c.want.Name())
+		}
+	}
+	if _, ok := tagForDescription("something nobody has heard of"); ok {
+		t.Error("an unrecognised description should not resolve")
+	}
+
+	// A plain comment must still resolve as a comment, not as unknown.
+	p := append([]byte{encISO8859}, "eng"...)
+	p = append(p, 0)
+	p = append(p, "a real comment"...)
+	if got := tagForID3Frame("COMM", p); got != TagComment {
+		t.Errorf("plain COMM resolved to %v, want comment", got.Name())
+	}
+	gapless := append([]byte{encISO8859}, "eng"...)
+	gapless = append(gapless, "iTunSMPB"...)
+	gapless = append(gapless, 0, '0')
+	if got := tagForID3Frame("COMM", gapless); got != TagGapless {
+		t.Errorf("COMM:iTunSMPB resolved to %v, want gapless", got.Name())
+	}
+}
+
+// TestKeepGaplessOnly checks the case the report is meant to make actionable:
+// keeping iTunes gapless data without keeping every other comment.
+func TestKeepGaplessOnly(t *testing.T) {
+	path := kitchenSink(t, t.TempDir())
+	keep := NewKeepSet(append(append([]Tag{}, DefaultKeepTags...), TagGapless))
+
+	if _, err := StripFile(path, keep, true); err != nil {
+		t.Fatalf("strip: %v", err)
+	}
+	decodes(t, path)
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag, err := parseID3v2(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var descs []string
+	for _, f := range tag.frames {
+		if f.id == "COMM" {
+			descs = append(descs, id3CommentDescription(f.payload))
+		}
+	}
+	if len(descs) != 1 || descs[0] != "iTunSMPB" {
+		t.Errorf("COMM frames left = %v, want only iTunSMPB", descs)
 	}
 }
