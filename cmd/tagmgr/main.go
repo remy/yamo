@@ -20,6 +20,8 @@ Usage:
   tagmgr [flags]                 browse and edit the catalogue (default)
   tagmgr scan [flags] <dir>...   build or refresh the catalogue
   tagmgr find [flags] <query>    print matching tracks and exit
+  tagmgr strip [flags] [query]   remove every tag except a fixed set
+  tagmgr restore [flags]         put stripped tags back from a backup
   tagmgr info [flags]            show catalogue statistics
   tagmgr help [command]          usage for a command
 
@@ -88,6 +90,10 @@ func run(args []string) error {
 		return cmdScan(args)
 	case "find", "search":
 		return cmdFind(args)
+	case "strip":
+		return cmdStrip(args)
+	case "restore":
+		return cmdRestore(args)
 	case "info":
 		return cmdInfo(args)
 	case "", "browse", "tui":
@@ -119,6 +125,10 @@ func cmdHelp(args []string) error {
 		return cmdScan([]string{"-h"})
 	case "find", "search":
 		return cmdFind([]string{"-h"})
+	case "strip":
+		return cmdStrip([]string{"-h"})
+	case "restore":
+		return cmdRestore([]string{"-h"})
 	case "info":
 		return cmdInfo([]string{"-h"})
 	case "browse", "tui":

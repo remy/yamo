@@ -14,52 +14,55 @@ import (
 // corrected.
 const newTagPadding = 2048
 
-// writeID3v2 applies an edit to the ID3v2 tag of an MP3 (or of any container
-// that fronts its audio with one).
-func writeID3v2(path string, e *Edit) error {
-	f, err := os.OpenFile(path, os.O_RDWR, 0)
-	if err != nil {
-		return err
+// openID3 opens a file and parses its ID3v2 tag. When write is true the file
+// is opened read-write, ready to be flushed back; the caller closes it either
+// way. A file with no tag yields an empty v2.3 tag and oldTagSize zero.
+func openID3(path string, write bool) (f *os.File, size int64, oldTagSize int, tag *id3Tag, err error) {
+	mode := os.O_RDONLY
+	if write {
+		mode = os.O_RDWR
 	}
-	defer f.Close()
-
+	f, err = os.OpenFile(path, mode, 0)
+	if err != nil {
+		return nil, 0, 0, nil, err
+	}
 	fi, err := f.Stat()
 	if err != nil {
-		return err
+		f.Close()
+		return nil, 0, 0, nil, err
 	}
-	size := fi.Size()
+	size = fi.Size()
 
-	// Read the existing tag, if any.
 	var header [10]byte
-	oldTagSize := 0
-	var tag *id3Tag
 	if n, _ := f.ReadAt(header[:], 0); n == 10 {
 		if oldTagSize = id3v2Size(header[:]); oldTagSize > 0 && int64(oldTagSize) <= size {
 			buf := make([]byte, oldTagSize)
-			if _, err := f.ReadAt(buf, 0); err != nil && err != io.EOF {
-				return err
+			if _, rerr := f.ReadAt(buf, 0); rerr != nil && rerr != io.EOF {
+				f.Close()
+				return nil, 0, 0, nil, rerr
 			}
 			tag, _ = parseID3v2(buf)
 		}
 	}
 	if tag == nil {
-		tag = &id3Tag{major: 3} // new tags default to v2.3 for player compatibility
+		// No tag, or one too damaged to parse. Either way there is nothing to
+		// preserve, so start from an empty v2.3 tag and leave the file's bytes
+		// where they are.
+		tag = &id3Tag{major: 3}
 		oldTagSize = 0
 	}
-	// Read the current values before any conversion, so number/total pairs can
-	// be merged against what the file actually says.
-	var cur Metadata
-	tag.applyTo(&cur)
+	return f, size, oldTagSize, tag, nil
+}
 
-	// v2.2 has no writer here, so its frames are translated to v2.3 first.
-	upgradeV22Frames(tag)
-
-	applyEditToFrames(tag, e, &cur)
+// flushID3 serialises a frame list back to the file.
+//
+// When the result fits inside the existing tag it is written in place, padded
+// out to the same length: no audio moves and no temporary file is needed,
+// which matters for multi-gigabyte files. Otherwise the file is rebuilt around
+// a larger tag, with padding added so the next edit can stay in place.
+func flushID3(path string, f *os.File, size int64, oldTagSize int, tag *id3Tag) error {
 	body := encodeID3Frames(tag)
 
-	// An edit that fits inside the existing tag can be written in place: pad
-	// the difference and overwrite the header region. No audio is touched and
-	// no temporary file is needed, which matters for multi-gigabyte files.
 	if oldTagSize >= len(body)+10 {
 		out := make([]byte, oldTagSize)
 		copy(out, id3TagHeader(tag.major, oldTagSize-10))
@@ -70,10 +73,30 @@ func writeID3v2(path string, e *Edit) error {
 		return f.Sync()
 	}
 
-	// Otherwise the file has to be rebuilt around a larger tag.
 	newSize := len(body) + newTagPadding
 	return rewriteWithNewHeader(path, f, size, int64(oldTagSize),
 		append(id3TagHeader(tag.major, newSize), padTo(body, newSize)...))
+}
+
+// writeID3v2 applies an edit to the ID3v2 tag of an MP3 (or of any container
+// that fronts its audio with one).
+func writeID3v2(path string, e *Edit) error {
+	f, size, oldTagSize, tag, err := openID3(path, true)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Read the current values before any conversion, so number/total pairs can
+	// be merged against what the file actually says.
+	var cur Metadata
+	tag.applyTo(&cur)
+
+	// v2.2 has no writer here, so its frames are translated to v2.3 first.
+	upgradeV22Frames(tag)
+
+	applyEditToFrames(tag, e, &cur)
+	return flushID3(path, f, size, oldTagSize, tag)
 }
 
 // id3TagHeader builds the 10-byte tag header for a body of bodySize bytes.

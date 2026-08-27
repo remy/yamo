@@ -124,6 +124,59 @@ FLAC writes a few kilobytes rather than 40 MB. When the tag has to grow beyond
 its padding the file is rebuilt alongside the original and renamed over it, so
 an interrupted write cannot leave a damaged track.
 
+### Stripping
+
+`tagmgr strip` removes every ID3v2 frame that is not on a fixed keep list,
+leaving a uniform tag across the library.
+
+```sh
+tagmgr strip                                    # dry run over everything
+tagmgr strip artist:elvis                       # dry run over a subset
+tagmgr strip -list                              # print the keep list
+tagmgr strip -backup ~/strip.jsonl -apply       # do it, reversibly
+tagmgr restore -backup ~/strip.jsonl -apply     # put it all back
+```
+
+It is a **dry run unless `-apply` is given**, and the dry run reports exactly
+what would go, grouped by frame, with sample values:
+
+```
+frame     files       bytes  meaning
+COMM         22     2.7 KiB  comment  ·  iTunSMPB: 00000000 00000210 0000… / iTunNORM:…
+TENC         11       253 B  encoded by  ·  iTunes v4.9 / iTunes v4.2
+```
+
+The default keep list is sixteen frames — the ones that identify a song, plus
+the ones a library needs to group and sort correctly:
+
+| | |
+| --- | --- |
+| Identity | `TIT2` `TPE1` `TALB` `TPE2` `TRCK` `TPOS` `TCON` `TDRC` `TYER` |
+| Behaviour | `TCMP` `TSOT` `TSOP` `TSOA` `TSO2` `TCOM` `APIC` |
+
+`TCMP` is the compilation flag; without it a Various Artists album fragments
+into one album per track. The `TSO*` frames are sort orders, which put "The
+Beatles" under B. Change the list with `-keep` or extend it with `-also`.
+
+Everything else goes: encoder signatures, comments, private blobs, URLs,
+ratings, and external identifiers such as MusicBrainz IDs. Two consequences
+are worth knowing before running it:
+
+- **`COMM` carries iTunes internals as well as real comments.** `iTunSMPB` is
+  gapless-playback data; removing it breaks gapless on live albums and DJ
+  mixes. Keep it with `-also COMM`, which keeps every comment frame — the keep
+  list works on frame identifiers, not on comment descriptions.
+- **MusicBrainz and AcoustID identifiers are not regenerable** from the audio
+  alone. They live in `TXXX` and `UFID` frames and are removed by default.
+
+Because the tag only ever shrinks, the rewrite happens inside the existing
+padding: the file size does not change and no audio is moved. Stripping the
+whole library is bounded by the cost of one small write per file.
+
+ID3v2.2 tags are rewritten as v2.3, but only for files that actually lose a
+frame. The frames are translated first, so a v2.2 `TP1` is recognised as an
+artist and kept.
+
 ## Format support
 
 | Format | Read | Write |
@@ -207,6 +260,8 @@ python3 -m venv .venv && ./.venv/bin/pip install pyte
 ## Limitations
 
 - WMA, WAV and AIFF are read but not written.
+- `strip` and `restore` handle MP3 only; other formats in the catalogue are
+  counted and skipped.
 - Cover art is detected but not displayed or edited.
 - The catalogue is not watched; run `tagmgr scan` after adding music.
 - One catalogue at a time; use `-catalog` to keep several.

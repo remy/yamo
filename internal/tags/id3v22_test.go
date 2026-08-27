@@ -65,7 +65,15 @@ func writeV22File(t *testing.T, dir string) string {
 	pic = append(pic, 0)    // empty description
 	pic = append(pic, fakeJPEG...)
 
+	com := []byte{encISO8859}
+	com = append(com, "eng"...)
+	com = append(com, "iTunNORM"...)
+	com = append(com, 0)
+	com = append(com, " 00000A39 0000033D"...)
+
 	tag := buildV22Tag(
+		latin1Frame("TEN", "iTunes v4.2"),
+		buildV22Frame("COM", com),
 		latin1Frame("TT2", "Original Title"),
 		latin1Frame("TP1", "Elvis Presley"),
 		latin1Frame("TAL", "Original Album"),

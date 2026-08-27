@@ -16,7 +16,7 @@ var v22ToV23 = map[string]string{
 	"TOF": "TOFN", "TOL": "TOLY", "TOR": "TORY", "TOT": "TOAL",
 	"TCR": "TCOP", "TPB": "TPUB", "TEN": "TENC", "TSS": "TSSE",
 	"TRC": "TSRC", "TP0": "TPE1", "TST": "TSOT", "TSA": "TSOA",
-	"TSP": "TSOP", "TCP": "TCMP",
+	"TSP": "TSOP", "TCP": "TCMP", "TS2": "TSO2", "TSC": "TSOC",
 	"COM": "COMM", "ULT": "USLT", "SLT": "SYLT",
 	"WAF": "WOAF", "WAR": "WOAR", "WAS": "WOAS", "WCM": "WCOM",
 	"WCP": "WCOP", "WPB": "WPUB", "WXX": "WXXX",

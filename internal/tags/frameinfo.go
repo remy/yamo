@@ -1,7 +1,11 @@
 package tags
 
-// frameMeaning gives a short human description of an ID3v2 frame identifier,
-// for the census and for reporting what a strip would remove.
+import "strings"
+
+// FrameMeaning gives a short human description of an ID3v2 frame identifier,
+// so a report can say what is about to be removed rather than just naming it.
+func FrameMeaning(id string) string { return frameMeaning(id) }
+
 func frameMeaning(id string) string {
 	if m, ok := frameMeanings[id]; ok {
 		return m
@@ -113,4 +117,58 @@ var frameMeanings = map[string]string{
 	"WPAY": "payment URL",
 	"WPUB": "publisher URL",
 	"WXXX": "user-defined URL",
+}
+
+// DescribeFrame renders a short sample of a frame's content, for reports that
+// need to show what is actually in the data rather than only its identifier.
+// It returns an empty string for frames whose payload is not worth quoting.
+func DescribeFrame(id string, payload []byte) string {
+	switch {
+	case id == "TXXX" || id == "TXX":
+		desc, val := userText(payload)
+		if desc == "" {
+			return clip(val)
+		}
+		return clip(desc + "=" + val)
+	case id == "COMM" || id == "COM":
+		// The description distinguishes a real comment from an application's
+		// private data, which is exactly the distinction a strip report needs.
+		if len(payload) >= 5 {
+			d, _, ok := splitTerminated(payload[4:], payload[0])
+			if ok {
+				if desc := decodeText(payload[0], d); desc != "" {
+					return clip(desc + ": " + commentText(payload))
+				}
+			}
+		}
+		return clip(commentText(payload))
+	case id == "APIC" || id == "PIC":
+		return byteCount(len(payload))
+	case id == "PRIV":
+		if i := indexByte(payload, 0); i > 0 {
+			return clip(string(payload[:i]))
+		}
+		return byteCount(len(payload))
+	case id == "UFID":
+		if i := indexByte(payload, 0); i > 0 {
+			return clip(string(payload[:i]))
+		}
+		return byteCount(len(payload))
+	case strings.HasPrefix(id, "T"):
+		return clip(frameText(payload))
+	case strings.HasPrefix(id, "W"):
+		return clip(strings.TrimRight(string(payload), "\x00"))
+	}
+	return byteCount(len(payload))
+}
+
+func byteCount(n int) string { return itoa(int64(n)) + " bytes" }
+
+func clip(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	r := []rune(s)
+	if len(r) > 32 {
+		return string(r[:32]) + "…"
+	}
+	return s
 }
