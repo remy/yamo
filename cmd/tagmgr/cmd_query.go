@@ -12,12 +12,38 @@ import (
 	"github.com/remy/tag-manager/internal/ui"
 )
 
+const findSummary = `tagmgr find - print matching tracks and exit
+
+Usage:
+  tagmgr find [flags] <query>
+
+Searches the catalogue and prints the results. The -format path output is
+one filename per line, which is both a valid playlist and easy to pipe:
+
+  tagmgr find -limit 0 -format path artist:elvis > elvis.m3u
+  tagmgr find -limit 0 -format path album: | while read -r f; do echo "$f"; done
+
+Examples:
+  tagmgr find artist:elvis
+  tagmgr find -format tsv 'year:>1990 genre:jazz'
+  tagmgr find -- -genre:live artist:elvis
+`
+
+const infoSummary = `tagmgr info - show catalogue statistics
+
+Usage:
+  tagmgr info [flags]
+
+Prints where the catalogue is, when it was built, what it covers, and which
+fields are missing across the library.
+`
+
 func cmdFind(args []string) error {
 	fs := flag.NewFlagSet("find", flag.ContinueOnError)
-	catalogPath, _ := addCommonFlags(fs)
+	catalogPath := catalogFlag(fs)
 	limit := fs.Int("limit", 200, "maximum rows to print (0 for all)")
 	format := fs.String("format", "table", "output format: table, path, tsv")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, findSummary, queryHelp); err != nil {
 		return err
 	}
 
@@ -62,8 +88,8 @@ func cmdFind(args []string) error {
 
 func cmdInfo(args []string) error {
 	fs := flag.NewFlagSet("info", flag.ContinueOnError)
-	catalogPath, _ := addCommonFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	catalogPath := catalogFlag(fs)
+	if err := parseFlags(fs, args, infoSummary, ""); err != nil {
 		return err
 	}
 

@@ -8,16 +8,32 @@ import (
 	"github.com/remy/tag-manager/internal/ui"
 )
 
+const browseSummary = `tagmgr browse - browse and edit the catalogue
+
+Usage:
+  tagmgr [flags]
+  tagmgr browse [flags]
+
+Opens the full-screen browser. This is what tagmgr does with no command.
+Press ? inside it for the full key list; the essentials are:
+
+  /            search, updating as you type
+  space v a    mark a track, a range, everything matching
+  e            edit the marked tracks, or the one under the cursor
+  tab enter    move between fields, edit the focused one
+  ^s           write every change back to disk
+  u  ^r        undo and redo
+  q            quit
+
+Nothing touches disk until ^s. Saving writes only the fields you changed and
+leaves every other tag in the file as it was.
+`
+
 func cmdBrowse(args []string) error {
 	fs := flag.NewFlagSet("browse", flag.ContinueOnError)
-	catalogPath, _ := addCommonFlags(fs)
-	help := fs.Bool("help", false, "show usage")
-	if err := fs.Parse(args); err != nil {
+	catalogPath := catalogFlag(fs)
+	if err := parseFlags(fs, args, browseSummary, queryHelp); err != nil {
 		return err
-	}
-	if *help {
-		printUsage()
-		return nil
 	}
 
 	c, err := catalog.Load(*catalogPath)

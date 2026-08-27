@@ -46,7 +46,11 @@ tagmgr scan /volume1/music     # build the catalogue
 tagmgr                         # browse and edit
 tagmgr find artist:elvis       # query from a script
 tagmgr info                    # what is in the catalogue
+tagmgr help                    # usage; `tagmgr help scan` for one command
 ```
+
+Every command takes `-h`, and `tagmgr help <command>` prints the same thing.
+Usage goes to stdout so it pipes into a pager; errors go to stderr.
 
 The catalogue lives in your cache directory (`tagmgr info` prints the path).
 Override it with `-catalog PATH` or `TAGMGR_CATALOG`.

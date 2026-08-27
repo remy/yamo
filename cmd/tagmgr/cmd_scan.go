@@ -12,18 +12,40 @@ import (
 	"github.com/remy/tag-manager/internal/ui"
 )
 
-func defaultWorkers() int { return scan.DefaultWorkers() }
+const scanSummary = `tagmgr scan - build or refresh the catalogue
+
+Usage:
+  tagmgr scan [flags] <dir>...
+
+Walks each directory, extracts tags, and writes the catalogue. Files whose
+size and modification time are unchanged since the last scan are reused
+without being opened, so a refresh costs a stat per file rather than a read;
+pass -full to ignore that and re-read everything.
+
+Deleted files drop out of the catalogue on the next scan. Directories that
+never hold music (@eaDir, #recycle, lost+found, dot-directories) and
+AppleDouble "._" sidecars are skipped.
+
+With no directories given, refreshes whatever the catalogue already covers.
+
+Examples:
+  tagmgr scan /volume1/music
+  tagmgr scan                             refresh the existing roots
+  tagmgr scan -full /volume1/music        re-read every file
+  tagmgr scan -exclude Podcasts /volume1/music
+`
 
 func cmdScan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
-	catalogPath, workers := addCommonFlags(fs)
+	catalogPath := catalogFlag(fs)
+	workers := fs.Int("workers", 0, "tag reader concurrency (0 = auto)")
 	full := fs.Bool("full", false, "re-read every file")
 	hidden := fs.Bool("hidden", false, "include dot-directories")
 	follow := fs.Bool("follow", false, "follow directory symlinks")
 	quiet := fs.Bool("quiet", false, "suppress progress output")
 	var exclude stringList
 	fs.Var(&exclude, "exclude", "skip paths matching a glob (repeatable)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args, scanSummary, ""); err != nil {
 		return err
 	}
 
