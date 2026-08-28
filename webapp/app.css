@@ -210,11 +210,16 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .grid .pair { display: flex; align-items: center; gap: 6px }
 .grid .pair input { width: 64px }
 .grid .val { color: var(--ink); overflow-wrap: anywhere }
-.grid .val.copyable { cursor: pointer; border-radius: 4px; margin: -2px -4px; padding: 2px 4px }
-.grid .val.copyable:hover { background: var(--hover) }
-/* Confirm the copy without replacing the path: swapping the text out moves
-   the eye to the wrong place and hides the thing just copied. */
-.grid .val.copied { background: rgba(52, 199, 89, .22); transition: background .15s }
+/* The path stays plain selectable text; the button beside it does the copying,
+   so clicking into the path to read or select part of it does not fire it. */
+.grid .val.path { display: flex; align-items: flex-start; gap: 6px }
+.grid .val.path .path-text { flex: 1; min-width: 0 }
+.copy-btn {
+  flex: none; border: 0; background: none; padding: 2px; border-radius: 4px;
+  color: var(--ink-dim); cursor: pointer; line-height: 0;
+}
+.copy-btn:hover { color: var(--ink); background: var(--hover) }
+.copy-btn.copied { color: #34c759 }
 .suggest {
   position: fixed; z-index: 10; background: var(--bg-raise); color: var(--ink);
   border: 1px solid var(--line); border-radius: 6px; overflow: hidden;

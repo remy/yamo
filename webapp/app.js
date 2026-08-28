@@ -866,14 +866,32 @@ function buildFile(t, multi) {
         ['location', t.path],
       ];
   for (const [k, v] of rows) {
-    const cell = el('div', 'val', v);
-    if (k === 'location') {
-      cell.classList.add('copyable');
-      cell.title = 'Click to copy';
-      cell.addEventListener('click', () => copyPath(v, cell));
-    }
-    grid.append(el('label', '', k), cell);
+    grid.append(el('label', '', k), k === 'location' ? pathCell(v) : el('div', 'val', v));
   }
+}
+
+// Two 14px glyphs: the usual overlapping sheets, and the tick that replaces it
+// for a moment after a copy. Inline so the page still has no second request.
+const ICON_COPY =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">' +
+  '<rect x="5.2" y="5.2" width="8.3" height="8.3" rx="1.6"/>' +
+  '<path d="M10.8 5.2V3.9A1.6 1.6 0 0 0 9.2 2.3H3.9A1.6 1.6 0 0 0 2.3 3.9v5.3a1.6 1.6 0 0 0 1.6 1.6h1.3"/></svg>';
+const ICON_TICK =
+  '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" ' +
+  'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M3 8.6l3.2 3.2L13 5"/></svg>';
+
+// pathCell shows the location with a copy button beside it.
+function pathCell(path) {
+  const cell = el('div', 'val path');
+  const btn = el('button', 'copy-btn');
+  btn.type = 'button';
+  btn.title = 'Copy path';
+  btn.setAttribute('aria-label', 'Copy path');
+  btn.innerHTML = ICON_COPY;
+  btn.addEventListener('click', () => copyPath(path, btn));
+  cell.append(el('span', 'path-text', path), btn);
+  return cell;
 }
 
 // shellQuote wraps a path so it can be pasted into a shell.
@@ -889,17 +907,22 @@ function shellQuote(path) {
 
 // copyPath puts the location on the clipboard, quoted when it needs to be.
 //
-// The path itself stays put. Replacing it with the word "Copied" moves the eye
-// away from the thing just copied and hides it while you are still reading it,
-// so the confirmation is a brief tint plus the status bar.
-async function copyPath(path, cell) {
+// The confirmation happens in the button. Replacing the path itself with the
+// word "Copied" moved the eye away from the thing just copied and hid it while
+// you were still reading it.
+async function copyPath(path, btn) {
   const text = shellQuote(path);
   if (!await writeClipboard(text)) {
     status('Could not copy — select the path and copy it yourself', 'err');
     return;
   }
-  cell.classList.add('copied');
-  setTimeout(() => cell.classList.remove('copied'), 600);
+  btn.classList.add('copied');
+  btn.innerHTML = ICON_TICK;
+  clearTimeout(btn.revert);
+  btn.revert = setTimeout(() => {
+    btn.classList.remove('copied');
+    btn.innerHTML = ICON_COPY;
+  }, 1200);
   status(`Copied ${text}`, 'ok');
 }
 

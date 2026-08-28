@@ -65,10 +65,11 @@ answers.
 - **Autocomplete** on artist, album, album artist and genre, from
   `GET /v1/values/{field}` — prefix matches first, ranked by how many tracks
   use each value, with the count shown. Arrows to choose, ⏎ or Tab to accept.
-- **Click the location** in the File tab to copy it, shell-quoted when it
-  contains anything a shell would treat specially. The path stays put and the
-  row tints briefly, rather than the text being swapped for the word "Copied" —
-  which hid the thing you were still reading.
+- **A copy button** beside the location in the File tab, which copies the path
+  shell-quoted when it contains anything a shell would treat specially. The
+  path itself stays plain selectable text, and the button ticks for a moment
+  rather than the text being swapped for the word "Copied" — which hid the
+  thing you were still reading.
 - **Multi-select** — shift-click and ⌘-click, or ⌘A for everything matching.
   Fields that differ show *Mixed* and are left alone unless typed into, which
   is what Apple Music does.
