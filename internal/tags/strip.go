@@ -19,10 +19,12 @@ var DefaultKeepTags = []Tag{
 	TagCompilation, TagComposer, TagArtwork,
 	TagTitleSort, TagArtistSort, TagAlbumSort, TagAlbumArtistSort,
 
-	// Gapless playback data is iTunes' own, but it is the only record of where
-	// the encoder padding starts, and players — Navidrome among them — read it.
-	// Nothing can reconstruct it once it is gone.
-	TagGapless,
+	// Everything iTunes wrote. Gapless data is the one that would hurt to lose
+	// — it is the only record of where the encoder padding starts, players
+	// read it, and nothing can reconstruct it — but the rest is kept as well
+	// so that a library ripped and bought through iTunes comes out of a strip
+	// still describing itself the way iTunes described it.
+	TagGapless, TagSoundCheck, TagITunes,
 }
 
 // KeepSet is the set of canonical tags to preserve.

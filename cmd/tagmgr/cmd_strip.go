@@ -184,21 +184,51 @@ func printKeepList(keepFlag, alsoFlag string) error {
 
 	fmt.Printf("%-18s %-20s %-34s %s\n", "tag", "mp3", "flac / ogg / opus", "mp4")
 	for _, t := range keep.Sorted() {
+		// The MP4 column wraps rather than truncating: itunes alone maps to
+		// two dozen atoms, and a list you cannot read the end of is not a list.
+		mp4 := wrapKeys(nativeKeys(t, tags.FormatMP4), 34)
 		fmt.Printf("%-18s %-20s %-34s %s\n", t.Name(),
 			ui.Truncate(nativeKeys(t, tags.FormatMP3), 20),
 			ui.Truncate(nativeKeys(t, tags.FormatFLAC), 34),
-			nativeKeys(t, tags.FormatMP4))
+			mp4[0])
+		for _, line := range mp4[1:] {
+			fmt.Printf("%-18s %-20s %-34s %s\n", "", "", "", line)
+		}
 	}
 	// A dash means "no frame id of its own", not "not present in this format".
 	// iTunes hides these in a comment, so they are found by description.
 	if keep[tags.TagGapless] || keep[tags.TagSoundCheck] {
-		fmt.Println("\ngapless and soundcheck have no frame of their own in ID3: iTunes writes")
-		fmt.Println("them as COMM:iTunSMPB and COMM:iTunNORM, and they are matched by description.")
+		fmt.Println("\ngapless and soundcheck have no key of their own: iTunes writes them as")
+		fmt.Println("COMM:iTunSMPB and COMM:iTunNORM in ID3, and as freeform ---- items in MP4,")
+		fmt.Println("so they are matched by description rather than by key.")
 	}
 	fmt.Printf("\n%d tags kept; everything else is removed.\n", len(keep))
 	fmt.Println("add tags with -also, or replace the list with -keep. available:")
 	printAvailableTags(keep)
 	return nil
+}
+
+// wrapKeys splits a space-separated key list into lines of at most width,
+// never breaking a key. It always returns at least one line, so the caller can
+// print the first beside the tag name.
+func wrapKeys(keys string, width int) []string {
+	if len(keys) <= width {
+		return []string{keys}
+	}
+	var lines []string
+	line := ""
+	for _, k := range strings.Fields(keys) {
+		switch {
+		case line == "":
+			line = k
+		case len(line)+1+len(k) <= width:
+			line += " " + k
+		default:
+			lines = append(lines, line)
+			line = k
+		}
+	}
+	return append(lines, line)
 }
 
 func nativeKeys(t tags.Tag, f tags.Format) string {

@@ -323,14 +323,33 @@ whole library to v2.4, costs more compatibility than it buys.
 `stripID3` reports a file holding a year frame without `TDRL` as non-canonical,
 so a clean-up retrofits one.
 
-### Gapless data is kept
+### Everything iTunes wrote is kept
 
-`TagGapless` is on the default keep list. It is iTunes' own — `iTunSMPB` in a
-`COMM` frame or an MP4 freeform atom, plus the `pgap` flag — but it is the only
-record of where the encoder padding starts, players including Navidrome read
-it, and nothing can reconstruct it once it is gone. Volume normalisation
-(`iTunNORM`, `TagSoundCheck`) is not kept: ReplayGain has superseded it and it
-is derivable.
+`TagGapless`, `TagSoundCheck` and `TagITunes` are all on the default keep list.
+Gapless data is the one that would hurt to lose — `iTunSMPB` in a `COMM` frame
+or an MP4 freeform item, plus the `pgap` flag, the only record of where the
+encoder padding starts, which nothing can reconstruct — but the rest is kept as
+well, so a library ripped and bought through iTunes still describes itself the
+way iTunes described it.
+
+`TagITunes` covers Apple's own atoms: `stik`, `rtng`, `purd`, `apID`, the store
+identifiers, the rental and TV fields. `rtng` moved here from `TagRating`,
+where it did not belong — it is Apple's content advisory (none/explicit/clean),
+not a star rating, and iTunes star ratings are not in the file at all.
+
+Two resolution rules feed it, in this order:
+
+1. A freeform name beginning `ITUN` — `iTunMOVI`, `iTunEXTC`, the
+   `iTunes_CDDB_*` items. `iTunSMPB` and `iTunNORM` are matched before this,
+   since they have their own places on the keep list.
+2. An unrecognised freeform name in the `com.apple.iTunes` namespace —
+   `tool`, `Encoding Params`, `cdec`. The namespace is consulted **after** the
+   name, never before: Picard writes MusicBrainz tags in that same namespace,
+   and treating those as iTunes fields would be wrong.
+
+`apID` is the Apple ID that bought the file, so it is an email address, and it
+appeared in 6,990 of 8,960 files in the owner's library. Keeping it is a
+deliberate choice, not an oversight.
 
 A strip can also **normalise**: `StripRequest.Normalize` re-asserts the kept
 fields through the ordinary writer, which moves a value found under an older

@@ -290,11 +290,25 @@ kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 | `albumartistsort` | TSO2 | ALBUMARTISTSORT | soaa |
 | `artwork` | APIC | METADATA_BLOCK_PICTURE | covr |
 | `gapless` | COMM:iTunSMPB | — | pgap, iTunSMPB |
+| `soundcheck` | COMM:iTunNORM | — | iTunNORM |
+| `itunes` | — | — | stik, apID, purd, cnID, atID, plID, … |
 
 `compilation` is the flag that stops a Various Artists album fragmenting into
 one album per track. The sort tags are what put "The Beatles" under B.
 `gapless` is iTunes' own, and kept because nothing can reconstruct it: it is
 the only record of where the encoder padding starts.
+
+`gapless`, `soundcheck` and `itunes` cover everything iTunes wrote, so a
+library ripped and bought through it comes out of a strip still describing
+itself the way iTunes described it. `itunes` covers Apple's own atoms — the
+media kind, the advisory flag, the store and purchase identifiers, the account
+that bought the file — along with any freeform item in the `com.apple.iTunes`
+namespace whose name is not recognised as something else. The namespace alone
+cannot decide, because Picard writes MusicBrainz tags there too.
+
+Note that `apID` holds the Apple ID that bought the file, which is an email
+address. Drop it on its own with `-keep` minus `itunes`, or keep the rest and
+accept it.
 
 The date is written to `TDRL` as well as the year frame. ID3 separates when a
 recording was made from when it was released and MP4 does not, so an MP3

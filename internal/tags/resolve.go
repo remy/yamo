@@ -19,10 +19,13 @@ func tagForDescription(desc string) (Tag, bool) {
 		return TagGapless, true
 	case "ITUNNORM":
 		return TagSoundCheck, true
-	case "ITUNMOVI", "ITUNEXTC":
-		return TagPrivate, true
 	}
 	switch {
+	// Everything else Apple names iTun-something: iTunMOVI, iTunEXTC, the
+	// iTunes_CDDB_* items. The two above are listed separately because they
+	// have their own places on the keep list.
+	case strings.HasPrefix(d, "ITUN"):
+		return TagITunes, true
 	case strings.HasPrefix(d, "REPLAYGAIN"):
 		return TagReplayGain, true
 	case strings.HasPrefix(d, "MUSICBRAINZ"), strings.HasPrefix(d, "MUSICIP"):
@@ -100,6 +103,13 @@ func tagForMP4Atom(name string, body []byte) Tag {
 		if t, ok := tagForDescription(mp4FreeformName(body)); ok {
 			return t
 		}
+		// An unrecognised name in Apple's own namespace is Apple's own field —
+		// "tool", "Encoding Params", "cdec". The namespace is only consulted
+		// after the name, because Picard writes MusicBrainz tags there too and
+		// those are not iTunes fields by any useful definition.
+		if mp4FreeformMean(body) == "com.apple.iTunes" {
+			return TagITunes
+		}
 		return TagUnknown
 	}
 	if t, ok := tagByMP4[name]; ok {
@@ -121,6 +131,19 @@ func mp4FreeformName(item []byte) string {
 		return true
 	})
 	return strings.TrimRight(name, "\x00")
+}
+
+// mp4FreeformMean reads the reverse-DNS namespace a freeform item declares.
+func mp4FreeformMean(item []byte) string {
+	var mean string
+	walkAtoms(item, func(typ string, body []byte) bool {
+		if typ == "mean" && len(body) >= 4 {
+			mean = string(body[4:]) // skip version and flags
+			return false
+		}
+		return true
+	})
+	return strings.TrimRight(mean, "\x00")
 }
 
 // describeMP4Item renders an item's key for a report, spelling out the

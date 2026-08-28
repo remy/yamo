@@ -60,6 +60,7 @@ const (
 	TagURL
 	TagPrivate
 	TagChapters
+	TagITunes
 	numTags
 )
 
@@ -112,10 +113,24 @@ var tagSpecs = [numTags]tagSpec{
 	TagReplayGain:      {Name: "replaygain", Desc: "loudness normalisation", ID3: []string{"RVA2", "RVAD"}, Vorbis: []string{}, MP4: []string{}},
 	TagMusicBrainz:     {Name: "musicbrainz", Desc: "MusicBrainz identifiers", ID3: []string{"UFID"}, Vorbis: []string{}, MP4: []string{}},
 	TagAcoustID:        {Name: "acoustid", Desc: "AcoustID fingerprint", ID3: []string{}, Vorbis: []string{}, MP4: []string{}},
-	TagRating:          {Name: "rating", Desc: "rating and play count", ID3: []string{"POPM", "PCNT"}, Vorbis: []string{"RATING", "FMPS_RATING"}, MP4: []string{"rtng"}},
+	TagRating:          {Name: "rating", Desc: "rating and play count", ID3: []string{"POPM", "PCNT"}, Vorbis: []string{"RATING", "FMPS_RATING"}, MP4: []string{}},
 	TagURL:             {Name: "url", Desc: "web links", ID3: []string{"WXXX", "WOAR", "WOAF", "WOAS", "WCOM", "WCOP", "WPUB", "WORS", "WPAY"}, Vorbis: []string{"WWW", "CONTACT"}, MP4: []string{"\xa9url", "purl", "egid"}},
 	TagPrivate:         {Name: "private", Desc: "application private data", ID3: []string{"PRIV", "NCON", "GEOB", "MCDI"}, Vorbis: []string{}, MP4: []string{}},
 	TagChapters:        {Name: "chapters", Desc: "chapter markers", ID3: []string{"CHAP", "CTOC"}, Vorbis: []string{}, MP4: []string{"chpl"}},
+
+	// Apple's own atoms: what iTunes recorded about the purchase and about how
+	// it should present the file. Store identifiers, the account that bought
+	// it, the media kind, the advisory flag, encoder internals. Freeform items
+	// in the com.apple.iTunes namespace land here too unless their name is
+	// recognised as something else — Picard writes MusicBrainz tags in that
+	// same namespace, so the namespace alone cannot decide.
+	TagITunes: {Name: "itunes", Desc: "iTunes store, purchase and player fields", ID3: []string{}, Vorbis: []string{},
+		MP4: []string{
+			"stik", "rtng", "purd", "apID", "ownr", "akID", "flvr", "xid ",
+			"cnID", "atID", "plID", "geID", "sfID", "cmID",
+			"rpdu", "rndu",
+			"tvsh", "tven", "tvnn", "tvsn", "tves", "sosn", "hdvd",
+		}},
 }
 
 // Name returns the canonical name used on the command line.

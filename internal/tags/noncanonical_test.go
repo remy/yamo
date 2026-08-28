@@ -1,6 +1,7 @@
 package tags
 
 import (
+	"encoding/binary"
 	"os"
 	"sort"
 	"strings"
@@ -26,7 +27,7 @@ func TestNonCanonicalID3v22(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := nonCanonicalNames(rep)
-	want := "album,artist,artwork,composer,date,genre,title,track"
+	want := "album,artist,artwork,composer,date,genre,soundcheck,title,track"
 	if got != want {
 		t.Fatalf("non-canonical = %q, want %q", got, want)
 	}
@@ -134,4 +135,62 @@ func TestDateIsWrittenForBothMeanings(t *testing.T) {
 		t.Fatalf("read back year=%d err=%v", md.Year, err)
 	}
 	decodes(t, path)
+}
+
+// TestITunesFieldsAreKept covers the whole of Apple's vocabulary reaching the
+// same canonical tag, since it arrives by three different routes: a named
+// atom, a freeform name, and a freeform namespace.
+func TestITunesFieldsAreKept(t *testing.T) {
+	freeform := func(mean, name string) []byte {
+		atomOf := func(typ, payload string) []byte {
+			b := make([]byte, 8, 12+len(payload))
+			binary.BigEndian.PutUint32(b[0:4], uint32(12+len(payload)))
+			copy(b[4:8], typ)
+			b = append(b, 0, 0, 0, 0)
+			return append(b, payload...)
+		}
+		return append(atomOf("mean", mean), atomOf("name", name)...)
+	}
+	cases := []struct {
+		what string
+		name string
+		body []byte
+		want Tag
+	}{
+		{"a named atom", "stik", nil, TagITunes},
+		{"the account that bought it", "apID", nil, TagITunes},
+		{"the advisory flag, which is not a star rating", "rtng", nil, TagITunes},
+		{"a store identifier", "cnID", nil, TagITunes},
+		{"the vendor id, whose name ends in a space", "xid ", nil, TagITunes},
+		{"an iTun-prefixed freeform name", "----", freeform("com.apple.iTunes", "iTunMOVI"), TagITunes},
+		{"a CDDB item", "----", freeform("com.apple.iTunes", "iTunes_CDDB_1"), TagITunes},
+		{"an unknown name in Apple's namespace", "----", freeform("com.apple.iTunes", "Encoding Params"), TagITunes},
+
+		// The two with their own places on the keep list must not be swallowed
+		// by the iTun prefix rule, or they could no longer be dropped alone.
+		{"gapless data", "----", freeform("com.apple.iTunes", "iTunSMPB"), TagGapless},
+		{"volume normalisation", "----", freeform("com.apple.iTunes", "iTunNORM"), TagSoundCheck},
+
+		// Picard writes MusicBrainz tags in Apple's namespace. Resolving by
+		// namespace before name would file them all as iTunes fields.
+		{"MusicBrainz in Apple's namespace", "----",
+			freeform("com.apple.iTunes", "MusicBrainz Album Id"), TagMusicBrainz},
+		{"ReplayGain in Apple's namespace", "----",
+			freeform("com.apple.iTunes", "replaygain_track_gain"), TagReplayGain},
+	}
+	keep := NewKeepSet(DefaultKeepTags)
+	for _, tc := range cases {
+		got := tagForMP4Atom(tc.name, tc.body)
+		if got != tc.want {
+			t.Errorf("%s: resolved to %q, want %q", tc.what, got.Name(), tc.want.Name())
+		}
+	}
+	for _, t2 := range []Tag{TagITunes, TagGapless, TagSoundCheck} {
+		if !keep[t2] {
+			t.Errorf("%s is not on the default keep list", t2.Name())
+		}
+	}
+	if keep[TagMusicBrainz] || keep[TagReplayGain] {
+		t.Error("keeping Apple's fields must not have kept everything else in that namespace")
+	}
 }
