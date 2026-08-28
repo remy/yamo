@@ -134,7 +134,7 @@ debouncing to stay responsive. There is deliberately **no auto-spawn**.
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
 | `cmd/tagmgr/` | 1,431 | `serve` plus the client commands. |
 | `tools/genlib/` | 173 | Synthetic library generator, for benchmarking. |
-| `webapp/` | ~900 | Browser front end. A sample: vanilla ES modules, no build. |
+| `webapp/` | ~900 | Browser front end. A sample: vanilla ES modules, no build. Served by `tagmgr serve` when run from that directory. |
 | `tools/tuidrive/` | — | Python: drives the terminal in a pty. Not shipped. |
 
 Direct dependencies are only `bubbletea`, `lipgloss`, `go-runewidth` and

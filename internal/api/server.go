@@ -36,6 +36,14 @@ type Options struct {
 	// Without the headers a browser refuses the cross-origin request itself.
 	AllowCrossOrigin bool
 
+	// WebRoot, when set, is a directory of static files served at the root.
+	//
+	// Serving the front end from the same origin as the API is not just a
+	// convenience: same-origin requests need no CORS at all, so a browser
+	// client works against a loopback server with no token, which is the
+	// setup CORS is deliberately refused for.
+	WebRoot string
+
 	Logger *log.Logger
 }
 
@@ -122,9 +130,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/docs", http.StatusFound)
-	})
+	// The front end, when there is one, is served unauthenticated: it has to
+	// load before it can present a token, and it contains none of the library.
+	if s.opts.WebRoot != "" {
+		files := http.FileServer(http.Dir(s.opts.WebRoot))
+		s.mux.Handle("GET /", files)
+	} else {
+		s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/docs", http.StatusFound)
+		})
+	}
 }
 
 // handle registers an authenticated route.

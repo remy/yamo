@@ -581,12 +581,29 @@ function status(msg, kind = '') {
 
 $('#edit-btn').addEventListener('click', openInfo);
 
-// Reconnect on load if the details are remembered.
+// Starting up.
+//
+// When this page is served by tagmgr itself the API is on the same origin, so
+// the browser needs no CORS and the server needs no token — try that first and
+// only ask if it does not answer.
 renderHead();
-const savedServer = localStorage.getItem('tagmgr.server');
-const savedToken = localStorage.getItem('tagmgr.token');
-$('#server').value = savedServer || 'http://localhost:8467';
-$('#token').value = savedToken || '';
-if (savedServer) {
-  connect(savedServer, savedToken || '').catch(() => { /* fall through to the form */ });
+boot();
+
+async function boot() {
+  const savedServer = localStorage.getItem('tagmgr.server');
+  const savedToken = localStorage.getItem('tagmgr.token');
+  const sameOrigin = location.protocol.startsWith('http') ? location.origin : '';
+
+  const attempts = [];
+  if (savedServer) attempts.push([savedServer, savedToken || '']);
+  if (sameOrigin && sameOrigin !== savedServer) attempts.push([sameOrigin, savedToken || '']);
+
+  for (const [server, token] of attempts) {
+    try {
+      await connect(server, token);
+      return;
+    } catch { /* try the next, then fall through to the form */ }
+  }
+  $('#server').value = savedServer || sameOrigin || 'http://localhost:8467';
+  $('#token').value = savedToken || '';
 }

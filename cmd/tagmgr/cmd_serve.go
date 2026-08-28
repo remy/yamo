@@ -39,6 +39,12 @@ the user cache directory by default, since it is wholly derived from the
 music; -catalog or TAGMGR_CATALOG puts it elsewhere. Under systemd there is
 often no HOME, and then -catalog is required rather than guessed at.
 
+A web front end:
+  Run serve from a directory containing index.html — webapp/ in this
+  repository — and it is served at the root alongside the API. Same origin,
+  so the browser needs no CORS and therefore no token on loopback. -web
+  points somewhere else, and -web "" turns it off.
+
 Access:
   It binds to loopback by default, where no token is needed. Binding to
   anything else requires one: it is generated on first run, printed once,
@@ -51,6 +57,7 @@ Access:
 
 Examples:
   tagmgr serve                                just this machine
+  cd webapp && tagmgr serve                   ...and serve the front end too
   tagmgr serve -listen 0.0.0.0:8467           reachable on the network
   tagmgr serve -listen unix:///tmp/tagmgr.sock
 `
@@ -65,6 +72,7 @@ func cmdServe(args []string) error {
 	token := fs.String("token", os.Getenv("TAGMGR_TOKEN"), "bearer token required for non-loopback binds")
 	noAuth := fs.Bool("no-auth", false, "serve without a token even when not on loopback")
 	saveEvery := fs.Duration("save-every", 5*time.Second, "how often to write the catalogue snapshot")
+	web := fs.String("web", ".", "directory of a web front end to serve at / (ignored if it has no index.html)")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
 		return err
 	}
@@ -104,10 +112,22 @@ func cmdServe(args []string) error {
 		fmt.Fprintf(os.Stderr, "  bound to %s; no token needed from this machine\n", addr)
 	}
 
+	// Only serve a front end if the directory actually holds one, so running
+	// the server from an arbitrary directory does not publish it.
+	webRoot := ""
+	if *web != "" {
+		if abs, err := filepath.Abs(*web); err == nil {
+			if _, err := os.Stat(filepath.Join(abs, "index.html")); err == nil {
+				webRoot = abs
+			}
+		}
+	}
+
 	srv := api.New(svc, api.Options{
 		Token: *token,
 		// Only opened up when a token gates it; see the note above.
 		AllowCrossOrigin: *token != "",
+		WebRoot:          webRoot,
 	})
 
 	ln, err := listenOn(network, addr)
@@ -131,8 +151,12 @@ func cmdServe(args []string) error {
 		shown = "http://" + addr
 	}
 	fmt.Fprintf(os.Stderr, "  catalogue: %s\n", *catalogPath)
-	fmt.Fprintf(os.Stderr, "  tagmgr serving %s tracks on %s\n  docs: %s/docs\n",
-		formatCount(svc.Count("")), shown, shown)
+	fmt.Fprintf(os.Stderr, "  tagmgr serving %s tracks on %s\n",
+		formatCount(svc.Count("")), shown)
+	if webRoot != "" {
+		fmt.Fprintf(os.Stderr, "  web:  %s  (from %s)\n", shown, webRoot)
+	}
+	fmt.Fprintf(os.Stderr, "  docs: %s/docs\n", shown)
 
 	ctx, stop := notifyContext()
 	defer stop()

@@ -48,6 +48,7 @@ uses.
 
 ```sh
 tagmgr serve                                 # loopback, no token needed
+cd webapp && tagmgr serve                    # ...and serve the browser front end
 tagmgr serve -listen 0.0.0.0:8467            # reachable on the network
 tagmgr serve -listen unix:///tmp/tagmgr.sock
 

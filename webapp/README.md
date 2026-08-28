@@ -4,15 +4,22 @@ A browser front end for the tagmgr API. Finding, filtering and editing — no
 playback.
 
 It is a sample: **no build step, no dependencies, no backend of its own.** Four
-files of vanilla ES modules. Serve the directory with anything and open it.
+files of vanilla ES modules.
 
 ```sh
 cd webapp
-python3 -m http.server 5173
-# then http://localhost:5173
+tagmgr serve            # serves this directory and the API on one port
+# then http://localhost:8467
 ```
 
-The server must have been started with a token:
+`tagmgr serve` serves the front end whenever the directory it is run from
+contains an `index.html`. That is worth doing rather than reaching for a static
+file server, because it puts the app on the **same origin as the API** — so the
+browser needs no CORS, the server needs no token, and the page connects without
+being asked anything.
+
+Serving it from somewhere else works too, but then it is cross-origin, and the
+server must have been started with a token:
 
 ```sh
 tagmgr serve -listen 0.0.0.0:8467 -token something-real
@@ -20,8 +27,9 @@ tagmgr serve -listen 0.0.0.0:8467 -token something-real
 
 Cross-origin requests are only permitted when a token is set — a server on
 loopback with permissive CORS could be driven by any page you happened to
-visit, and this API rewrites music files. The connection details are kept in
-`localStorage`, so it is a first-run screen rather than a login.
+visit, and this API rewrites music files. The page tries the origin it was
+served from first, then anything remembered in `localStorage`, and only shows
+the connection form if neither answers.
 
 ## What it does
 
