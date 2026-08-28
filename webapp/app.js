@@ -302,7 +302,8 @@ function poolRow(k) {
       row.append(span);
       return span;
     });
-    row.shown = null;   // the row index currently displayed, for cheap diffing
+    row.shown = null;      // what this row currently displays, for cheap diffing
+    row.shownTrack = null;
     $('#rows').append(row);
     pool.push(row);
   }
@@ -321,7 +322,7 @@ function render() {
     const row = poolRow(k);
     const i = first + k;
     if (i >= last) {                       // surplus rows park rather than die
-      if (!row.hidden) { row.hidden = true; row.shown = null; }
+      if (!row.hidden) { row.hidden = true; row.shown = null; row.shownTrack = null; }
       continue;
     }
     row.hidden = false;
@@ -339,12 +340,18 @@ function render() {
 // paintRow writes a track into a pooled row, touching only what changed.
 function paintRow(row, i) {
   const t = trackAt(i);
-  const id = t ? t.id : '';
   const selected = t ? state.selected.has(t.id) : false;
   const cursor = i === state.cursor;
-  const key = `${i}|${id}|${selected ? 1 : 0}|${cursor ? 1 : 0}`;
-  if (row.shown === key) return;           // nothing about this row has changed
+  const key = `${i}|${selected ? 1 : 0}|${cursor ? 1 : 0}`;
+  // The track object is compared by identity rather than by its id, and that
+  // is the whole point: an edit gives a track new values under the same id, so
+  // a key built from the id alone says "nothing changed" and leaves the row
+  // showing what the file used to say. A refetch always yields fresh objects —
+  // fetchPage replaces the page array with newly parsed JSON — while scrolling
+  // hands back the same ones, so identity is exactly the question being asked.
+  if (row.shown === key && row.shownTrack === t) return;
   row.shown = key;
+  row.shownTrack = t;
 
   row.dataset.index = i;
   row.classList.toggle('alt', i % 2 === 1);

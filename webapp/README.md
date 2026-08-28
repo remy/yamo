@@ -124,6 +124,15 @@ Rebuilding the visible rows each frame — which is what `replaceChildren` does 
 means a few hundred element allocations per frame for a list that only ever
 shows thirty.
 
+That recycling needs one thing to be right, and it is easy to get wrong: the
+key that decides whether a row can skip repainting compares the *track object*,
+not its id. An edit hands the same id back with different values, so a key
+built from the id says "nothing changed" and the row keeps showing what the
+file used to say — until you happen to scroll it out of view or click it.
+Identity is the right question because `fetchPage` replaces a page with newly
+parsed JSON, so a refetch always yields new objects while scrolling hands back
+the same ones.
+
 Two CSS traps sit underneath that, both the same one: a flex *or grid* item
 defaults to `min-height: auto` and refuses to shrink below its content, so
 without `min-height: 0` on both `.main` and `.scroller` the pane sizes itself
