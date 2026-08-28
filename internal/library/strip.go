@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/remy/tag-manager/internal/catalog"
 	"github.com/remy/tag-manager/internal/tags"
 )
 
@@ -225,30 +226,59 @@ func (s *Service) Restore(req RestoreRequest) (*Job, error) {
 	}), nil
 }
 
-// refreshTracks re-reads size, modification time and artwork presence after an
-// operation that rewrote files outside the normal edit path.
+// refreshTracks re-reads files that were rewritten outside the normal edit
+// path, where the change cannot be predicted from the request.
+//
+// A field edit knows exactly what it set, so it updates the record directly. A
+// strip does not: it removes whatever was not on the keep list, which may
+// include fields the catalogue holds. Without re-reading, a search would go on
+// matching a comment that is no longer in the file.
 func (s *Service) refreshTracks(ids []string) {
 	type update struct {
 		id      string
-		size    int64
-		modTime int64
+		track   catalog.Track
+		present bool
 	}
 	updates := make([]update, 0, len(ids))
+	r := tags.NewReader()
+
 	for _, id := range ids {
-		path, err := s.Path(id)
+		s.mu.RLock()
+		i, ok := s.lookupLocked(id)
+		var cur catalog.Track
+		if ok {
+			cur = s.cat.Tracks[i]
+		}
+		s.mu.RUnlock()
+		if !ok {
+			continue
+		}
+
+		fi, err := os.Stat(cur.Path)
 		if err != nil {
 			continue
 		}
-		if fi, err := os.Stat(path); err == nil {
-			updates = append(updates, update{id, fi.Size(), fi.ModTime().Unix()})
+		md, err := r.ReadFile(cur.Path)
+		if err != nil && md.Format == tags.FormatUnknown {
+			// Unreadable now, but the file is still there; keep the record and
+			// only correct what a stat can tell us.
+			cur.Size, cur.ModTime = fi.Size(), fi.ModTime().Unix()
+			updates = append(updates, update{id, cur, true})
+			continue
 		}
+		next := catalog.Track{Path: cur.Path, Size: fi.Size(), ModTime: fi.ModTime().Unix()}
+		next.FromMetadata(&md)
+		if next.Format == tags.FormatUnknown {
+			next.Format = cur.Format
+		}
+		updates = append(updates, update{id, next, true})
 	}
 
 	s.mu.Lock()
 	for _, u := range updates {
 		if i, ok := s.lookupLocked(u.id); ok {
-			s.cat.Tracks[i].Size = u.size
-			s.cat.Tracks[i].ModTime = u.modTime
+			s.cat.Tracks[i] = u.track
+			s.cat.Touch(int(i))
 		}
 	}
 	s.mu.Unlock()

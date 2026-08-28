@@ -1,0 +1,966 @@
+openapi: 3.1.0
+info:
+  title: tagmgr
+  version: "1.0.0"
+  summary: Catalogue, search and edit the metadata of a large music library.
+  description: |
+    tagmgr keeps a catalogue of a music library and edits the tags in the files
+    themselves. This API is the only way anything reaches those files: the
+    terminal interface and the command line are both clients of it.
+
+    ## Working with a large library
+
+    The library is expected to run to six figures, and the work is gradual —
+    find a few wrong things, fix them, carry on. Three parts of the design
+    follow from that.
+
+    **Everything is paged.** `GET /tracks` returns a window and a total. There
+    is no endpoint that returns the whole library.
+
+    **Operations select by query, not by identifier.** Setting the artist on
+    every Elvis track should not require uploading two thousand ids, so a
+    `Selector` carries the same query language the search bar uses.
+
+    **Anything that can touch more than one file returns a job**, even when it
+    finishes immediately, so there is one shape to handle rather than a guess
+    about which calls block.
+
+    ## Editing safely from more than one place
+
+    Every track carries a `version` covering its state on disk. Send it back as
+    `If-Match` on a `PATCH` and a mismatch returns `409`, which is what stops an
+    edit made on a phone silently overwriting one made in the terminal a moment
+    earlier.
+
+    Edits write through: a `PATCH` writes the tag to the file and returns. There
+    is no pending state to commit or lose.
+
+    ## Destructive operations
+
+    `POST /strip` removes every tag not on a keep list, and defaults to
+    `dryRun: true`. A selector may carry `expectCount`; if the selection has
+    changed since the client showed it to someone, the operation is refused
+    rather than applied to a different set than the one approved.
+  license:
+    name: MIT
+
+servers:
+  - url: /v1
+    description: This server.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: tracks
+    description: Reading and editing individual tracks.
+  - name: browse
+    description: Albums, field values and library statistics.
+  - name: batch
+    description: Operations across many tracks at once.
+  - name: artwork
+    description: Cover art, including the copy and paste clipboard.
+  - name: jobs
+    description: Long-running operations and their progress.
+  - name: scan
+    description: Bringing the catalogue up to date with the filesystem.
+
+paths:
+  /tracks:
+    get:
+      tags: [tracks]
+      summary: List and search tracks
+      operationId: listTracks
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - name: sort
+          in: query
+          description: |
+            Comma-separated field names, each optionally prefixed with `-` for
+            descending. Unrecognised names are ignored rather than rejected, so
+            a half-typed sort degrades instead of failing.
+          schema: { type: string, examples: ["artist,album,track", "-year"] }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: A page of tracks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TrackPage' }
+
+  /tracks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/TrackId'
+    get:
+      tags: [tracks]
+      summary: Fetch one track
+      operationId: getTrack
+      responses:
+        '200':
+          description: The track.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Track' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [tracks]
+      summary: Edit one track
+      description: |
+        Applies a sparse set of changes and writes them to the file before
+        returning. Fields absent from the body are left alone; fields present
+        with a null value are cleared.
+
+        Setting a field to the value it already has does not rewrite the file,
+        so a repeated request is free rather than churning the library.
+      operationId: patchTrack
+      parameters:
+        - name: If-Match
+          in: header
+          description: |
+            The `version` the client last saw. When present it must still match,
+            or the request fails with `409` because the file changed underneath.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Changes' }
+            examples:
+              correctArtist:
+                summary: Fix an artist and clear a stray comment
+                value: { artist: "Elvis Presley", comment: null }
+      responses:
+        '200':
+          description: The updated track.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Track' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unwritable' }
+
+  /tracks/{id}/artwork:
+    parameters:
+      - $ref: '#/components/parameters/TrackId'
+    get:
+      tags: [artwork]
+      summary: Fetch a track's cover
+      operationId: getArtwork
+      responses:
+        '200':
+          description: The image.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        '404':
+          description: The track has no embedded artwork.
+    put:
+      tags: [artwork]
+      summary: Replace a track's cover
+      operationId: putArtwork
+      requestBody:
+        required: true
+        description: The raw image. The format is taken from the content, not the header.
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+          application/octet-stream: { schema: { type: string, format: binary } }
+      responses:
+        '200':
+          description: The updated track.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Track' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unwritable' }
+    delete:
+      tags: [artwork]
+      summary: Remove a track's cover
+      operationId: deleteArtwork
+      responses:
+        '204': { description: "The artwork was removed, or there was none." }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /albums:
+    get:
+      tags: [browse]
+      summary: List albums
+      description: |
+        Groups matching tracks by album artist and album. This is the natural
+        entry point for a browsing interface, where the unit of work is usually
+        a record rather than a track. Each album carries a `query` that
+        reselects exactly it.
+      operationId: listAlbums
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: A page of albums.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlbumPage' }
+
+  /values/{field}:
+    get:
+      tags: [browse]
+      summary: Distinct values of a field
+      description: |
+        Powers autocomplete and faceted browsing. Values are returned most-used
+        first, with the count of tracks carrying each. Prefix matches are
+        preferred; when there are none, substring matches are returned so a
+        partly-remembered album still finds itself.
+      operationId: listValues
+      parameters:
+        - name: field
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/FieldName' }
+        - name: prefix
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Matching values.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ValueCount' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /stats:
+    get:
+      tags: [browse]
+      summary: Library statistics
+      description: |
+        Counts, totals and — the useful part for maintenance — how many tracks
+        are missing each field.
+      operationId: getStats
+      responses:
+        '200':
+          description: The summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Stats' }
+
+  /tracks/batch:
+    post:
+      tags: [batch]
+      summary: Apply changes to many tracks
+      description: |
+        The operation this API exists for. Applies one set of changes to every
+        selected track, where the selection is usually a query rather than a
+        list of identifiers.
+      operationId: batchEditTracks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchEditRequest' }
+            examples:
+              setArtist:
+                summary: Set the artist across a whole search
+                value:
+                  selector: { query: "artist:\"elvis presly\"", expectCount: 42 }
+                  set: { artist: "Elvis Presley" }
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CountMismatch' }
+
+  /artwork/batch:
+    post:
+      tags: [artwork, batch]
+      summary: Set or clear artwork across many tracks
+      description: |
+        `folder` is the one worth knowing about: it embeds the `cover.jpg` or
+        `folder.jpg` sitting beside each track, which is how a downloaded
+        library normally stores art and the usual reason none of it appears on
+        a phone. Each directory is read once, not once per track.
+
+        Embedding artwork rewrites the file, since a cover is far larger than
+        the padding any format reserves. Tracks whose art already matches are
+        skipped, so a repeated run costs nothing.
+      operationId: batchArtwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BatchArtworkRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CountMismatch' }
+
+  /clipboard/artwork:
+    get:
+      tags: [artwork]
+      summary: Read the artwork clipboard
+      operationId: getClipboard
+      responses:
+        '200':
+          description: The held image.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/png: { schema: { type: string, format: binary } }
+        '404': { description: Nothing has been copied. }
+    put:
+      tags: [artwork]
+      summary: Copy an image to the clipboard
+      description: |
+        The clipboard lives on the server, so a cover copied in the terminal can
+        be pasted from a phone and the other way round.
+      operationId: putClipboard
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+          application/octet-stream: { schema: { type: string, format: binary } }
+      responses:
+        '200':
+          description: What is now held.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Picture' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+    delete:
+      tags: [artwork]
+      summary: Empty the clipboard
+      operationId: deleteClipboard
+      responses:
+        '204': { description: Emptied. }
+
+  /clipboard/artwork/from-track/{id}:
+    put:
+      tags: [artwork]
+      parameters:
+        - $ref: '#/components/parameters/TrackId'
+      summary: Copy a track's cover to the clipboard
+      operationId: copyArtworkFromTrack
+      responses:
+        '200':
+          description: What is now held.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Picture' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /artwork/summary:
+    get:
+      tags: [artwork]
+      summary: Summarise artwork across a selection
+      description: |
+        Groups identical covers together, which is the only way the duplication
+        becomes visible: on a real library the great majority of embedded
+        artwork is one image repeated once per track.
+      operationId: artworkSummary
+      parameters:
+        - $ref: '#/components/parameters/Query'
+      responses:
+        '200':
+          description: The summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtworkReport' }
+
+  /strip:
+    post:
+      tags: [batch]
+      summary: Remove every tag not on a keep list
+      description: |
+        Defaults to a dry run. An operation that permanently discards data
+        across a library should have to be asked for twice.
+
+        The keep list is written in canonical names rather than the identifiers
+        any one format uses, so the same list applies to MP3, FLAC, MP4, Ogg
+        Vorbis and Opus alike. Names native to a format are accepted as aliases.
+      operationId: stripTags
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StripRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CountMismatch' }
+
+  /backups:
+    get:
+      tags: [batch]
+      summary: List strip backups
+      operationId: listBackups
+      responses:
+        '200':
+          description: The stored backups, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Backup' }
+
+  /restore:
+    post:
+      tags: [batch]
+      summary: Restore tags from a strip backup
+      operationId: restoreBackup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scans:
+    post:
+      tags: [scan]
+      summary: Scan the filesystem
+      description: |
+        Walks the roots and brings the catalogue up to date. Files whose size
+        and modification time are unchanged are reused without being opened, so
+        a refresh costs a stat per file rather than a read.
+
+        With no roots given, refreshes whatever the catalogue already covers.
+      operationId: startScan
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScanRequest' }
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /jobs:
+    get:
+      tags: [jobs]
+      summary: List jobs
+      operationId: listJobs
+      responses:
+        '200':
+          description: Known jobs, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Job' }
+
+  /jobs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [jobs]
+      summary: Fetch a job
+      operationId: getJob
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [jobs]
+      summary: Cancel a running job
+      description: |
+        Work already done is not undone: a scan keeps what it found, and a batch
+        keeps the files it has already written.
+      operationId: cancelJob
+      responses:
+        '204': { description: Cancellation was requested. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The job has already finished. }
+
+  /jobs/{id}/events:
+    get:
+      tags: [jobs]
+      summary: Stream a job's progress
+      description: A `text/event-stream` of `Event` objects for one job.
+      operationId: streamJobEvents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events:
+    get:
+      tags: [jobs]
+      summary: Stream catalogue changes
+      description: |
+        A `text/event-stream` of `Event` objects. This is what lets several
+        interfaces stay in step: an edit made on a phone pushes
+        `tracks.changed`, and the terminal drops those rows from its cache
+        instead of polling for them.
+
+        A subscriber that falls too far behind loses events rather than
+        blocking the write that produced one, so a client that has been
+        disconnected should refetch rather than assume it saw everything.
+      operationId: streamEvents
+      responses:
+        '200':
+          description: The event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Required whenever the server is bound to anything other than loopback.
+        The token is generated on first run and printed once.
+
+  headers:
+    ETag:
+      description: The track's `version`, for use as `If-Match` on a later edit.
+      schema: { type: string }
+
+  parameters:
+    TrackId:
+      name: id
+      in: path
+      required: true
+      description: A stable identifier derived from the file's path.
+      schema: { type: string }
+    Query:
+      name: q
+      in: query
+      description: |
+        A search expression in the same language the search bar and the command
+        line use.
+
+        | Example | Matches |
+        | --- | --- |
+        | `elvis` | any text field contains it |
+        | `artist:elvis` | just that field |
+        | `artist:"elvis presley"` | quoted values may contain spaces |
+        | `year:>1980` | comparisons: `<`, `<=`, `>`, `>=` |
+        | `year:1970-1979` | an inclusive range |
+        | `-genre:live` | exclude matches |
+        | `album:` | the field is empty |
+
+        Terms are combined with AND. Matching ignores case and accents, so
+        `bjork` finds `Björk`. An empty query matches everything.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
+    Offset:
+      name: offset
+      in: query
+      schema: { type: integer, minimum: 0, default: 0 }
+
+  responses:
+    NotFound:
+      description: No such resource.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    BadRequest:
+      description: The request was malformed or named an unknown field.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    Conflict:
+      description: The file changed since the version the client sent.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    CountMismatch:
+      description: |
+        The selector's `expectCount` no longer matches. The selection changed
+        between the client reading it and asking for the operation.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    Unwritable:
+      description: |
+        This build can read the file's format but cannot write it. WMA, WAV and
+        AIFF are read-only.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    JobAccepted:
+      description: The job was started.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Job' } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, description: A message suitable for showing to a person. }
+        code:
+          type: string
+          description: A stable identifier for the failure.
+          enum: [not_found, bad_request, conflict, count_mismatch, unwritable, unauthorized, internal]
+        expected: { type: integer, description: "For count_mismatch, the count the client sent." }
+        actual: { type: integer, description: "For count_mismatch, the count the server found." }
+
+    FieldName:
+      type: string
+      description: A metadata field.
+      enum: [title, artist, albumartist, album, genre, composer, comment, year, track, disc, path]
+
+    Track:
+      type: object
+      required: [id, path, format, size, modTime, hasArt, writable, version]
+      properties:
+        id: { type: string }
+        path: { type: string, description: The file's absolute path on the server. }
+        title: { type: string }
+        artist: { type: string }
+        albumArtist: { type: string }
+        album: { type: string }
+        genre: { type: string }
+        composer: { type: string }
+        comment: { type: string }
+        year: { type: integer, format: int32 }
+        track: { type: integer, format: int32 }
+        trackTotal: { type: integer, format: int32 }
+        disc: { type: integer, format: int32 }
+        discTotal: { type: integer, format: int32 }
+        durationMs: { type: integer, format: int32 }
+        bitrate: { type: integer, format: int32, description: kbps }
+        sampleRate: { type: integer, format: int32, description: Hz }
+        channels: { type: integer }
+        format: { type: string, examples: [mp3, flac, mp4, ogg, opus, wma, wav, aiff] }
+        size: { type: integer, format: int64 }
+        modTime: { type: integer, format: int64, description: Unix seconds. }
+        hasArt: { type: boolean }
+        writable:
+          type: boolean
+          description: False for formats this build can read but not write.
+        version:
+          type: string
+          description: The file's state on disk; send back as `If-Match`.
+
+    TrackPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Track' } }
+        total: { type: integer, description: Matches before paging. }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    Changes:
+      type: object
+      description: |
+        A sparse set of field updates. A missing key leaves the field alone; a
+        key present with `null` clears it. Numeric fields are given as strings
+        and parsed, so `"1977"` and `"1977-08-16"` both work for a year.
+      additionalProperties: false
+      properties:
+        title: { type: [string, "null"] }
+        artist: { type: [string, "null"] }
+        albumartist: { type: [string, "null"] }
+        album: { type: [string, "null"] }
+        genre: { type: [string, "null"] }
+        composer: { type: [string, "null"] }
+        comment: { type: [string, "null"] }
+        year: { type: [string, "null"] }
+        track: { type: [string, "null"] }
+        tracktotal: { type: [string, "null"] }
+        disc: { type: [string, "null"] }
+        disctotal: { type: [string, "null"] }
+
+    Selector:
+      type: object
+      description: |
+        Names the tracks an operation applies to. Selecting by query is the
+        point: setting a field on two thousand tracks should not require
+        uploading two thousand identifiers.
+
+        An empty selector matches nothing and is rejected; `all` must be set
+        explicitly, so "everything" can never be reached by accident.
+      properties:
+        ids:
+          type: array
+          items: { type: string }
+          description: Specific tracks. When present, `query` is ignored.
+        query: { type: string, description: A search expression. }
+        excludeIds:
+          type: array
+          items: { type: string }
+          description: Removed from a query selection — "all of these except these".
+        expectCount:
+          type: integer
+          description: |
+            The number of matches the client expects. When it does not agree
+            with the server the operation is refused, so a destructive change
+            cannot land on a different set than the one someone approved.
+        all: { type: boolean, description: Select the entire library. }
+
+    BatchEditRequest:
+      type: object
+      required: [selector, set]
+      properties:
+        selector: { $ref: '#/components/schemas/Selector' }
+        set: { $ref: '#/components/schemas/Changes' }
+        dryRun: { type: boolean, default: false }
+
+    BatchArtworkRequest:
+      type: object
+      required: [selector, source]
+      properties:
+        selector: { $ref: '#/components/schemas/Selector' }
+        source:
+          type: string
+          enum: [clipboard, upload, folder, remove]
+          description: |
+            `clipboard` uses the server-side clipboard, `upload` the `image`
+            field, `folder` the cover image beside each track, and `remove`
+            takes the artwork off.
+        image:
+          type: string
+          format: byte
+          description: Base64 image data, required when `source` is `upload`.
+        dryRun: { type: boolean, default: false }
+
+    StripRequest:
+      type: object
+      required: [selector]
+      properties:
+        selector: { $ref: '#/components/schemas/Selector' }
+        keep:
+          type: array
+          items: { type: string }
+          description: Replaces the default keep list.
+        also:
+          type: array
+          items: { type: string }
+          description: Added to the default keep list.
+        dryRun: { type: boolean, default: true }
+        backup: { type: boolean, default: false, description: Record what was removed so it can be restored. }
+
+    RestoreRequest:
+      type: object
+      required: [backupId]
+      properties:
+        backupId: { type: string }
+        dryRun: { type: boolean, default: false }
+
+    ScanRequest:
+      type: object
+      properties:
+        roots:
+          type: array
+          items: { type: string }
+          description: Directories to walk. Empty refreshes the catalogue's own roots.
+        full: { type: boolean, description: Re-read every file rather than reusing unchanged entries. }
+        exclude: { type: array, items: { type: string } }
+        includeHidden: { type: boolean }
+        followSymlinks: { type: boolean }
+        workers: { type: integer }
+
+    Job:
+      type: object
+      required: [id, kind, state, progress, createdAt]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [scan, edit, artwork, strip, restore] }
+        state: { type: string, enum: [running, succeeded, failed, cancelled] }
+        progress:
+          type: object
+          required: [done, total]
+          properties:
+            done: { type: integer, format: int64 }
+            total: { type: integer, format: int64 }
+            message: { type: string }
+        result:
+          description: Present when the job succeeded; its shape depends on `kind`.
+          oneOf:
+            - { $ref: '#/components/schemas/BatchResult' }
+            - { $ref: '#/components/schemas/StripResult' }
+            - { $ref: '#/components/schemas/ScanResult' }
+        error: { type: string }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: string, format: date-time }
+
+    BatchResult:
+      type: object
+      properties:
+        matched: { type: integer }
+        changed: { type: integer }
+        skipped: { type: integer, description: Already had the requested value. }
+        failed: { type: integer }
+        dryRun: { type: boolean }
+        errors:
+          type: array
+          description: Capped, so a systematically failing run stays readable.
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              path: { type: string }
+              error: { type: string }
+
+    StripResult:
+      allOf:
+        - $ref: '#/components/schemas/BatchResult'
+        - type: object
+          properties:
+            backupId: { type: string }
+            bytesRemoved: { type: integer, format: int64 }
+            upgradedFromV22: { type: integer, description: Files rewritten from ID3v2.2 to v2.3. }
+            keep: { type: array, items: { type: string } }
+            skippedFormats:
+              type: object
+              additionalProperties: { type: integer }
+              description: Counts of files this build cannot write.
+            removed:
+              type: array
+              items:
+                type: object
+                properties:
+                  format: { type: string }
+                  key: { type: string }
+                  meaning: { type: string }
+                  tracks: { type: integer }
+                  bytes: { type: integer, format: int64 }
+                  samples: { type: array, items: { type: string } }
+
+    ScanResult:
+      type: object
+      properties:
+        tracks: { type: integer }
+        roots: { type: array, items: { type: string } }
+        directories: { type: integer, format: int64 }
+        found: { type: integer, format: int64 }
+        read: { type: integer, format: int64 }
+        unchanged: { type: integer, format: int64 }
+        errors: { type: integer, format: int64 }
+        removed: { type: integer }
+        elapsedMs: { type: integer, format: int64 }
+
+    Album:
+      type: object
+      required: [id, album, tracks, query]
+      properties:
+        id: { type: string }
+        album: { type: string }
+        albumArtist: { type: string }
+        tracks: { type: integer }
+        withArtwork: { type: integer }
+        year: { type: integer, format: int32 }
+        durationMs: { type: integer, format: int64 }
+        query: { type: string, description: Reselects exactly this album. }
+
+    AlbumPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/Album' } }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    ValueCount:
+      type: object
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer, description: Tracks carrying this value. }
+
+    Stats:
+      type: object
+      properties:
+        tracks: { type: integer }
+        roots: { type: array, items: { type: string } }
+        scannedAt: { type: string, format: date-time }
+        totalBytes: { type: integer, format: int64 }
+        totalDurationMs: { type: integer, format: int64 }
+        withArtwork: { type: integer }
+        artists: { type: integer }
+        albums: { type: integer }
+        genres: { type: integer }
+        formats:
+          type: object
+          additionalProperties: { type: integer }
+        missing:
+          type: object
+          additionalProperties: { type: integer }
+          description: Tracks with no value for each field — where the work is.
+
+    Picture:
+      type: object
+      properties:
+        mime: { type: string }
+        width: { type: integer }
+        height: { type: integer }
+        bytes: { type: integer }
+        kind: { type: string, examples: ["front cover"] }
+        summary: { type: string, description: A one-line description for display. }
+        source: { type: string, description: Where the clipboard image came from. }
+
+    ArtworkReport:
+      type: object
+      properties:
+        tracks: { type: integer }
+        withoutArtwork: { type: integer }
+        totalBytes: { type: integer, format: int64 }
+        uniqueBytes:
+          type: integer
+          format: int64
+          description: |
+            The size of the distinct images. Far below `totalBytes` on a real
+            library, because the same cover is embedded once per track.
+        groups:
+          type: array
+          items:
+            type: object
+            properties:
+              hash: { type: string }
+              summary: { type: string }
+              mime: { type: string }
+              width: { type: integer }
+              height: { type: integer }
+              tracks: { type: integer }
+              bytes: { type: integer, format: int64 }
+              sampleTrackId: { type: string }
+              exampleAlbum: { type: string }
+
+    Backup:
+      type: object
+      properties:
+        id: { type: string }
+        created: { type: string, format: date-time }
+        tracks: { type: integer }
+        bytes: { type: integer, format: int64 }
+
+    Event:
+      type: object
+      required: [type, at]
+      properties:
+        type:
+          type: string
+          enum: [tracks.changed, catalog.replaced, job.progress, job.finished, clipboard.changed]
+        at: { type: string, format: date-time }
+        trackIds: { type: array, items: { type: string } }
+        job: { $ref: '#/components/schemas/Job' }

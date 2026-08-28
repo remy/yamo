@@ -17,6 +17,7 @@ import (
 const rootUsage = `tagmgr - terminal music metadata manager
 
 Usage:
+  tagmgr serve [flags]           run the backend that owns the library
   tagmgr [flags]                 browse and edit the catalogue (default)
   tagmgr scan [flags] <dir>...   build or refresh the catalogue
   tagmgr find [flags] <query>    print matching tracks and exit
@@ -91,6 +92,8 @@ func run(args []string) error {
 		return cmdScan(args)
 	case "find", "search":
 		return cmdFind(args)
+	case "serve":
+		return cmdServe(args)
 	case "art", "cover":
 		return cmdArt(args)
 	case "strip":
@@ -128,6 +131,8 @@ func cmdHelp(args []string) error {
 		return cmdScan([]string{"-h"})
 	case "find", "search":
 		return cmdFind([]string{"-h"})
+	case "serve":
+		return cmdServe([]string{"-h"})
 	case "art", "cover":
 		return cmdArt([]string{"-h"})
 	case "strip":
@@ -264,4 +269,24 @@ func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 // catalogFlag registers the one flag every command shares.
 func catalogFlag(fs *flag.FlagSet) *string {
 	return fs.String("catalog", defaultCatalogPath(), "catalogue file path")
+}
+
+// formatCount renders a large number with thousands separators.
+func formatCount(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	lead := len(s) % 3
+	if lead > 0 {
+		b.WriteString(s[:lead])
+	}
+	for i := lead; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
 }

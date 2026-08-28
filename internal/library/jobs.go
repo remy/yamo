@@ -113,7 +113,8 @@ func newJobs(s *Service) *Jobs {
 // long-lived server does not accumulate them.
 const jobRetention = time.Hour
 
-// Start registers a job and runs fn in the background.
+// Start registers a job, runs fn in the background, and returns a snapshot of
+// the job as it was at that moment.
 func (r *Jobs) Start(kind string, fn func(ctx context.Context, j *Job) (any, error)) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &Job{
@@ -131,7 +132,10 @@ func (r *Jobs) Start(kind string, fn func(ctx context.Context, j *Job) (any, err
 		result, err := fn(ctx, j)
 		j.finish(result, err, ctx.Err() != nil && err != nil)
 	}()
-	return j
+
+	// A snapshot, not the live job: the caller is about to serialise this
+	// while the goroutine above is already writing progress into it.
+	return j.snapshot()
 }
 
 // Get returns a snapshot of one job.

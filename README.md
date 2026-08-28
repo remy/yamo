@@ -39,6 +39,63 @@ Both binaries are static and depend on nothing on the target.
 
 For local use: `make install` or `go install ./cmd/tagmgr`.
 
+## The server
+
+`tagmgr serve` runs the backend that owns the catalogue and the music files.
+It exposes an HTTP API described by an OpenAPI 3.1 schema, so a mobile web
+interface — or anything else — can be built on the same operations the terminal
+uses.
+
+```sh
+tagmgr serve                                 # loopback, no token needed
+tagmgr serve -listen 0.0.0.0:8467            # reachable on the network
+tagmgr serve -listen unix:///tmp/tagmgr.sock
+
+curl -O http://127.0.0.1:8467/openapi.yaml   # download the contract
+open http://127.0.0.1:8467/docs              # browse it
+```
+
+The schema is served by the running binary, so it is always the contract that
+build actually implements. `/docs` is a self-contained page with no outbound
+network access required, because a NAS may not have any.
+
+### The shape of it
+
+The library runs to six figures and the work is gradual, so three things
+follow. Everything is paged — there is no endpoint that returns the whole
+library. Operations select by **query** rather than by identifier, so setting a
+field on two thousand tracks does not mean uploading two thousand ids. And
+anything that can touch more than one file returns a **job**, even when it
+finishes at once, so a client has one shape to handle.
+
+```sh
+# the case this exists for: fix a misspelled artist across a whole search
+curl -X POST localhost:8467/v1/tracks/batch -H 'Content-Type: application/json' -d '{
+  "selector": {"query": "artist:presly", "expectCount": 42},
+  "set": {"artist": "Elvis Presley"}
+}'
+```
+
+`expectCount` is a safety rail: the client states how many matches it showed
+someone, and the server refuses if the selection has moved since.
+
+Every track carries a `version`. Send it back as `If-Match` on a `PATCH` and a
+mismatch returns `409`, which is what stops an edit made on a phone silently
+overwriting one made in the terminal a moment earlier. `GET /v1/events` streams
+changes, so several interfaces stay in step without polling.
+
+Edits write through: a `PATCH` writes the tag to the file and returns. There is
+no pending state to commit, and therefore none for a background scan to lose.
+
+### Access
+
+Loopback by default, where no token is needed. Binding anywhere else requires
+one — generated on first run, printed once, kept beside the catalogue.
+
+Cross-origin browser requests are only permitted when a token is set. A server
+on loopback with permissive headers could be driven by any web page you
+happened to visit, and this API rewrites music files.
+
 ## Use
 
 ```sh
@@ -294,10 +351,13 @@ is why 100,000 tracks fit in 4.6 MiB and load in 13 ms.
 ## Layout
 
 ```
-cmd/tagmgr/        command line: scan, find, info, browse
+api/               the OpenAPI contract, embedded into the binary
+cmd/tagmgr/        command line: serve, scan, find, info, art, strip, browse
 internal/tags/     format parsers and writers; no third-party tag library
 internal/catalog/  in-memory library, binary snapshot, search index
 internal/scan/     parallel directory walk and tag extraction
+internal/library/  the service layer: owns the catalogue, all operations
+internal/api/      HTTP handlers over the service
 internal/ui/       the terminal interface
 tools/genlib/      synthetic library generator, for benchmarking
 tools/tuidrive/    drives the interface in a pty, for testing the rendering
