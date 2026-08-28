@@ -104,6 +104,7 @@ func (s *Server) routes() {
 	s.handle("POST /v1/strip", s.stripTags)
 	s.handle("GET /v1/backups", s.listBackups)
 	s.handle("POST /v1/restore", s.restoreBackup)
+	s.handle("GET /v1/scans", s.getScanStatus)
 	s.handle("POST /v1/scans", s.startScan)
 
 	// Jobs and events.
@@ -176,6 +177,7 @@ type apiError struct {
 	Code     string `json:"code"`
 	Expected *int   `json:"expected,omitempty"`
 	Actual   *int   `json:"actual,omitempty"`
+	JobID    string `json:"jobId,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -196,7 +198,12 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 // rather than being decided again in every handler.
 func fail(w http.ResponseWriter, err error) {
 	var mismatch *library.CountMismatchError
+	var scanning *library.ScanRunningError
 	switch {
+	case errors.As(err, &scanning):
+		writeJSON(w, http.StatusConflict, apiError{
+			Error: scanning.Error(), Code: "scan_running", JobID: scanning.JobID,
+		})
 	case errors.Is(err, tags.ErrNoPicture):
 		// Asking for artwork a track does not have is a missing resource, not
 		// a server fault.

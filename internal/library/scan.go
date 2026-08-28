@@ -24,6 +24,50 @@ type ScanRequest struct {
 	Workers        int      `json:"workers,omitempty"`
 }
 
+// ScanRunningError means a scan is already under way.
+//
+// A second concurrent scan is never what anyone wants: both walk the same
+// tree, both build a whole catalogue, and whichever finishes last silently
+// wins. Refusing is better than returning the running job, because a request
+// asking for a full re-read would otherwise be quietly answered with an
+// incremental one already in progress.
+type ScanRunningError struct{ JobID string }
+
+func (e *ScanRunningError) Error() string {
+	return "library: a scan is already running (job " + e.JobID + ")"
+}
+
+// ScanStatus describes the state of scanning, for a client that wants to know
+// whether the library is being rebuilt underneath it.
+type ScanStatus struct {
+	Running   bool       `json:"running"`
+	Job       *Job       `json:"job,omitempty"`  // the scan in progress
+	Last      *Job       `json:"last,omitempty"` // the most recent finished scan
+	Roots     []string   `json:"roots"`
+	Tracks    int        `json:"tracks"`
+	ScannedAt *time.Time `json:"scannedAt,omitempty"`
+}
+
+// ScanStatus reports whether a scan is running and what the last one did.
+func (s *Service) ScanStatus() ScanStatus {
+	st := ScanStatus{}
+	if j, ok := s.jobs.RunningOfKind(JobScan); ok {
+		st.Running, st.Job = true, j
+	}
+	if j, ok := s.jobs.LastOfKind(JobScan); ok {
+		st.Last = j
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	st.Roots = append([]string{}, s.cat.Roots...)
+	st.Tracks = len(s.cat.Tracks)
+	if !s.cat.ScannedAt.IsZero() {
+		at := s.cat.ScannedAt
+		st.ScannedAt = &at
+	}
+	return st
+}
+
 // ScanResult reports what a scan found.
 type ScanResult struct {
 	Tracks    int      `json:"tracks"`
@@ -44,6 +88,14 @@ type ScanResult struct {
 // the files as they are made, which means there is never pending work for a
 // scan to lose — the reason write-through is worth the round trip.
 func (s *Service) Scan(req ScanRequest) (*Job, error) {
+	// Checking and starting must be one step, or two requests arriving
+	// together would both see no scan running and both start one.
+	s.scanMu.Lock()
+	defer s.scanMu.Unlock()
+	if j, ok := s.jobs.RunningOfKind(JobScan); ok {
+		return nil, &ScanRunningError{JobID: j.ID}
+	}
+
 	roots := req.Roots
 	if len(roots) == 0 {
 		s.mu.RLock()

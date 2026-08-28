@@ -17,6 +17,36 @@ info:
     **Everything is paged.** `GET /tracks` returns a window and a total. There
     is no endpoint that returns the whole library.
 
+    ## Paging
+
+    Paging is offset-based. `limit` and `offset` go in the query string; the
+    response is an envelope of `items`, `total`, `limit` and `offset`.
+
+    ```
+    GET /v1/tracks?q=artist:elvis&sort=album,track&limit=50&offset=100
+    → { "items": [ … 50 tracks … ], "total": 2400, "limit": 50, "offset": 100 }
+    ```
+
+    - `total` is the number of matches **before** paging, so it is what a
+      result count or a scrollbar should be sized from.
+    - `limit` and `offset` are echoed back as applied. A `limit` above the
+      maximum is capped rather than rejected, so read the response rather than
+      assuming the request was honoured.
+    - You have reached the end when `offset + len(items) >= total`, or when
+      `items` comes back empty. An offset past the end is not an error.
+    - Deep offsets are not penalised: offset 99,000 of 100,000 costs the same
+      as offset 0.
+
+    Paging is a window onto a query, not a cursor. If the library changes
+    between requests — a scan finishes, another client edits something — rows
+    can shift between pages. For a stable walk, pass a `sort` and accept that
+    an edit may still move a row; for anything destructive, use a `Selector`
+    with `expectCount` rather than paging and collecting identifiers.
+
+    `GET /values/{field}` is the exception: it takes a `limit` but returns a
+    bare array. It is a capped list of the most-used values for autocomplete,
+    not a page of a larger set.
+
     **Operations select by query, not by identifier.** Setting the artist on
     every Elvis track should not require uploading two thousand ids, so a
     `Selector` carries the same query language the search bar uses.
@@ -438,6 +468,25 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   /scans:
+    get:
+      tags: [scan]
+      summary: Whether a scan is running, and what the last one did
+      description: |
+        Cheap to poll. A client that browses the library wants to know when it
+        is being rebuilt underneath — a scan replaces the catalogue wholesale,
+        so identifiers and result sets can change the moment one finishes.
+
+        `running` and `job` describe a scan in progress; `last` is the most
+        recent finished one, which is dropped an hour after it ends. `scannedAt`
+        comes from the catalogue itself and is therefore always present once
+        anything has been scanned.
+      operationId: getScanStatus
+      responses:
+        '200':
+          description: The current state of scanning.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanStatus' }
     post:
       tags: [scan]
       summary: Scan the filesystem
@@ -447,6 +496,13 @@ paths:
         a refresh costs a stat per file rather than a read.
 
         With no roots given, refreshes whatever the catalogue already covers.
+
+        **Posting again while a scan is running does not return the running
+        job — it fails with `409` and `code: scan_running`.** Two concurrent
+        scans would each walk the tree, each build a whole catalogue, and
+        whichever finished last would silently win. The running job's id is in
+        the error, so a client can follow it or cancel it. Use `GET /scans` to
+        check first.
       operationId: startScan
       requestBody:
         required: false
@@ -456,6 +512,10 @@ paths:
       responses:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409':
+          description: A scan is already running. `jobId` names it.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
 
   /jobs:
     get:
@@ -584,10 +644,17 @@ components:
     Limit:
       name: limit
       in: query
+      description: |
+        How many items to return. Values above the maximum are capped rather
+        than rejected, so the response's own `limit` is authoritative — read it
+        back rather than assuming the request was honoured.
       schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
     Offset:
       name: offset
       in: query
+      description: |
+        How many items to skip. An offset past the end returns an empty `items`
+        with the true `total`, which is not an error.
       schema: { type: integer, minimum: 0, default: 0 }
 
   responses:
@@ -629,7 +696,8 @@ components:
         code:
           type: string
           description: A stable identifier for the failure.
-          enum: [not_found, bad_request, conflict, count_mismatch, unwritable, unauthorized, internal]
+          enum: [not_found, bad_request, conflict, count_mismatch, scan_running, unwritable, unauthorized, internal]
+        jobId: { type: string, description: "For scan_running, the scan already in progress." }
         expected: { type: integer, description: "For count_mismatch, the count the client sent." }
         actual: { type: integer, description: "For count_mismatch, the count the server found." }
 
@@ -672,13 +740,23 @@ components:
           description: The file's state on disk; send back as `If-Match`.
 
     TrackPage:
+      description: One page of results. See "Paging" in the introduction.
       type: object
       required: [items, total, limit, offset]
       properties:
-        items: { type: array, items: { $ref: '#/components/schemas/Track' } }
-        total: { type: integer, description: Matches before paging. }
-        limit: { type: integer }
-        offset: { type: integer }
+        items:
+          type: array
+          description: This page. Never longer than `limit`, and shorter on the last page.
+          items: { $ref: '#/components/schemas/Track' }
+        total:
+          type: integer
+          description: Total tracks matching the query, before paging.
+        limit:
+          type: integer
+          description: The page size actually applied, which may be lower than requested.
+        offset:
+          type: integer
+          description: The offset this page starts at, echoed back.
 
     Changes:
       type: object
@@ -857,6 +935,22 @@ components:
                   bytes: { type: integer, format: int64 }
                   samples: { type: array, items: { type: string } }
 
+    ScanStatus:
+      type: object
+      required: [running, roots, tracks]
+      properties:
+        running: { type: boolean, description: Whether a scan is in progress now. }
+        job: { $ref: '#/components/schemas/Job' }
+        last:
+          allOf: [{ $ref: '#/components/schemas/Job' }]
+          description: The most recent finished scan, dropped an hour after it ends.
+        roots: { type: array, items: { type: string } }
+        tracks: { type: integer, description: Tracks currently in the catalogue. }
+        scannedAt:
+          type: string
+          format: date-time
+          description: When the catalogue was last replaced by a scan.
+
     ScanResult:
       type: object
       properties:
@@ -884,13 +978,23 @@ components:
         query: { type: string, description: Reselects exactly this album. }
 
     AlbumPage:
+      description: One page of results. See "Paging" in the introduction.
       type: object
       required: [items, total, limit, offset]
       properties:
-        items: { type: array, items: { $ref: '#/components/schemas/Album' } }
-        total: { type: integer }
-        limit: { type: integer }
-        offset: { type: integer }
+        items:
+          type: array
+          description: This page. Never longer than `limit`, and shorter on the last page.
+          items: { $ref: '#/components/schemas/Album' }
+        total:
+          type: integer
+          description: Total albums matching the query, before paging.
+        limit:
+          type: integer
+          description: The page size actually applied, which may be lower than requested.
+        offset:
+          type: integer
+          description: The offset this page starts at, echoed back.
 
     ValueCount:
       type: object

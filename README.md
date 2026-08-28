@@ -124,6 +124,7 @@ without `-full` reuses every entry whose size and modification time are
 unchanged, so a refresh costs a stat per file rather than a read.
 
 ```sh
+tagmgr scan -status                     # is one running?
 tagmgr scan /volume1/music              # first run, or refresh
 tagmgr scan                             # refresh whatever the catalogue covers
 tagmgr scan -full /volume1/music        # ignore the cache, re-read everything

@@ -166,6 +166,20 @@ uploading 2,400 identifiers. `expectCount` is a safety rail: the client states
 how many matches it showed someone, and the server refuses if the selection has
 moved since. An empty selector matches nothing; `all` must be set explicitly.
 
+### Only one scan runs at a time
+
+`POST /v1/scans` while one is running returns `409` with `code: scan_running`
+and the running job's id — it does **not** return the running job as if it had
+started a new one. Two scans would each walk the tree, each build a whole
+catalogue, and whichever finished last would silently win; and returning the
+running job would quietly answer a `full: true` request with an incremental
+scan already in progress.
+
+`GET /v1/scans` reports whether one is running, the last finished one, and the
+catalogue's own `scannedAt`. The check and the start are under one mutex
+(`Service.scanMu`), or two simultaneous requests would both see nothing
+running.
+
 ### Everything long-running returns a job
 
 Even when it finishes at once, so a client has one shape to handle rather than

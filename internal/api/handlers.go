@@ -305,6 +305,10 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 	writeJob(w, job)
 }
 
+func (s *Server) getScanStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.ScanStatus())
+}
+
 func (s *Server) startScan(w http.ResponseWriter, r *http.Request) {
 	var req library.ScanRequest
 	if r.ContentLength > 0 {

@@ -145,6 +145,38 @@ func (r *Jobs) Start(kind string, fn func(ctx context.Context, j *Job) (any, err
 	return j.snapshot()
 }
 
+// RunningOfKind returns the running job of a kind, if there is one.
+func (r *Jobs) RunningOfKind(kind string) (*Job, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, j := range r.jobs {
+		j.mu.Lock()
+		match := j.Kind == kind && j.State == JobRunning
+		j.mu.Unlock()
+		if match {
+			return j.snapshot(), true
+		}
+	}
+	return nil, false
+}
+
+// LastOfKind returns the most recently finished job of a kind.
+func (r *Jobs) LastOfKind(kind string) (*Job, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var best *Job
+	for _, j := range r.jobs {
+		snap := j.snapshot()
+		if snap.Kind != kind || snap.FinishedAt == nil {
+			continue
+		}
+		if best == nil || snap.FinishedAt.After(*best.FinishedAt) {
+			best = snap
+		}
+	}
+	return best, best != nil
+}
+
 // Get returns a snapshot of one job.
 func (r *Jobs) Get(id string) (*Job, error) {
 	r.mu.Lock()

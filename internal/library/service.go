@@ -49,6 +49,9 @@ type Service struct {
 	events *eventBus
 	jobs   *Jobs
 
+	// scanMu makes checking for a running scan and starting one atomic.
+	scanMu sync.Mutex
+
 	saveMu    sync.Mutex
 	saveDirty bool
 

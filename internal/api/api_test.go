@@ -609,3 +609,55 @@ func TestSchemaIsServed(t *testing.T) {
 		}
 	}
 }
+
+// TestScanIsNotConcurrent covers the case a client will hit by retrying: two
+// scans would each rebuild the whole catalogue and whichever finished last
+// would silently win.
+func TestScanIsNotConcurrent(t *testing.T) {
+	h := newHarness(t, 40)
+
+	// Nothing running to begin with, but the catalogue remembers a scan.
+	st := h.getJSON(t, "/v1/scans", http.StatusOK)
+	if st["running"].(bool) {
+		t.Fatal("a scan is running before one was asked for")
+	}
+	if st["tracks"].(float64) != 40 {
+		t.Errorf("status reports %v tracks", st["tracks"])
+	}
+	if st["scannedAt"] == nil {
+		t.Error("status has no scannedAt after a scan")
+	}
+
+	root := filepath.Join(h.dir, "music")
+	first := h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusAccepted)
+
+	// A second POST while it runs is refused, and names the running job.
+	second := h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusConflict)
+	if second["code"] != "scan_running" {
+		t.Fatalf("second scan gave %v, want scan_running", second)
+	}
+	if second["jobId"] != first["id"] {
+		t.Errorf("the error names job %v, want the running %v", second["jobId"], first["id"])
+	}
+
+	h.waitJob(t, first["id"].(string))
+
+	// Exactly one scan job was created by this test beyond the harness's own.
+	var scans int
+	_, list := h.do(t, http.MethodGet, "/v1/jobs", nil, http.StatusOK)
+	var jobs []map[string]any
+	if err := json.Unmarshal(list, &jobs); err != nil {
+		t.Fatal(err)
+	}
+	for _, j := range jobs {
+		if j["kind"] == "scan" {
+			scans++
+		}
+	}
+	if scans != 2 { // the harness's initial scan, plus this one
+		t.Errorf("%d scan jobs exist, want 2", scans)
+	}
+
+	// And once finished, another is allowed again.
+	h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusAccepted)
+}

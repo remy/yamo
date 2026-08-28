@@ -92,6 +92,7 @@ type Error struct {
 	Message  string
 	Expected *int
 	Actual   *int
+	JobID    string
 }
 
 func (e *Error) Error() string {
@@ -170,10 +171,12 @@ func decodeError(resp *http.Response) error {
 		Code     string `json:"code"`
 		Expected *int   `json:"expected"`
 		Actual   *int   `json:"actual"`
+		JobID    string `json:"jobId"`
 	}
 	if json.Unmarshal(data, &payload) == nil && payload.Error != "" {
 		e.Message, e.Code = payload.Error, payload.Code
 		e.Expected, e.Actual = payload.Expected, payload.Actual
+		e.JobID = payload.JobID
 		return e
 	}
 	e.Message = strings.TrimSpace(string(data))
@@ -301,9 +304,30 @@ func (c *Client) BatchSet(ctx context.Context, req library.BatchSetRequest) (*li
 	return &out, c.postJSON(ctx, "/v1/tracks/batch", req, &out)
 }
 
+// Scan starts a scan. If one is already running the server refuses, and the
+// error carries that job's id so a caller can follow it instead.
 func (c *Client) Scan(ctx context.Context, req library.ScanRequest) (*library.Job, error) {
 	var out library.Job
-	return &out, c.postJSON(ctx, "/v1/scans", req, &out)
+	if err := c.postJSON(ctx, "/v1/scans", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// ScanStatus reports whether a scan is running and what the last one did.
+func (c *Client) ScanStatus(ctx context.Context) (*library.ScanStatus, error) {
+	var out library.ScanStatus
+	return &out, c.do(ctx, http.MethodGet, "/v1/scans", nil, &out)
+}
+
+// RunningScanID returns the scan already in progress, when an error says one
+// is. Empty otherwise.
+func RunningScanID(err error) string {
+	var e *Error
+	if errors.As(err, &e) && e.Code == "scan_running" {
+		return e.JobID
+	}
+	return ""
 }
 
 func (c *Client) Strip(ctx context.Context, req library.StripRequest) (*library.Job, error) {

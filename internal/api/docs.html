@@ -49,7 +49,12 @@
   .sum { color: var(--dim); flex: 1 1 100% }
   @media (min-width: 700px) { .sum { flex: 1 } }
   .body { padding: 0 .9rem .9rem; border-top: 1px solid var(--line) }
-  .desc { white-space: pre-wrap; color: var(--ink) }
+  .desc { color: var(--ink) }
+  .desc p { margin: .5rem 0 }
+  .desc ul { margin: .5rem 0; padding-left: 1.2rem }
+  .desc li { margin: .15rem 0 }
+  .desc table { margin: .5rem 0 }
+  h4.mdh { margin: 1.1rem 0 .3rem; font-size: .95rem; text-transform: none; letter-spacing: 0; color: var(--ink) }
   .desc code, code.inline { background: var(--code); padding: .1rem .3rem; border-radius: 3px; font-size: .88em }
   h4 { margin: 1rem 0 .35rem; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--dim) }
   table { border-collapse: collapse; width: 100%; font-size: .88rem }
@@ -75,13 +80,65 @@
 <script>
 const el = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n };
 
-// A deliberately small subset of Markdown: enough for the prose in the schema,
-// with no dependency to keep this page working on a machine that is offline.
+// A small block-level Markdown renderer: fenced code, headings, tables,
+// lists and inline code. Enough for the prose in the schema, with no
+// dependency, so this page still works on a machine with no network.
+function inline(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+          .replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
+          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+}
+
 function md(s) {
   if (!s) return '';
-  const esc = s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-  return esc.replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
-            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  const lines = s.split('\n');
+  const out = [];
+  let i = 0, para = [], list = [], table = [];
+
+  const flushPara = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };
+  const flushList = () => { if (list.length) { out.push('<ul>' + list.map(l => '<li>' + inline(l) + '</li>').join('') + '</ul>'); list = []; } };
+  const flushTable = () => {
+    if (!table.length) return;
+    const cells = row => row.split('|').slice(1, -1).map(c => c.trim());
+    const head = cells(table[0]);
+    const body = table.slice(2).map(cells); // row 1 is the separator
+    out.push('<table><tr>' + head.map(h => '<th>' + inline(h) + '</th>').join('') + '</tr>' +
+      body.map(r => '<tr>' + r.map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</table>');
+    table = [];
+  };
+  const flushAll = () => { flushPara(); flushList(); flushTable(); };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().startsWith('```')) {
+      flushAll();
+      const buf = [];
+      for (i++; i < lines.length && !lines[i].trim().startsWith('```'); i++) buf.push(lines[i]);
+      i++;
+      out.push('<pre>' + buf.join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>');
+      continue;
+    }
+    if (/^#{2,4}\s/.test(line)) {
+      flushAll();
+      out.push('<h4 class="mdh">' + inline(line.replace(/^#+\s*/, '')) + '</h4>');
+      i++; continue;
+    }
+    if (line.trim().startsWith('|')) { flushPara(); flushList(); table.push(line.trim()); i++; continue; }
+    if (/^\s*[-*]\s/.test(line)) {
+      flushPara(); flushTable();
+      let item = line.replace(/^\s*[-*]\s/, '');
+      // Continuation lines of the same bullet are indented.
+      while (i + 1 < lines.length && /^\s{2,}\S/.test(lines[i + 1]) && !/^\s*[-*]\s/.test(lines[i + 1])) {
+        item += ' ' + lines[++i].trim();
+      }
+      list.push(item); i++; continue;
+    }
+    if (line.trim() === '') { flushAll(); i++; continue; }
+    flushList(); flushTable();
+    para.push(line.trim()); i++;
+  }
+  flushAll();
+  return out.join('');
 }
 
 function typeOf(schema, spec) {

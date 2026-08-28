@@ -29,11 +29,16 @@ sidecars are skipped.
 
 With no directories given, refreshes whatever the library already covers.
 
+Only one scan runs at a time. Asking for another while one is under way
+follows the running one rather than starting a second, since two would each
+rebuild the whole catalogue and whichever finished last would win.
+
 The paths are resolved by the server, not by this command, so they must
 make sense on the machine running it.
 
 Examples:
   tagmgr scan /volume1/music
+  tagmgr scan -status                     is one running?
   tagmgr scan                             refresh the existing roots
   tagmgr scan -full /volume1/music        re-read every file
   tagmgr scan -exclude Podcasts /volume1/music
@@ -46,6 +51,7 @@ func cmdScan(args []string) error {
 	hidden := fs.Bool("hidden", false, "include dot-directories")
 	follow := fs.Bool("follow", false, "follow directory symlinks")
 	quiet := fs.Bool("quiet", false, "suppress progress output")
+	status := fs.Bool("status", false, "report whether a scan is running, and exit")
 	workers := fs.Int("workers", 0, "tag reader concurrency (0 = auto)")
 	var exclude stringList
 	fs.Var(&exclude, "exclude", "skip paths matching a glob (repeatable)")
@@ -60,6 +66,10 @@ func cmdScan(args []string) error {
 	ctx, cancel := notifyContext()
 	defer cancel()
 
+	if *status {
+		return printScanStatus(ctx, c)
+	}
+
 	req := library.ScanRequest{
 		Roots:          fs.Args(),
 		Full:           *full,
@@ -70,7 +80,16 @@ func cmdScan(args []string) error {
 	}
 	job, err := c.Scan(ctx, req)
 	if err != nil {
-		return err
+		// A scan already running is not a failure worth stopping for; follow
+		// it rather than making the user work out what happened.
+		id := client.RunningScanID(err)
+		if id == "" {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "  a scan is already running; following it")
+		if job, err = c.Job(ctx, id); err != nil {
+			return err
+		}
 	}
 
 	start := time.Now()
@@ -91,6 +110,31 @@ func cmdScan(args []string) error {
 	}
 	if done.State == library.JobCancelled {
 		fmt.Fprintln(os.Stderr, "  the scan was cancelled; what it found was kept")
+	}
+	return nil
+}
+
+// printScanStatus reports whether a scan is running and what the last one did.
+func printScanStatus(ctx context.Context, c *client.Client) error {
+	st, err := c.ScanStatus(ctx)
+	if err != nil {
+		return err
+	}
+	if st.Running && st.Job != nil {
+		fmt.Printf("scanning now  job %s  %s of %s read\n", st.Job.ID,
+			ui.FormatCount(int(st.Job.Progress.Done)), ui.FormatCount(int(st.Job.Progress.Total)))
+	} else {
+		fmt.Println("no scan running")
+	}
+	fmt.Printf("tracks        %s\n", ui.FormatCount(st.Tracks))
+	if len(st.Roots) > 0 {
+		fmt.Printf("roots         %s\n", strings.Join(st.Roots, "\n              "))
+	}
+	if st.ScannedAt != nil {
+		fmt.Printf("last scanned  %s\n", st.ScannedAt.Format(time.RFC1123))
+	}
+	if st.Last != nil && st.Last.State != library.JobSucceeded {
+		fmt.Printf("last job      %s: %s\n", st.Last.State, st.Last.Error)
 	}
 	return nil
 }
