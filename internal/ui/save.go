@@ -1,181 +1,129 @@
 package ui
 
 import (
-	"runtime"
-	"sync"
+	"context"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/remy/tag-manager/internal/catalog"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/tag-manager/internal/library"
 )
 
-// saveResult reports one file's write outcome.
-type saveResult struct {
-	idx int32
-	err error
+// saveState tracks a save in flight.
+type saveState struct {
+	total    int
+	done     int
+	failed   int
+	conflict int
+	started  time.Time
+	firstErr string
+}
+
+// saveResultMsg reports one track's write.
+type saveResultMsg struct {
+	id       string
+	err      error
+	conflict bool
 }
 
 // saveFinishedMsg is delivered once every write has been accounted for.
 type saveFinishedMsg struct{}
 
-// saveErr records a failure for display after the run.
-type saveErr struct {
-	path string
-	err  error
-}
+// saveTimeout bounds one file's write.
+const saveTimeout = 60 * time.Second
 
-// saver tracks an in-flight save.
-type saver struct {
-	ch      chan saveResult
-	total   int
-	done    int
-	failed  int
-	errs    []saveErr
-	started time.Time
-}
-
-// saveWorkers bounds write concurrency. Tag writes are dominated by the write
-// and fsync round trip rather than by computation, so a handful of workers
-// hides the latency without hammering a network share.
-func saveWorkers() int {
-	n := runtime.NumCPU()
-	if n > 8 {
-		n = 8
-	}
-	if n < 2 {
-		n = 2
-	}
-	return n
-}
-
-// startSave writes every changed track back to its file.
+// startSave writes every staged edit back through the API.
+//
+// Each track is a separate request carrying the version it was read at, so an
+// edit made elsewhere since is reported as a conflict rather than silently
+// overwritten. The API would take these as one batch, but a batch applies the
+// same values to every track, and this is a set of individual corrections.
 func (m *Model) startSave() tea.Cmd {
-	if m.saver != nil {
-		return nil // a save is already running
+	if m.saving != nil {
+		return nil
 	}
-	dirty := m.dirtyTracks()
-	if len(dirty) == 0 {
+	if m.src.dirtyCount() == 0 {
 		m.setStatus(statusInfo, "nothing to save")
 		return nil
 	}
 
-	ch := make(chan saveResult, len(dirty))
-	m.saver = &saver{ch: ch, total: len(dirty), started: time.Now()}
-
-	jobs := make(chan int32)
-	var wg sync.WaitGroup
-	for i := 0; i < saveWorkers(); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for idx := range jobs {
-				t := &m.cat.Tracks[idx]
-				ch <- saveResult{idx: idx, err: tags.Write(t.Path, buildEdit(t))}
-			}
-		}()
+	type job struct {
+		id      string
+		changes library.Changes
+		version string
 	}
-	go func() {
-		for _, idx := range dirty {
-			jobs <- idx
-		}
-		close(jobs)
-		wg.Wait()
-		close(ch)
-	}()
-
-	m.setStatus(statusInfo, "saving %d files…", len(dirty))
-	return waitForSave(ch)
-}
-
-// waitForSave blocks on the next write result and hands it to the update loop.
-func waitForSave(ch chan saveResult) tea.Cmd {
-	return func() tea.Msg {
-		r, ok := <-ch
-		if !ok {
-			return saveFinishedMsg{}
-		}
-		return r
+	jobs := make([]job, 0, len(m.src.staged))
+	for id, e := range m.src.staged {
+		jobs = append(jobs, job{id: id, changes: e.changes, version: e.version})
 	}
-}
 
-// buildEdit turns a track's changed-field set into a tag edit, so only the
-// fields the user actually touched are written.
-func buildEdit(t *catalog.Track) *tags.Edit {
-	e := &tags.Edit{}
-	for _, f := range t.Changed.Fields() {
-		switch f {
-		case catalog.FieldYear, catalog.FieldTrackNo, catalog.FieldDisc:
-			e.SetInt(catalog.FieldNames[f], numericField(t, f))
-		default:
-			e.SetString(catalog.FieldNames[f], t.String(f))
-		}
-	}
-	return e
-}
+	m.saving = &saveState{total: len(jobs), started: time.Now()}
+	m.setStatus(statusInfo, "saving %s tracks…", FormatCount(len(jobs)))
 
-func numericField(t *catalog.Track, f catalog.Field) int32 {
-	switch f {
-	case catalog.FieldYear:
-		return t.Year
-	case catalog.FieldTrackNo:
-		return t.TrackNo
-	case catalog.FieldDisc:
-		return t.Disc
+	c := m.c
+	cmds := make([]tea.Cmd, 0, len(jobs))
+	for _, j := range jobs {
+		j := j
+		cmds = append(cmds, func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), saveTimeout)
+			defer cancel()
+			_, err := c.PatchTrack(ctx, j.id, j.changes, j.version)
+			return saveResultMsg{id: j.id, err: err, conflict: client.IsConflict(err)}
+		})
 	}
-	return 0
+	return tea.Batch(cmds...)
 }
 
 // applySaveResult folds one write outcome into the model.
-func (m *Model) applySaveResult(r saveResult) tea.Cmd {
-	s := m.saver
+func (m *Model) applySaveResult(msg saveResultMsg) tea.Cmd {
+	s := m.saving
 	if s == nil {
 		return nil
 	}
 	s.done++
-	t := &m.cat.Tracks[r.idx]
-	if r.err != nil {
+	switch {
+	case msg.conflict:
+		s.conflict++
+		if s.firstErr == "" {
+			s.firstErr = "changed elsewhere since you read it"
+		}
+	case msg.err != nil:
 		s.failed++
-		if len(s.errs) < 20 {
-			s.errs = append(s.errs, saveErr{path: t.Path, err: r.err})
+		if s.firstErr == "" {
+			s.firstErr = msg.err.Error()
 		}
-	} else {
-		// The file now matches the catalogue, and its modification time has
-		// moved; refresh it so the next scan does not re-read the file.
-		t.Changed = 0
-		if fi, err := statFile(t.Path); err == nil {
-			t.Size, t.ModTime = fi.Size(), fi.ModTime().Unix()
-		}
+	default:
+		// Written; the edit is no longer pending. A conflicted one is kept, so
+		// it stays visible and can be retried after a refresh.
+		m.src.unstage(msg.id)
 	}
-	return waitForSave(s.ch)
+	if s.done < s.total {
+		return nil
+	}
+	return func() tea.Msg { return saveFinishedMsg{} }
 }
 
-// finishSave reports the outcome and persists the refreshed catalogue.
-func (m *Model) finishSave() {
-	s := m.saver
-	m.saver = nil
+// finishSave reports the outcome.
+func (m *Model) finishSave() []tea.Cmd {
+	s := m.saving
+	m.saving = nil
 	if s == nil {
-		return
+		return nil
 	}
-	elapsed := time.Since(s.started)
-	if s.failed > 0 {
-		m.setStatus(statusError, "saved %d of %d  ·  %d failed  ·  %s  ·  first: %s",
-			s.done-s.failed, s.total, s.failed, FormatDuration(elapsed), firstErr(s.errs))
-	} else {
-		m.setStatus(statusOK, "saved %d files in %s", s.done, FormatDuration(elapsed))
+	written := s.total - s.failed - s.conflict
+	switch {
+	case s.conflict > 0:
+		m.setStatus(statusError,
+			"saved %d of %d  ·  %d changed elsewhere and were kept pending  ·  press R to refresh",
+			written, s.total, s.conflict)
+	case s.failed > 0:
+		m.setStatus(statusError, "saved %d of %d  ·  %d failed: %s", written, s.total, s.failed, s.firstErr)
+	default:
+		m.setStatus(statusOK, "saved %s tracks in %s", FormatCount(written), FormatDuration(time.Since(s.started)))
 	}
-	// Persist the catalogue too: the sizes and modification times just changed
-	// and a stale snapshot would make the next scan re-read every edited file.
-	if m.catalogPath != "" {
-		if err := catalog.Save(m.catalogPath, m.cat); err != nil {
-			m.setStatus(statusWarn, "files saved, but the catalogue could not be updated: %v", err)
-		}
-	}
-}
 
-func firstErr(errs []saveErr) string {
-	if len(errs) == 0 {
-		return ""
-	}
-	return errs[0].err.Error()
+	// The rows on screen came from before the write, so they must be refetched
+	// rather than trusted.
+	m.src.invalidate()
+	return m.ensureVisible()
 }

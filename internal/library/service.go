@@ -53,6 +53,7 @@ type Service struct {
 	saveDirty bool
 
 	done     chan struct{}
+	saveDone chan struct{}
 	closeOne sync.Once
 }
 
@@ -85,11 +86,12 @@ func Open(opts Options) (*Service, error) {
 	}
 
 	s := &Service{
-		cat:    cat,
-		opts:   opts,
-		clip:   artclip.New(opts.ClipboardDir),
-		events: newEventBus(),
-		done:   make(chan struct{}),
+		cat:      cat,
+		opts:     opts,
+		clip:     artclip.New(opts.ClipboardDir),
+		events:   newEventBus(),
+		done:     make(chan struct{}),
+		saveDone: make(chan struct{}),
 	}
 	s.jobs = newJobs(s)
 	s.reindexLocked()
@@ -98,14 +100,21 @@ func Open(opts Options) (*Service, error) {
 	return s, nil
 }
 
-// Close flushes any pending snapshot and stops background work.
+// Close stops background work and flushes the snapshot.
+//
+// The order matters and the waiting is the point. Jobs and the save loop both
+// write files, so returning while either is mid-write leaves the caller
+// believing the service has stopped when it has not — which shows up as a
+// directory that refuses to delete, and on a real system as a snapshot written
+// after shutdown.
 func (s *Service) Close() error {
 	var err error
 	s.closeOne.Do(func() {
-		close(s.done)
-		s.jobs.cancelAll()
+		s.jobs.cancelAll() // cancels running jobs and waits for them
+		close(s.done)      // stop the save loop
+		<-s.saveDone       // and wait for any write it had started
 		s.events.close()
-		err = s.saveIfDirty()
+		err = s.saveIfDirty() // one final snapshot
 	})
 	return err
 }
@@ -212,6 +221,7 @@ func (s *Service) markDirty() {
 }
 
 func (s *Service) saveLoop() {
+	defer close(s.saveDone)
 	t := time.NewTicker(s.opts.SaveInterval)
 	defer t.Stop()
 	for {

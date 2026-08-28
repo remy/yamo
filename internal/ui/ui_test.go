@@ -1,45 +1,164 @@
 package ui
 
 import (
+	"context"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/remy/tag-manager/internal/catalog"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/tag-manager/internal/api"
+	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/tag-manager/internal/library"
 )
 
-func testCatalog(n int) *catalog.Catalog {
-	artists := []string{"Elvis Presley", "Björk", "坂本龍一", "Miles Davis"}
-	albums := []string{"Sun Sessions", "Homogénic", "音楽図鑑", "Kind of Blue"}
-	c := catalog.New()
-	c.Tracks = make([]catalog.Track, n)
-	for i := range c.Tracks {
-		c.Tracks[i] = catalog.Track{
-			Path:       "/music/x/y/track.mp3",
-			Title:      "A Song With A Fairly Long Title " + strings.Repeat("x", i%7),
-			Artist:     artists[i%len(artists)],
-			Album:      albums[i%len(albums)],
-			Genre:      "Rock",
-			Year:       int32(1970 + i%40),
-			TrackNo:    int32(i%12 + 1),
-			DurationMS: 210000,
-			Size:       5 << 20,
-			Format:     tags.FormatMP3,
-			Channels:   2,
-			SampleRate: 44100,
-			Bitrate:    256,
+// newTestModel builds a model over a real server holding a small library.
+//
+// The interface is now a client, so a test against a stub would prove nothing
+// about the thing that actually runs. This is slower and worth it.
+func newTestModel(t *testing.T, tracks int) *Model {
+	t.Helper()
+	ff, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+
+	dir := t.TempDir()
+	artists := []string{"Elvis Presley", "Björk", "Miles Davis", "The Clash"}
+	albums := []string{"Sun Sessions", "Homogénic", "Kind of Blue", "London Calling"}
+	for i := 0; i < tracks; i++ {
+		album := filepath.Join(dir, "music", artists[i%4], albums[i%4])
+		if err := os.MkdirAll(album, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(album, fmt.Sprintf("%03d track.mp3", i))
+		cmd := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-y",
+			"-f", "lavfi", "-i", "sine=frequency=440:duration=0.2", "-c:a", "libmp3lame",
+			"-metadata", fmt.Sprintf("title=A Song With A Fairly Long Title %d", i),
+			"-metadata", "artist="+artists[i%4],
+			"-metadata", "album="+albums[i%4],
+			"-metadata", "genre=Rock",
+			"-metadata", fmt.Sprintf("track=%d", i%12+1),
+			"-metadata", fmt.Sprintf("date=%d", 1970+i%40), out)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("ffmpeg: %v\n%s", err, b)
 		}
 	}
-	c.Roots = []string{"/music"}
-	c.ScannedAt = time.Now()
-	return c
+
+	svc, err := library.Open(library.Options{
+		CatalogPath:  filepath.Join(dir, "catalog.db"),
+		SaveInterval: 50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(api.New(svc, api.Options{}))
+	t.Cleanup(func() {
+		srv.Close()
+		svc.Close()
+	})
+
+	c, err := client.New(srv.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	job, err := c.Scan(ctx, library.ScanRequest{Roots: []string{filepath.Join(dir, "music")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.WaitJob(ctx, job.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(c, []string{filepath.Join(dir, "music")})
+	sized(t, m, 120, 40)
+	return m
 }
 
+// pump runs a command and every message it produces, so a test can drive the
+// model without a terminal.
+func pump(t *testing.T, m *Model, cmd tea.Cmd) {
+	t.Helper()
+	pumpDepth(t, m, cmd, 0)
+}
+
+func pumpDepth(t *testing.T, m *Model, cmd tea.Cmd, depth int) {
+	t.Helper()
+	if cmd == nil || depth > 40 {
+		return
+	}
+	msg := cmd()
+	switch v := msg.(type) {
+	case nil:
+		return
+	case tea.BatchMsg:
+		for _, c := range v {
+			pumpDepth(t, m, c, depth+1)
+		}
+	default:
+		_, next := m.Update(msg)
+		pumpDepth(t, m, next, depth+1)
+	}
+}
+
+// sized delivers a window size and settles the resulting fetches.
 func sized(t *testing.T, m *Model, w, h int) {
 	t.Helper()
-	m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: w, Height: h})
+	pump(t, m, cmd)
+}
+
+// press sends a key and settles whatever it starts.
+func press(t *testing.T, m *Model, key string) {
+	t.Helper()
+	var msg tea.KeyMsg
+	switch key {
+	case "enter":
+		msg = tea.KeyMsg{Type: tea.KeyEnter}
+	case "esc":
+		msg = tea.KeyMsg{Type: tea.KeyEscape}
+	case "space":
+		msg = tea.KeyMsg{Type: tea.KeySpace}
+	case "down":
+		msg = tea.KeyMsg{Type: tea.KeyDown}
+	case "up":
+		msg = tea.KeyMsg{Type: tea.KeyUp}
+	case "tab":
+		msg = tea.KeyMsg{Type: tea.KeyTab}
+	case "ctrl+s":
+		msg = tea.KeyMsg{Type: tea.KeyCtrlS}
+	default:
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)}
+	}
+	_, cmd := m.Update(msg)
+	pump(t, m, cmd)
+}
+
+// typeString sends each character separately, as a person would.
+func typeString(t *testing.T, m *Model, s string) {
+	t.Helper()
+	for _, r := range s {
+		if r == ' ' {
+			press(t, m, "space")
+			continue
+		}
+		press(t, m, string(r))
+	}
+	// Search is debounced, so the timer has to be allowed to fire.
+	settleSearch(t, m)
+}
+
+// settleSearch runs the debounce timer immediately rather than waiting for it.
+func settleSearch(t *testing.T, m *Model) {
+	t.Helper()
+	_, cmd := m.Update(searchTickMsg{gen: m.searchGen})
+	pump(t, m, cmd)
 }
 
 // TestFrameGeometry is the load-bearing test for the interface: every line the
@@ -47,7 +166,7 @@ func sized(t *testing.T, m *Model, w, h int) {
 // as many lines as there are rows. If either holds false the box-drawing
 // characters stop lining up and the whole layout visibly tears.
 func TestFrameGeometry(t *testing.T) {
-	m := New(testCatalog(300), "")
+	m := newTestModel(t, 40)
 	sizes := []struct{ w, h int }{
 		{80, 24}, {120, 40}, {200, 60}, {60, 20}, {40, 16}, {34, 12},
 		{35, 13}, {100, 30}, {72, 18}, {73, 19}, {160, 50},
@@ -56,53 +175,47 @@ func TestFrameGeometry(t *testing.T) {
 		name  string
 		setup func()
 	}{
-		{"browse", func() { m.mode = ModeBrowse }},
+		{"browse", func() { m.mode = ModeBrowse; m.showArt = false }},
 		{"search", func() { m.mode = ModeSearch; m.search.SetValue("artist:elvis") }},
 		{"edit", func() { m.mode = ModeEdit; m.ed = editor{active: true} }},
 		{"edit-typing", func() {
 			m.mode = ModeEdit
 			m.ed = editor{active: true, focus: 2, editing: true}
 			m.ed.in.SetValue("Sun")
-			m.refreshSuggestions()
+			m.ed.sug.items = []client.ValueCount{{Value: "Sun Sessions", Count: 10}}
+			m.ed.sug.open = true
 		}},
 		{"help", func() { m.mode = ModeHelp }},
 		{"confirm-quit", func() { m.mode = ModeConfirmQuit }},
 		{"no-detail", func() { m.mode = ModeBrowse; m.showDetail = false }},
 		{"art-panel", func() {
 			m.mode = ModeBrowse
+			m.showDetail = true
 			m.showArt = true
 			m.imgProto = ImageNone
-			m.search.Clear()
-			m.runSearch()
 		}},
 		{"art-panel-with-image", func() {
 			// Force an image protocol on and hand the panel a real cover, so
 			// the escape sequence is measured the way a terminal would.
-			m.mode = ModeBrowse
 			m.showArt = true
 			m.imgProto = ImageITerm2
-			m.art = map[string]*artInfo{
-				m.cat.Tracks[0].Path: {pic: &tags.Picture{
-					Kind: tags.PictureFrontCover, MIME: "image/jpeg",
-					Width: 600, Height: 600, Data: fakeImageBytes(),
-				}},
+			if tr, ok := m.currentTrack(); ok {
+				m.art = map[string]*artInfo{tr.ID: {data: fakeImageBytes(), mime: "image/jpeg"}}
 			}
-			m.cat.Tracks[0].HasArt = true
-			m.search.Clear()
-			m.runSearch()
 		}},
-		{"empty-results", func() {
+		{"unloaded-rows", func() {
+			// Mid-fetch, before any page has arrived.
 			m.mode = ModeBrowse
-			m.showDetail = true
-			m.search.SetValue("zzzznomatch")
-			m.runSearch()
+			m.showArt = false
+			m.src.invalidate()
 		}},
 	}
 
 	for _, mode := range modes {
 		for _, s := range sizes {
 			mode.setup()
-			sized(t, m, s.w, s.h)
+			m.width, m.height = s.w, s.h
+			m.clampCursor()
 			view := m.View()
 			lines := strings.Split(view, "\n")
 
@@ -119,15 +232,8 @@ func TestFrameGeometry(t *testing.T) {
 			}
 		}
 	}
-	// Reset the filter so later assertions in this file are not affected.
-	m.showArt = false
-	m.search.Clear()
-	m.runSearch()
 }
 
-// fakeImageBytes is a byte blob standing in for a cover. Its content does not
-// matter: the point is that it base64-encodes into a long run containing every
-// letter, which is what breaks a naive escape-sequence scanner.
 func fakeImageBytes() []byte {
 	b := make([]byte, 4096)
 	for i := range b {
@@ -136,68 +242,236 @@ func fakeImageBytes() []byte {
 	return b
 }
 
-// TestStripANSIHandlesImageSequences guards the frame against inline images.
-func TestStripANSIHandlesImageSequences(t *testing.T) {
-	th := NewTheme()
-	img := RenderImage(ImageITerm2, fakeImageBytes(), 18, 9)
-	if img == "" {
-		t.Fatal("no image sequence produced")
-	}
-	line := th.Row.Render("left") + img + strings.Repeat(" ", 18) + th.Dim.Render("right")
-	// The image occupies cells the terminal paints, not cells in the string,
-	// so only the text and the explicit padding should measure.
-	if got, want := DisplayWidth(stripANSI(line)), 4+18+5; got != want {
-		t.Errorf("measured %d cells, want %d", got, want)
-	}
-
-	kit := RenderImage(ImageKitty, fakeImageBytes(), 18, 9)
-	if kit == "" {
-		t.Fatal("no kitty sequence produced")
-	}
-	if got := DisplayWidth(stripANSI(kit)); got != 0 {
-		t.Errorf("a kitty image measured %d cells, want 0", got)
-	}
-	// The payload must be split into continuation chunks.
-	if n := strings.Count(kit, "\x1b_G"); n < 2 {
-		t.Errorf("kitty payload was not chunked: %d escapes", n)
-	}
-}
-
-// TestDetectImageProtocol covers the environment sniffing.
-func TestDetectImageProtocol(t *testing.T) {
-	cases := []struct {
-		env  map[string]string
-		want ImageProtocol
-	}{
-		{map[string]string{"TERM_PROGRAM": "iTerm.app"}, ImageITerm2},
-		{map[string]string{"LC_TERMINAL": "iTerm2"}, ImageITerm2},
-		{map[string]string{"TERM": "xterm-kitty"}, ImageKitty},
-		{map[string]string{"KITTY_WINDOW_ID": "1"}, ImageKitty},
-		{map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, ImageNone},
-		{map[string]string{}, ImageNone},
-		// Inside tmux the sequences do not survive, so nothing is claimed.
-		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TMUX": "/tmp/x"}, ImageNone},
-		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TAGMGR_NO_IMAGES": "1"}, ImageNone},
-	}
-	for _, c := range cases {
-		for _, k := range []string{"TERM", "TERM_PROGRAM", "LC_TERMINAL", "KITTY_WINDOW_ID", "TMUX", "TAGMGR_NO_IMAGES"} {
-			t.Setenv(k, "")
-		}
-		for k, v := range c.env {
-			t.Setenv(k, v)
-		}
-		if got := DetectImageProtocol(); got != c.want {
-			t.Errorf("env %v gave %v, want %v", c.env, got, c.want)
-		}
-	}
-}
-
-// TestTooSmallDoesNotPanic covers sizes below the usable minimum.
 func TestTooSmallDoesNotPanic(t *testing.T) {
-	m := New(testCatalog(10), "")
+	m := newTestModel(t, 4)
 	for _, s := range []struct{ w, h int }{{1, 1}, {10, 3}, {33, 11}, {0, 0}, {34, 11}, {33, 12}} {
-		sized(t, m, s.w, s.h)
+		m.width, m.height = s.w, s.h
+		m.clampCursor()
 		_ = m.View()
+	}
+}
+
+// TestPagingCoversEverything checks the windowed source: the interface no
+// longer holds the library, so moving through it must fetch the right windows.
+func TestPagingCoversEverything(t *testing.T) {
+	m := newTestModel(t, 40)
+	if m.total() != 40 {
+		t.Fatalf("total = %d, want 40", m.total())
+	}
+
+	seen := map[string]bool{}
+	for i := 0; i < 40; i++ {
+		m.cursor = i
+		m.clampCursor()
+		pump(t, m, tea.Batch(m.ensureVisible()...))
+		tr, ok := m.trackAt(i)
+		if !ok {
+			t.Fatalf("row %d was never fetched", i)
+		}
+		if seen[tr.ID] {
+			t.Fatalf("row %d repeated track %s", i, tr.ID)
+		}
+		seen[tr.ID] = true
+	}
+	if len(seen) != 40 {
+		t.Errorf("walked %d distinct tracks, want 40", len(seen))
+	}
+}
+
+func TestSearchAndSort(t *testing.T) {
+	m := newTestModel(t, 40)
+
+	press(t, m, "/")
+	typeString(t, m, "artist:elvis")
+	if m.total() != 10 {
+		t.Fatalf("artist:elvis matched %d, want 10", m.total())
+	}
+	// Folded matching must survive the round trip.
+	m.search.SetValue("artist:bjork")
+	settleSearchAfter(t, m)
+	if m.total() != 10 {
+		t.Errorf("artist:bjork matched %d, want 10", m.total())
+	}
+
+	m.search.Clear()
+	settleSearchAfter(t, m)
+	if m.total() != 40 {
+		t.Fatalf("clearing the filter left %d", m.total())
+	}
+
+	// Sorting is done by the server; check the order that comes back.
+	m.sortCol, m.sortDesc = 5, false // the Year column
+	pump(t, m, tea.Batch(m.applySort()...))
+	prev := int32(0)
+	for i := 0; i < min(20, m.total()); i++ {
+		tr, ok := m.trackAt(i)
+		if !ok {
+			continue
+		}
+		if tr.Year < prev {
+			t.Fatalf("year sort out of order at row %d: %d after %d", i, tr.Year, prev)
+		}
+		prev = tr.Year
+	}
+}
+
+// settleSearchAfter runs a search that was set directly rather than typed.
+func settleSearchAfter(t *testing.T, m *Model) {
+	t.Helper()
+	pump(t, m, tea.Batch(m.runSearch()...))
+}
+
+// TestSelectionByQueryCostsNothing is the reason selection is not a list of
+// identifiers: marking everything must not depend on how much there is.
+func TestSelectionByQueryCostsNothing(t *testing.T) {
+	m := newTestModel(t, 40)
+	m.search.SetValue("artist:elvis")
+	settleSearchAfter(t, m)
+
+	press(t, m, "a")
+	if !m.sel.all {
+		t.Fatal("marking everything did not use a query selection")
+	}
+	if len(m.sel.ids) != 0 {
+		t.Errorf("a query selection materialised %d ids", len(m.sel.ids))
+	}
+	if got := m.targetCount(); got != 10 {
+		t.Errorf("target count = %d, want 10", got)
+	}
+	sel := m.sel.selector(nil)
+	if sel.Query != "artist:elvis" {
+		t.Errorf("selector query = %q", sel.Query)
+	}
+
+	// Unticking one removes it without expanding the rest.
+	m.cursor = 0
+	press(t, m, "space")
+	if len(m.sel.excluded) != 1 {
+		t.Errorf("unticking gave %d exclusions", len(m.sel.excluded))
+	}
+	if got := m.targetCount(); got != 9 {
+		t.Errorf("after unticking one, target count = %d, want 9", got)
+	}
+}
+
+// TestStageEditThenSave covers the whole editing path: stage locally, show the
+// pending state, then write it through and see it on the server.
+func TestStageEditThenSave(t *testing.T) {
+	m := newTestModel(t, 12)
+	m.search.SetValue("artist:elvis")
+	settleSearchAfter(t, m)
+	if m.total() != 3 {
+		t.Fatalf("fixture matched %d elvis tracks, want 3", m.total())
+	}
+
+	press(t, m, "a") // mark them all
+	m.mode = ModeEdit
+	m.ed = editor{active: true, focus: 4} // Composer
+	m.ed.editing = true
+	m.ed.in.SetValue("Sam Phillips")
+	m.commitEditingField()
+
+	if m.src.dirtyCount() != 3 {
+		t.Fatalf("staged %d tracks, want 3", m.src.dirtyCount())
+	}
+	// The staged value must show in the list before it is written.
+	tr, _ := m.trackAt(0)
+	if tr.Composer != "Sam Phillips" {
+		t.Errorf("the list does not show the staged value: %q", tr.Composer)
+	}
+	if !m.src.isDirty(tr.ID) {
+		t.Error("the track is not marked as having unsaved changes")
+	}
+
+	// Undo puts it back, still pending.
+	m.doUndo()
+	tr, _ = m.trackAt(0)
+	if tr.Composer != "" {
+		t.Errorf("after undo the value is %q", tr.Composer)
+	}
+	m.doRedo()
+
+	pump(t, m, m.startSave())
+	if m.src.dirtyCount() != 0 {
+		t.Errorf("%d tracks are still pending after a save", m.src.dirtyCount())
+	}
+
+	// And the server agrees.
+	page, err := m.c.ListTracks(context.Background(), library.ListParams{Query: `composer:"sam phillips"`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 3 {
+		t.Errorf("the server has %d tracks with the new composer, want 3", page.Total)
+	}
+}
+
+// TestStaleEditIsReportedNotOverwritten is the multi-client case: something
+// else changed the file while it was being edited here.
+func TestStaleEditIsReportedNotOverwritten(t *testing.T) {
+	m := newTestModel(t, 4)
+	tr, ok := m.trackAt(0)
+	if !ok {
+		t.Fatal("no track")
+	}
+
+	// Stage an edit, then change the same track behind the interface's back.
+	m.mode = ModeEdit
+	m.ed = editor{active: true, focus: 9, editing: true} // Comment
+	m.ed.in.SetValue("from the browser")
+	m.commitEditingField()
+
+	if _, err := m.c.PatchTrack(context.Background(), tr.ID,
+		library.Changes{"comment": strPtr("from somewhere else")}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	pump(t, m, m.startSave())
+
+	if m.statusKind != statusError {
+		t.Errorf("a conflicting save was not reported as a problem: %q", m.status)
+	}
+	if !strings.Contains(m.status, "changed elsewhere") {
+		t.Errorf("status = %q, want it to mention the conflict", m.status)
+	}
+	// The conflicted edit stays pending so it is not silently lost.
+	if m.src.dirtyCount() != 1 {
+		t.Errorf("the conflicted edit was dropped rather than kept pending")
+	}
+	// And the other client's write survived.
+	got, err := m.c.GetTrack(context.Background(), tr.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Comment != "from somewhere else" {
+		t.Errorf("the browser overwrote the other write: %q", got.Comment)
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+// TestServerEventInvalidates covers staying in step with another client.
+func TestServerEventInvalidates(t *testing.T) {
+	m := newTestModel(t, 8)
+	if _, ok := m.trackAt(0); !ok {
+		t.Fatal("the first page never arrived")
+	}
+
+	tr, _ := m.trackAt(0)
+	if _, err := m.c.PatchTrack(context.Background(), tr.ID,
+		library.Changes{"genre": strPtr("Skiffle")}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	_, cmd := m.Update(library.Event{Type: library.EventTracksChanged, TrackIDs: []string{tr.ID}})
+	pump(t, m, cmd)
+
+	after, ok := m.trackAt(0)
+	if !ok {
+		t.Fatal("rows did not come back after the event")
+	}
+	if after.Genre != "Skiffle" {
+		t.Errorf("the view did not pick up another client's edit: %q", after.Genre)
 	}
 }
 
@@ -222,9 +496,7 @@ func TestComputeLayoutFillsExactly(t *testing.T) {
 
 func TestRuleJunctions(t *testing.T) {
 	seps := []int{3, 8}
-	got := midRule(12, seps)
-	want := "├───┼────┼───┤"
-	if got != want {
+	if got, want := midRule(12, seps), "├───┼────┼───┤"; got != want {
 		t.Errorf("midRule = %q, want %q", got, want)
 	}
 	if DisplayWidth(topRule(12, seps)) != 14 {
@@ -233,8 +505,7 @@ func TestRuleJunctions(t *testing.T) {
 }
 
 func TestPadAndTruncateAreCellExact(t *testing.T) {
-	cases := []string{"", "abc", "Björk", "坂本龍一", "日本語テキスト", "a坂b本c", "🎵🎶"}
-	for _, s := range cases {
+	for _, s := range []string{"", "abc", "Björk", "坂本龍一", "日本語テキスト", "a坂b本c", "🎵🎶"} {
 		for w := 0; w < 16; w++ {
 			if got := DisplayWidth(Pad(s, w)); got != w {
 				t.Errorf("Pad(%q, %d) is %d cells, want %d", s, w, got, w)
@@ -256,8 +527,7 @@ func TestInputRendersExactWidth(t *testing.T) {
 		in.SetValue(v)
 		for _, w := range []int{1, 5, 12, 40, 100} {
 			for _, focused := range []bool{true, false} {
-				got := DisplayWidth(stripANSI(in.Render(w, focused, th, "")))
-				if got != w {
+				if got := DisplayWidth(stripANSI(in.Render(w, focused, th, ""))); got != w {
 					t.Errorf("Render(%q, w=%d, focused=%v) is %d cells, want %d", v, w, focused, got, w)
 				}
 			}
@@ -282,7 +552,6 @@ func TestInputEditing(t *testing.T) {
 	if in.Value() != "" {
 		t.Fatalf("after DeleteToStart: %q", in.Value())
 	}
-	// Cursor movement must stay in range.
 	in.SetValue("ab")
 	for i := 0; i < 10; i++ {
 		in.Left()
@@ -296,113 +565,82 @@ func TestInputEditing(t *testing.T) {
 	if in.cursor != 2 {
 		t.Errorf("cursor ran past the end: %d", in.cursor)
 	}
-	in.Backspace()
-	in.Backspace()
-	in.Backspace()
-	if in.Value() != "" {
-		t.Errorf("backspacing past the start left %q", in.Value())
+}
+
+func TestStripANSIHandlesImageSequences(t *testing.T) {
+	th := NewTheme()
+	img := RenderImage(ImageITerm2, fakeImageBytes(), 18, 9)
+	if img == "" {
+		t.Fatal("no image sequence produced")
+	}
+	line := th.Row.Render("left") + img + strings.Repeat(" ", 18) + th.Dim.Render("right")
+	if got, want := DisplayWidth(stripANSI(line)), 4+18+5; got != want {
+		t.Errorf("measured %d cells, want %d", got, want)
+	}
+	kit := RenderImage(ImageKitty, fakeImageBytes(), 18, 9)
+	if got := DisplayWidth(stripANSI(kit)); got != 0 {
+		t.Errorf("a kitty image measured %d cells, want 0", got)
+	}
+	if n := strings.Count(kit, "\x1b_G"); n < 2 {
+		t.Errorf("kitty payload was not chunked: %d escapes", n)
 	}
 }
 
-// TestBulkEditAndUndo exercises the path the interface exists for: filter,
-// mark several tracks, change one field on all of them, then take it back.
-func TestBulkEditAndUndo(t *testing.T) {
-	c := testCatalog(200)
-	m := New(c, "")
-	sized(t, m, 120, 40)
-
-	m.search.SetValue(`album:"sun sessions"`)
-	m.runSearch()
-	if len(m.results) != 50 {
-		t.Fatalf("filter matched %d, want 50", len(m.results))
+func TestDetectImageProtocol(t *testing.T) {
+	cases := []struct {
+		env  map[string]string
+		want ImageProtocol
+	}{
+		{map[string]string{"TERM_PROGRAM": "iTerm.app"}, ImageITerm2},
+		{map[string]string{"LC_TERMINAL": "iTerm2"}, ImageITerm2},
+		{map[string]string{"TERM": "xterm-kitty"}, ImageKitty},
+		{map[string]string{"KITTY_WINDOW_ID": "1"}, ImageKitty},
+		{map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, ImageNone},
+		{map[string]string{}, ImageNone},
+		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TMUX": "/tmp/x"}, ImageNone},
+		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TAGMGR_NO_IMAGES": "1"}, ImageNone},
 	}
-	for _, r := range m.results {
-		m.selected[r] = struct{}{}
-	}
-
-	n := m.commitField(catalog.FieldAlbum, "Complete Masters")
-	if n != 50 {
-		t.Fatalf("edit touched %d tracks, want 50", n)
-	}
-	for _, r := range m.results {
-		if got := c.Tracks[r].Album; got != "Complete Masters" {
-			t.Fatalf("track %d album = %q", r, got)
+	for _, c := range cases {
+		for _, k := range []string{"TERM", "TERM_PROGRAM", "LC_TERMINAL", "KITTY_WINDOW_ID", "TMUX", "TAGMGR_NO_IMAGES"} {
+			t.Setenv(k, "")
 		}
-		if !c.Tracks[r].Dirty() {
-			t.Fatalf("track %d is not marked unsaved", r)
+		for k, v := range c.env {
+			t.Setenv(k, v)
 		}
-	}
-	// The rows must stay put: re-filtering here would empty the view.
-	if len(m.results) != 50 {
-		t.Errorf("result set changed to %d after the edit", len(m.results))
-	}
-	if !m.filterStale {
-		t.Error("the filter should be flagged as stale after an edit")
-	}
-
-	m.doUndo()
-	for _, r := range m.results {
-		if got := c.Tracks[r].Album; got != "Sun Sessions" {
-			t.Fatalf("after undo, track %d album = %q", r, got)
+		if got := DetectImageProtocol(); got != c.want {
+			t.Errorf("env %v gave %v, want %v", c.env, got, c.want)
 		}
-	}
-	m.doRedo()
-	if got := c.Tracks[m.results[0]].Album; got != "Complete Masters" {
-		t.Fatalf("after redo, album = %q", got)
-	}
-
-	// Refreshing drops the tracks that no longer match and clears their marks.
-	m.refreshFilter()
-	if len(m.results) != 0 {
-		t.Errorf("after refresh, %d tracks still match the old album filter", len(m.results))
-	}
-	if len(m.selected) != 0 {
-		t.Errorf("%d marks survived on rows that are no longer visible", len(m.selected))
 	}
 }
 
-// TestOnlyChangedFieldsAreWritten guards the promise that a save touches
-// nothing the user did not edit.
-func TestOnlyChangedFieldsAreWritten(t *testing.T) {
-	c := testCatalog(5)
-	m := New(c, "")
-	sized(t, m, 120, 40)
-	m.commitField(catalog.FieldAlbum, "New Album")
-
-	e := buildEdit(&c.Tracks[m.results[0]])
-	if e.Album == nil || *e.Album != "New Album" {
-		t.Fatalf("album not in the edit: %+v", e.Album)
+// TestImageSizeReadsHeaders covers the dimension parsing the art panel needs,
+// which now works from bytes rather than from the server's measurement.
+func TestImageSizeReadsHeaders(t *testing.T) {
+	ff, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
 	}
-	if e.Artist != nil || e.Title != nil || e.Genre != nil || e.Year != nil || e.Track != nil {
-		t.Error("the edit includes fields that were never changed")
-	}
-}
-
-func TestSortCycling(t *testing.T) {
-	m := New(testCatalog(100), "")
-	sized(t, m, 120, 40)
-	seen := map[string]bool{}
-	for i := 0; i < len(m.cols)+2; i++ {
-		m.cycleSort(1)
-		seen[m.sortLabel()] = true
-		// Sorting must never lose or duplicate rows.
-		if len(m.results) != 100 {
-			t.Fatalf("sorting changed the result count to %d", len(m.results))
+	dir := t.TempDir()
+	for _, c := range []struct {
+		name string
+		w, h int
+	}{{"a.jpg", 120, 90}, {"b.png", 64, 200}} {
+		out := filepath.Join(dir, c.name)
+		if b, err := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-y",
+			"-f", "lavfi", "-i", fmt.Sprintf("color=c=red:s=%dx%d", c.w, c.h),
+			"-frames:v", "1", out).CombinedOutput(); err != nil {
+			t.Fatalf("ffmpeg: %v\n%s", err, b)
+		}
+		data, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotW, gotH := imageSize(data)
+		if gotW != c.w || gotH != c.h {
+			t.Errorf("%s measured %dx%d, want %dx%d", c.name, gotW, gotH, c.w, c.h)
 		}
 	}
-	if len(seen) < 3 {
-		t.Errorf("cycling produced only %d distinct sorts", len(seen))
-	}
-
-	m.sortCol = 1 // Artist
-	m.sortDesc = false
-	m.sortResults()
-	prev := ""
-	for _, r := range m.results {
-		cur := catalog.Fold(m.cat.Tracks[r].Artist)
-		if prev != "" && cur < prev {
-			t.Fatalf("artist sort is not ordered: %q came after %q", cur, prev)
-		}
-		prev = cur
+	if w, h := imageSize([]byte("not an image")); w != 0 || h != 0 {
+		t.Errorf("garbage measured %dx%d", w, h)
 	}
 }

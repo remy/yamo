@@ -1,8 +1,9 @@
 package ui
 
 import (
+	"context"
 	"fmt"
-	"os"
+	"time"
 )
 
 func sprintf(format string, args ...any) string {
@@ -12,4 +13,8 @@ func sprintf(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
 
-func statFile(path string) (os.FileInfo, error) { return os.Stat(path) }
+// contextWithTimeout is a small wrapper so callers in this package do not each
+// import context for a one-line deadline.
+func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), d)
+}

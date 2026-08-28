@@ -55,12 +55,7 @@ func (m *Model) View() string {
 		writeLine(wrap(m.renderHeaderRow(lay)))
 		writeLine(border(midRule(inner, lay.Seps)))
 		for i := 0; i < rows; i++ {
-			idx := m.offset + i
-			if idx >= len(m.results) {
-				writeLine(wrap(m.renderEmptyRow(lay)))
-				continue
-			}
-			writeLine(wrap(m.renderRow(lay, idx)))
+			writeLine(wrap(m.renderRow(lay, m.offset+i)))
 		}
 		writeLine(border(closeRule(inner, lay.Seps)))
 	}
@@ -155,23 +150,23 @@ func (m *Model) editFieldRows() int {
 }
 
 func (m *Model) headerTitle() string {
-	if len(m.cat.Roots) == 0 {
+	if len(m.roots) == 0 {
 		return "tagmgr"
 	}
-	return "tagmgr  " + strings.Join(m.cat.Roots, "  ")
+	return "tagmgr  " + strings.Join(m.roots, "  ")
 }
 
 // renderSearchBar draws the query line with the result counts on the right.
 func (m *Model) renderSearchBar(inner int) string {
 	th := m.theme
-	right := fmt.Sprintf("%s / %s", FormatCount(len(m.results)), FormatCount(m.cat.Len()))
+	right := FormatCount(m.total()) + " matching"
 	if m.filterStale {
-		right = "edited · R to refilter  ·  " + right
+		right = "edited · R to refresh  ·  " + right
 	}
-	if n := len(m.selected); n > 0 {
+	if n := m.sel.count(m.total()); n > 0 {
 		right = fmt.Sprintf("%s selected  ·  %s", FormatCount(n), right)
 	}
-	if n := m.cat.DirtyCount(); n > 0 {
+	if n := m.src.dirtyCount(); n > 0 {
 		right = th.Dirty.Render(fmt.Sprintf("%d unsaved", n)) + th.Dim.Render("  ·  ") + th.Dim.Render(right)
 	} else {
 		right = th.Dim.Render(right)
@@ -221,28 +216,42 @@ func (m *Model) renderHeaderRow(lay Layout) string {
 }
 
 func (m *Model) renderEmptyRow(lay Layout) string {
+	return strings.Join(emptyCells(lay), m.theme.Border.Render(lineV))
+}
+
+func emptyCells(lay Layout) []string {
 	cells := make([]string, len(lay.Cols))
 	for i := range lay.Cols {
 		cells[i] = strings.Repeat(" ", lay.Widths[i])
 	}
-	return strings.Join(cells, m.theme.Border.Render(lineV))
+	return cells
 }
 
 // renderRow draws one track. The row under the cursor is drawn as a single
 // styled band, separators included, so the highlight reads as one object.
-func (m *Model) renderRow(lay Layout, resultIdx int) string {
+//
+// A row whose page has not arrived yet is drawn empty rather than skipped, so
+// the table keeps its shape while the window is being fetched.
+func (m *Model) renderRow(lay Layout, row int) string {
 	th := m.theme
-	idx := m.results[resultIdx]
-	t := &m.cat.Tracks[idx]
-	_, marked := m.selected[idx]
-	isCursor := resultIdx == m.cursor
+	track, loaded := m.trackAt(row)
+	isCursor := row == m.cursor
+	if !loaded {
+		if isCursor {
+			return th.Cursor.Render(strings.Join(emptyCells(lay), lineV))
+		}
+		return m.renderEmptyRow(lay)
+	}
+	t := &track
+	marked := m.sel.contains(t.ID)
+	dirty := m.src.isDirty(t.ID)
 
 	plain := make([]string, len(lay.Cols))
 	for i, c := range lay.Cols {
 		w := lay.Widths[i]
 		var v string
 		if i == 0 {
-			v = gutter(marked, t.Dirty())
+			v = gutter(marked, dirty)
 		} else if c.Render != nil {
 			v = c.Render(t)
 		}
@@ -326,17 +335,17 @@ func (m *Model) renderDetail(inner int) []string {
 	blank := []string{" " + Pad("", w) + " ", " " + Pad("", w) + " ",
 		" " + Pad("", w) + " ", " " + Pad("", w) + " "}
 
-	idx, ok := m.currentTrack()
+	track, ok := m.currentTrack()
 	if !ok {
 		return blank
 	}
-	t := &m.cat.Tracks[idx]
+	t := &track
 
 	// Paths are long and the interesting end is the right one, so elide the
 	// front rather than the back.
 	line1 := th.Dim.Render(Pad(elideLeft(t.Path, w), w))
 
-	parts := []string{t.Format.String()}
+	parts := []string{t.Format}
 	if t.Bitrate > 0 {
 		parts = append(parts, fmt.Sprintf("%d kbps", t.Bitrate))
 	}
@@ -345,6 +354,9 @@ func (m *Model) renderDetail(inner int) []string {
 	}
 	if t.Channels > 0 {
 		parts = append(parts, channelName(t.Channels))
+	}
+	if !t.Writable {
+		parts = append(parts, "read-only format")
 	}
 	parts = append(parts, FormatBytes(t.Size), FormatMillis(t.DurationMS))
 	if t.HasArt {

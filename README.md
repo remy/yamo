@@ -99,12 +99,17 @@ happened to visit, and this API rewrites music files.
 ## Use
 
 ```sh
+tagmgr serve                   # the backend; everything else is a client
 tagmgr scan /volume1/music     # build the catalogue
 tagmgr                         # browse and edit
 tagmgr find artist:elvis       # query from a script
-tagmgr info                    # what is in the catalogue
+tagmgr info                    # what is in the library
 tagmgr help                    # usage; `tagmgr help scan` for one command
 ```
+
+The server owns the catalogue and the music files; nothing else opens them.
+Start it before anything else, or from a systemd unit or launchd plist so it
+comes up with the machine.
 
 Every command takes `-h`, and `tagmgr help <command>` prints the same thing.
 Usage goes to stdout so it pipes into a pager; errors go to stderr.
@@ -158,6 +163,11 @@ tagmgr find -- -genre:live artist:elvis
 
 ### Editing
 
+The browser is a client of the server, so it can run on your laptop against
+the NAS rather than only over SSH. It holds a window of the library rather than
+all of it, fetches pages as you scroll, and search is debounced so a keystroke
+does not mean a round trip.
+
 Press `?` in the browser for the full key list. The short version:
 
 - `/` search, updating as you type
@@ -169,9 +179,15 @@ Press `?` in the browser for the full key list. The short version:
 - `⏎` commits the field to **every** marked track at once
 - `u` / `^r` undo and redo, one step per edit no matter how many tracks it hit
 - `^s` write every change back to disk
-- `R` re-apply the filter after editing
+- `R` refresh after editing has made the view stale
 
-Nothing touches disk until `^s`. Changed tracks carry a `•` until then.
+Nothing touches disk until `^s`. Changed tracks carry a `•` until then, and
+marking everything with `a` selects by query rather than by listing tracks, so
+it costs the same whether it matches ten or a hundred thousand.
+
+Each save sends the version the track was read at. If something else changed
+the same file in between — a phone, another terminal — that edit is reported
+and kept pending rather than overwriting the other one.
 
 Edits are applied per field: saving a track writes only the fields you actually
 changed and leaves every other tag in the file exactly as it was. Where a

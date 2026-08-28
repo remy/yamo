@@ -1,19 +1,27 @@
 package ui
 
 import (
-	"github.com/remy/tag-manager/internal/catalog"
+	"github.com/remy/tag-manager/internal/library"
 )
 
 // Column describes one column of the track table.
 type Column struct {
-	Title    string
-	Field    catalog.Field // the field this column sorts and edits by
-	Weight   int           // share of the flexible space; 0 for fixed columns
-	Min      int           // smallest useful width
-	Fixed    int           // exact width; when set, Weight is ignored
-	Right    bool          // right-align the cell
-	Priority int           // higher numbers are dropped first on narrow terminals
-	Render   func(t *catalog.Track) string
+	Title string
+
+	// Field is the editable metadata field this column shows, by canonical
+	// name. Empty for columns that are derived rather than edited.
+	Field string
+
+	// SortKey is what the server is asked to sort by. Empty means the column
+	// is skipped when cycling the sort.
+	SortKey string
+
+	Weight   int // share of the flexible space; 0 for fixed columns
+	Min      int // smallest useful width
+	Fixed    int // exact width; when set, Weight is ignored
+	Right    bool
+	Priority int // higher numbers are dropped first on narrow terminals
+	Render   func(t *library.Track) string
 }
 
 // DefaultColumns is the standard table layout. Title gets the largest share
@@ -22,44 +30,39 @@ type Column struct {
 var DefaultColumns = []Column{
 	{
 		Title: "", Fixed: 2, Priority: 0,
-		Render: func(t *catalog.Track) string { return "" }, // gutter: drawn by the row renderer
+		Render: func(t *library.Track) string { return "" }, // gutter, drawn by the row renderer
 	},
 	{
-		Title: "Artist", Field: catalog.FieldArtist, Weight: 22, Min: 8, Priority: 1,
-		Render: func(t *catalog.Track) string { return t.Artist },
+		Title: "Artist", Field: "artist", SortKey: "artist", Weight: 22, Min: 8, Priority: 1,
+		Render: func(t *library.Track) string { return t.Artist },
 	},
 	{
-		Title: "Album", Field: catalog.FieldAlbum, Weight: 22, Min: 8, Priority: 2,
-		Render: func(t *catalog.Track) string { return t.Album },
+		Title: "Album", Field: "album", SortKey: "album", Weight: 22, Min: 8, Priority: 2,
+		Render: func(t *library.Track) string { return t.Album },
 	},
 	{
-		Title: "Title", Field: catalog.FieldTitle, Weight: 26, Min: 10, Priority: 0,
-		Render: func(t *catalog.Track) string { return t.Title },
+		Title: "Title", Field: "title", SortKey: "title", Weight: 26, Min: 10, Priority: 0,
+		Render: func(t *library.Track) string { return t.Title },
 	},
 	{
-		Title: "#", Field: catalog.FieldTrackNo, Fixed: 4, Right: true, Priority: 5,
-		Render: func(t *catalog.Track) string { return FormatTrackNo(t.TrackNo) },
+		Title: "#", Field: "track", SortKey: "track", Fixed: 4, Right: true, Priority: 5,
+		Render: func(t *library.Track) string { return FormatTrackNo(t.TrackNo) },
 	},
 	{
-		Title: "Year", Field: catalog.FieldYear, Fixed: 4, Right: true, Priority: 4,
-		Render: func(t *catalog.Track) string {
-			if t.Year <= 0 {
-				return ""
-			}
-			return FormatTrackNo(t.Year)
-		},
+		Title: "Year", Field: "year", SortKey: "year", Fixed: 4, Right: true, Priority: 4,
+		Render: func(t *library.Track) string { return FormatTrackNo(t.Year) },
 	},
 	{
-		Title: "Genre", Field: catalog.FieldGenre, Weight: 12, Min: 6, Priority: 6,
-		Render: func(t *catalog.Track) string { return t.Genre },
+		Title: "Genre", Field: "genre", SortKey: "genre", Weight: 12, Min: 6, Priority: 6,
+		Render: func(t *library.Track) string { return t.Genre },
 	},
 	{
-		Title: "Time", Fixed: 6, Right: true, Priority: 3,
-		Render: func(t *catalog.Track) string { return FormatMillis(t.DurationMS) },
+		Title: "Time", SortKey: "duration", Fixed: 6, Right: true, Priority: 3,
+		Render: func(t *library.Track) string { return FormatMillis(t.DurationMS) },
 	},
 	{
-		Title: "Fmt", Fixed: 4, Priority: 7,
-		Render: func(t *catalog.Track) string { return t.Format.String() },
+		Title: "Fmt", SortKey: "format", Fixed: 4, Priority: 7,
+		Render: func(t *library.Track) string { return t.Format },
 	},
 }
 

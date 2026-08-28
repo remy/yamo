@@ -23,8 +23,8 @@ func (m *Model) renderStatus(inner int) string {
 		style = th.Error
 	}
 
-	if s := m.saver; s != nil {
-		msg = fmt.Sprintf("saving %d/%d…", s.done, s.total)
+	if s := m.saving; s != nil {
+		msg = fmt.Sprintf("saving %d of %d…", s.done, s.total)
 		style = th.Accent
 	}
 	if m.artWriting > 0 {
@@ -33,7 +33,7 @@ func (m *Model) renderStatus(inner int) string {
 	}
 	if m.mode == ModeConfirmQuit {
 		msg = fmt.Sprintf("%d tracks have unsaved changes — (s)ave and quit, (y)es quit anyway, (n)o",
-			m.cat.DirtyCount())
+			m.src.dirtyCount())
 		style = th.Warn
 	}
 

@@ -1,18 +1,15 @@
 package ui
 
 import (
-	"errors"
-	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/remy/tag-manager/internal/artclip"
-	"github.com/remy/tag-manager/internal/catalog"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/tag-manager/internal/library"
 )
 
-// Mode is the interface's current input context. Every keystroke is dispatched
-// through it, which keeps the key handling readable as the bindings grow.
+// Mode is the interface's current input context.
 type Mode int
 
 const (
@@ -33,79 +30,167 @@ const (
 	statusError
 )
 
+// searchDebounce is how long typing settles before a search is sent.
+//
+// In a single process a search was a few milliseconds and could run on every
+// keystroke. Over a network it is a round trip, so the requests are collapsed;
+// the previous results stay on screen while the next are in flight, which
+// reads as responsive rather than as flicker.
+const searchDebounce = 80 * time.Millisecond
+
+// selection is the set of tracks an operation applies to.
+//
+// It can be a list of identifiers or, when everything matching is wanted, the
+// query itself. Marking two thousand tracks must not mean holding two thousand
+// identifiers and sending them back, so the query form is carried through to
+// the server unchanged.
+type selection struct {
+	ids      map[string]bool
+	all      bool
+	query    string
+	excluded map[string]bool
+}
+
+func newSelection() selection {
+	return selection{ids: map[string]bool{}, excluded: map[string]bool{}}
+}
+
+func (s *selection) contains(id string) bool {
+	if s.all {
+		return !s.excluded[id]
+	}
+	return s.ids[id]
+}
+
+func (s *selection) toggle(id string) {
+	if s.all {
+		if s.excluded[id] {
+			delete(s.excluded, id)
+		} else {
+			s.excluded[id] = true
+		}
+		return
+	}
+	if s.ids[id] {
+		delete(s.ids, id)
+	} else {
+		s.ids[id] = true
+	}
+}
+
+func (s *selection) add(id string) {
+	if s.all {
+		delete(s.excluded, id)
+		return
+	}
+	s.ids[id] = true
+}
+
+func (s *selection) selectAll(query string) {
+	*s = newSelection()
+	s.all, s.query = true, query
+}
+
+func (s *selection) clear() { *s = newSelection() }
+
+func (s *selection) empty() bool {
+	return !s.all && len(s.ids) == 0
+}
+
+// count is how many tracks are marked. With a query selection the total comes
+// from the server's match count.
+func (s *selection) count(matching int) int {
+	if s.all {
+		return matching - len(s.excluded)
+	}
+	return len(s.ids)
+}
+
+// selector converts to the form the API takes.
+func (s *selection) selector(expect *int) library.Selector {
+	if s.all {
+		sel := library.Selector{Query: s.query, ExpectCount: expect}
+		if s.query == "" {
+			sel = library.Selector{All: true, ExpectCount: expect}
+		}
+		for id := range s.excluded {
+			sel.ExcludeIDs = append(sel.ExcludeIDs, id)
+		}
+		return sel
+	}
+	ids := make([]string, 0, len(s.ids))
+	for id := range s.ids {
+		ids = append(ids, id)
+	}
+	return library.Selector{IDs: ids}
+}
+
 // Model is the whole application state.
 type Model struct {
-	cat         *catalog.Catalog
-	catalogPath string
-	theme       Theme
+	c     *client.Client
+	src   *source
+	theme Theme
 
 	width, height int
 	ready         bool
+	mode          Mode
 
-	mode Mode
+	search      input
+	searchGen   int
+	roots       []string
+	filterStale bool
 
-	search   input
-	query    *catalog.Query
-	results  []int32
-	searchMS time.Duration
-
-	cursor   int // index into results
-	offset   int // first visible row
-	selected map[int32]struct{}
-	anchor   int
+	cursor int // row index across the whole result set
+	offset int // first visible row
+	sel    selection
+	anchor int
 
 	cols     []Column
-	sortCol  int // index into cols; -1 means catalogue order
+	sortCol  int
 	sortDesc bool
 
-	ed editor
-
+	ed   editor
 	undo []undoBatch
 	redo []undoBatch
+
+	art        map[string]*artInfo
+	imgProto   ImageProtocol
+	showDetail bool
+	showArt    bool
+	helpOffset int
 
 	status     string
 	statusKind statusKind
 
-	saver      *saver
+	saving     *saveState
 	artWriting int
-
-	art      map[string]*artInfo
-	clip     *artclip.Store
-	imgProto ImageProtocol
-
-	showDetail  bool
-	showArt     bool
-	filterStale bool
-	helpOffset  int
-	quitting    bool
+	quitting   bool
 }
 
-// New builds a model over an already-loaded catalogue.
-func New(cat *catalog.Catalog, catalogPath string) *Model {
+// New builds a model over a server connection.
+func New(c *client.Client, roots []string) *Model {
 	m := &Model{
-		cat:         cat,
-		catalogPath: catalogPath,
-		theme:       NewTheme(),
-		cols:        DefaultColumns,
-		sortCol:     -1,
-		selected:    map[int32]struct{}{},
-		query:       catalog.ParseQuery(""),
-		showDetail:  true,
-		art:         map[string]*artInfo{},
-		clip:        artclip.New(artclip.DefaultDir(catalogPath)),
-		imgProto:    DetectImageProtocol(),
+		c:          c,
+		src:        newSource(c),
+		theme:      NewTheme(),
+		cols:       DefaultColumns,
+		sortCol:    -1,
+		sel:        newSelection(),
+		showDetail: true,
+		art:        map[string]*artInfo{},
+		imgProto:   DetectImageProtocol(),
+		roots:      roots,
 	}
-	m.runSearch()
-	m.setStatus(statusInfo, "%s tracks loaded  ·  press ? for help", FormatCount(cat.Len()))
+	m.setStatus(statusInfo, "connected  ·  press ? for help")
 	return m
 }
 
-// Init satisfies tea.Model.
-func (m *Model) Init() tea.Cmd { return nil }
+// Init asks for the first page.
+func (m *Model) Init() tea.Cmd { return tea.Batch(m.ensureVisible()...) }
 
-// Run starts the full-screen program.
-func Run(cat *catalog.Catalog, catalogPath string) error {
-	p := tea.NewProgram(New(cat, catalogPath), tea.WithAltScreen())
+// Run starts the full-screen browser against a server.
+func Run(c *client.Client, roots []string) error {
+	p := tea.NewProgram(New(c, roots), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
@@ -115,104 +200,61 @@ func (m *Model) setStatus(kind statusKind, format string, args ...any) {
 	m.statusKind = kind
 }
 
-// runSearch re-filters and re-sorts, keeping the cursor on the same track when
-// it survives the new filter. Losing your place on every keystroke would make
-// live search unusable.
-func (m *Model) runSearch() {
-	var keep int32 = -1
-	if m.cursor >= 0 && m.cursor < len(m.results) {
-		keep = m.results[m.cursor]
-	}
+// total is how many tracks match the current query.
+func (m *Model) total() int { return m.src.total }
 
-	m.filterStale = false
-	start := time.Now()
-	m.query = catalog.ParseQuery(m.search.Value())
-	m.results = m.cat.Index().Search(m.query)
-	m.searchMS = time.Since(start)
-	m.sortResults()
+// trackAt returns the track at a row if it has been fetched.
+func (m *Model) trackAt(row int) (library.Track, bool) { return m.src.rowAt(row) }
 
-	m.cursor = 0
-	if keep >= 0 {
-		for i, r := range m.results {
-			if r == keep {
-				m.cursor = i
-				break
-			}
-		}
-	}
-	m.clampCursor()
+// currentTrack returns the track under the cursor.
+func (m *Model) currentTrack() (library.Track, bool) { return m.trackAt(m.cursor) }
+
+// ensureVisible requests any pages the viewport needs, plus a little either
+// side so that scrolling does not stall at every boundary.
+func (m *Model) ensureVisible() []tea.Cmd {
+	rows := m.visibleRows()
+	return m.src.ensure(m.offset-rows, m.offset+rows*2)
 }
 
-// sortResults orders the current result set by the active sort column.
-func (m *Model) sortResults() {
+// sortSpec renders the active sort for the API.
+func (m *Model) sortSpec() string {
 	if m.sortCol < 0 || m.sortCol >= len(m.cols) {
-		// Catalogue order is path order, which groups albums naturally.
-		sort.Slice(m.results, func(i, j int) bool { return m.results[i] < m.results[j] })
-		return
+		return ""
 	}
 	col := m.cols[m.sortCol]
-	tracks := m.cat.Tracks
-	less := func(i, j int) bool {
-		a, b := &tracks[m.results[i]], &tracks[m.results[j]]
-		c := compareTracks(a, b, col)
-		if c == 0 {
-			return a.Path < b.Path // stable, meaningful tiebreak
-		}
-		if m.sortDesc {
-			return c > 0
-		}
-		return c < 0
+	name := col.SortKey
+	if name == "" {
+		return ""
 	}
-	sort.SliceStable(m.results, less)
+	if m.sortDesc {
+		return "-" + name
+	}
+	return name
 }
 
-// compareTracks orders two tracks by a column, numerically where the field is
-// numeric and by folded text otherwise so case and accents do not scatter
-// related values.
-func compareTracks(a, b *catalog.Track, col Column) int {
-	switch col.Field {
-	case catalog.FieldYear:
-		return cmpInt(a.Year, b.Year)
-	case catalog.FieldTrackNo:
-		return cmpInt(a.TrackNo, b.TrackNo)
-	case catalog.FieldDisc:
-		return cmpInt(a.Disc, b.Disc)
-	}
-	if col.Title == "Time" {
-		return cmpInt(a.DurationMS, b.DurationMS)
-	}
-	if col.Render == nil {
-		return 0
-	}
-	return cmpString(catalog.Fold(col.Render(a)), catalog.Fold(col.Render(b)))
+// runSearch sends the current query, keeping the cursor where it can.
+func (m *Model) runSearch() []tea.Cmd {
+	m.src.setQuery(m.search.Value(), m.sortSpec())
+	m.filterStale = false
+	m.cursor, m.offset = 0, 0
+	return m.ensureVisible()
 }
 
-func cmpInt(a, b int32) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
-}
-
-func cmpString(a, b string) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
+// refreshFilter re-runs the query after edits have made the view stale.
+func (m *Model) refreshFilter() []tea.Cmd {
+	m.src.invalidate()
+	m.filterStale = false
+	m.setStatus(statusInfo, "refreshed")
+	return m.ensureVisible()
 }
 
 func (m *Model) clampCursor() {
-	if len(m.results) == 0 {
+	total := m.total()
+	if total == 0 {
 		m.cursor, m.offset = 0, 0
 		return
 	}
-	m.cursor = clamp(m.cursor, 0, len(m.results)-1)
+	m.cursor = clamp(m.cursor, 0, total-1)
 	rows := m.visibleRows()
 	if rows <= 0 {
 		m.offset = 0
@@ -224,283 +266,159 @@ func (m *Model) clampCursor() {
 	if m.cursor >= m.offset+rows {
 		m.offset = m.cursor - rows + 1
 	}
-	maxOff := len(m.results) - rows
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	m.offset = clamp(m.offset, 0, maxOff)
+	m.offset = clamp(m.offset, 0, max(total-rows, 0))
 }
 
 // moveCursor shifts the selection by delta rows.
-func (m *Model) moveCursor(delta int) {
-	if len(m.results) == 0 {
-		return
+func (m *Model) moveCursor(delta int) []tea.Cmd {
+	if m.total() == 0 {
+		return nil
 	}
-	m.cursor = clamp(m.cursor+delta, 0, len(m.results)-1)
+	m.cursor = clamp(m.cursor+delta, 0, m.total()-1)
 	m.clampCursor()
+	return m.ensureVisible()
 }
 
-// currentTrack returns the index of the track under the cursor.
-func (m *Model) currentTrack() (int32, bool) {
-	if m.cursor < 0 || m.cursor >= len(m.results) {
-		return 0, false
+// editTargets returns the marked tracks that have been fetched, for showing
+// values in the editor. The operation itself uses the selector, which may name
+// far more than are in memory.
+func (m *Model) editTargets() []library.Track {
+	var out []library.Track
+	if m.sel.empty() {
+		if t, ok := m.currentTrack(); ok {
+			return []library.Track{t}
+		}
+		return nil
 	}
-	return m.results[m.cursor], true
+	for row := 0; row < m.total(); row++ {
+		t, ok := m.trackAt(row)
+		if !ok {
+			continue
+		}
+		if m.sel.contains(t.ID) {
+			out = append(out, t)
+		}
+		if len(out) >= 500 {
+			break // enough to decide whether the values agree
+		}
+	}
+	return out
 }
 
-// editTargets returns the tracks an edit would apply to: the marked set if
-// there is one, otherwise just the track under the cursor.
-func (m *Model) editTargets() []int32 {
-	if len(m.selected) > 0 {
-		out := make([]int32, 0, len(m.selected))
-		// Iterate the result order so the "first" value is predictable rather
-		// than whatever the map hands back.
-		for _, r := range m.results {
-			if _, ok := m.selected[r]; ok {
-				out = append(out, r)
-			}
+// targetCount is how many tracks an edit would apply to.
+func (m *Model) targetCount() int {
+	if m.sel.empty() {
+		if _, ok := m.currentTrack(); ok {
+			return 1
 		}
-		if len(out) > 0 {
-			return out
-		}
+		return 0
 	}
-	if i, ok := m.currentTrack(); ok {
-		return []int32{i}
-	}
-	return nil
+	return m.sel.count(m.total())
 }
 
 // toggleSelect marks or unmarks the track under the cursor.
 func (m *Model) toggleSelect() {
-	i, ok := m.currentTrack()
-	if !ok {
-		return
+	if t, ok := m.currentTrack(); ok {
+		m.sel.toggle(t.ID)
+		m.anchor = m.cursor
 	}
-	if _, marked := m.selected[i]; marked {
-		delete(m.selected, i)
-	} else {
-		m.selected[i] = struct{}{}
-	}
-	m.anchor = m.cursor
 }
 
-// selectRange marks every row between the anchor and the cursor.
+// selectRange marks every fetched row between the anchor and the cursor.
 func (m *Model) selectRange() {
 	lo, hi := m.anchor, m.cursor
 	if lo > hi {
 		lo, hi = hi, lo
 	}
-	for i := lo; i <= hi && i < len(m.results); i++ {
-		if i >= 0 {
-			m.selected[m.results[i]] = struct{}{}
+	for i := lo; i <= hi; i++ {
+		if t, ok := m.trackAt(i); ok {
+			m.sel.add(t.ID)
 		}
 	}
 }
 
-// commitField applies a value to every edit target as one undoable batch.
-func (m *Model) commitField(f catalog.Field, value string) int {
+// stageField records an edit locally, to be written on save.
+//
+// The API writes through, but the browser stages: it is where undo lives, and
+// where a batch of related corrections is assembled before one deliberate
+// keystroke commits them.
+func (m *Model) stageField(field, value string) int {
 	targets := m.editTargets()
-	batch := undoBatch{label: catalog.FieldNames[f], edits: make([]fieldEdit, 0, len(targets))}
-	for _, i := range targets {
-		old := m.cat.Tracks[i].String(f)
+	batch := undoBatch{label: field}
+	for _, t := range targets {
+		old := trackField(&t, field)
 		if old == value {
 			continue
 		}
-		batch.edits = append(batch.edits, fieldEdit{idx: i, field: f, old: old, new: value})
+		batch.edits = append(batch.edits, fieldEdit{
+			id: t.ID, field: field, old: old, new: value, track: t,
+		})
 	}
 	if len(batch.edits) == 0 {
 		return 0
 	}
-	batch.apply(m.cat)
+	batch.apply(m.src)
 	m.pushUndo(batch)
-	m.refreshAfterEdit()
+	if m.search.Value() != "" {
+		m.filterStale = true
+	}
 	return len(batch.edits)
 }
 
-// refreshAfterEdit updates the view after an edit without re-filtering.
-//
-// Re-running the search here would be the obvious thing to do and is the wrong
-// thing to do: renaming an album that you found by searching for its old name
-// makes every row you are working on fail the filter, so the list empties and
-// the selection disappears at the exact moment you want to see the result. The
-// result set is instead treated as a snapshot of the last query, and the user
-// refreshes it when they are ready.
-func (m *Model) refreshAfterEdit() {
-	if !m.query.Empty() {
-		m.filterStale = true
+// selectionSummary describes what an edit would touch, for the panel header.
+func (m *Model) selectionSummary() string {
+	n := m.targetCount()
+	if n == 1 {
+		return "1 track"
 	}
-	m.clampCursor()
+	s := FormatCount(n) + " tracks"
+	if m.sel.all {
+		s += " (everything matching)"
+	}
+	loaded := len(m.editTargets())
+	if loaded < n {
+		s += "  ·  showing values from the " + FormatCount(loaded) + " read so far"
+	}
+	return s
 }
 
-// refreshFilter re-applies the current query, dropping tracks that no longer
-// match and picking up ones that now do.
-func (m *Model) refreshFilter() {
-	before := len(m.results)
-	m.runSearch()
-	m.filterStale = false
-	// Marks on tracks that fell out of the result set are no longer reachable,
-	// so drop them rather than leaving an invisible selection behind.
-	if len(m.selected) > 0 {
-		visible := make(map[int32]struct{}, len(m.results))
-		for _, r := range m.results {
-			visible[r] = struct{}{}
-		}
-		for id := range m.selected {
-			if _, ok := visible[id]; !ok {
-				delete(m.selected, id)
-			}
-		}
+func (m *Model) sortLabel() string {
+	if m.sortCol < 0 || m.sortCol >= len(m.cols) {
+		return "by path"
 	}
-	m.setStatus(statusInfo, "filter refreshed: %s tracks (was %s)",
-		FormatCount(len(m.results)), FormatCount(before))
+	dir := "ascending"
+	if m.sortDesc {
+		dir = "descending"
+	}
+	return strings.ToLower(m.cols[m.sortCol].Title) + " " + dir
 }
 
-// unwritableTargets counts edit targets whose container this build cannot
-// write, grouped by format name. Reporting it while editing turns what would
-// otherwise be a batch of save-time failures into something the user knows
-// before they type.
-func (m *Model) unwritableTargets() map[string]int {
-	var out map[string]int
-	for _, i := range m.editTargets() {
-		f := m.cat.Tracks[i].Format
-		if f.Writable() {
-			continue
+// cycleSort advances to the next sortable column, through the unsorted state.
+func (m *Model) cycleSort(delta int) []tea.Cmd {
+	for i := 0; i < len(m.cols)+1; i++ {
+		m.sortCol += delta
+		if m.sortCol >= len(m.cols) {
+			m.sortCol = -1
 		}
-		if out == nil {
-			out = map[string]int{}
+		if m.sortCol < -1 {
+			m.sortCol = len(m.cols) - 1
 		}
-		out[f.String()]++
-	}
-	return out
-}
-
-// dirtyTracks lists the indices of tracks with unsaved changes.
-func (m *Model) dirtyTracks() []int32 {
-	var out []int32
-	for i := range m.cat.Tracks {
-		if m.cat.Tracks[i].Dirty() {
-			out = append(out, int32(i))
+		if m.sortCol == -1 || m.cols[m.sortCol].SortKey != "" {
+			break
 		}
 	}
-	return out
+	m.setStatus(statusInfo, "sort %s", m.sortLabel())
+	return m.applySort()
 }
 
-// yankArt copies the current track's cover to the clipboard, so it can be
-// pasted onto other tracks here or from the command line later.
-func (m *Model) yankArt() tea.Cmd {
-	idx, ok := m.currentTrack()
-	if !ok {
-		return nil
+// applySort re-requests the current query in the new order.
+func (m *Model) applySort() []tea.Cmd {
+	keep := ""
+	if t, ok := m.currentTrack(); ok {
+		keep = t.ID
 	}
-	t := &m.cat.Tracks[idx]
-	if !t.HasArt {
-		m.setStatus(statusWarn, "this track has no artwork to copy")
-		return nil
-	}
-	// Use the cached copy when the panel has already read it.
-	if info, ok := m.art[t.Path]; ok && info != nil && info.pic != nil {
-		return m.storeClip(info.pic, t.Path)
-	}
-	return func() tea.Msg {
-		pic, err := tags.ReadCover(t.Path)
-		return artYankedMsg{path: t.Path, pic: pic, err: err}
-	}
-}
-
-// storeClip writes a picture to the clipboard and reports it.
-func (m *Model) storeClip(pic *tags.Picture, source string) tea.Cmd {
-	if err := m.clip.Copy(pic, source); err != nil {
-		m.setStatus(statusError, "could not copy artwork: %v", err)
-		return nil
-	}
-	m.setStatus(statusOK, "copied %s", pic.Summary())
-	return nil
-}
-
-// pasteArt writes the clipboard image onto every edit target.
-//
-// Unlike a tag edit this is not deferred to a save: artwork is written
-// straight to the files. Holding several hundred covers in memory to write
-// later would cost more than the library itself, and there is no useful way to
-// show a pending image change in a list of text.
-func (m *Model) pasteArt() tea.Cmd {
-	held, err := m.clip.Paste()
-	if err != nil {
-		if errors.Is(err, artclip.ErrEmpty) {
-			m.setStatus(statusWarn, "nothing copied yet — press y on a track with artwork")
-		} else {
-			m.setStatus(statusError, "could not read the clipboard: %v", err)
-		}
-		return nil
-	}
-	targets := m.editTargets()
-	if len(targets) == 0 {
-		return nil
-	}
-	paths := make([]string, 0, len(targets))
-	for _, i := range targets {
-		paths = append(paths, m.cat.Tracks[i].Path)
-	}
-
-	m.artWriting = len(paths)
-	m.setStatus(statusInfo, "writing artwork to %s tracks…", FormatCount(len(paths)))
-	pic := held.Picture
-	return func() tea.Msg {
-		var done, failed int
-		var firstErr error
-		for _, p := range paths {
-			e := &tags.Edit{}
-			e.SetArtwork([]tags.Picture{pic})
-			if err := tags.Write(p, e); err != nil {
-				failed++
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-			done++
-		}
-		return artPastedMsg{done: done, failed: failed, err: firstErr, paths: paths}
-	}
-}
-
-// artYankedMsg carries a cover read for the clipboard.
-type artYankedMsg struct {
-	path string
-	pic  *tags.Picture
-	err  error
-}
-
-// artPastedMsg reports the outcome of writing artwork to a set of files.
-type artPastedMsg struct {
-	done, failed int
-	err          error
-	paths        []string
-}
-
-// currentArtCmd starts reading the cover for the track under the cursor.
-func (m *Model) currentArtCmd() tea.Cmd {
-	if !m.showDetail && !m.showArt {
-		return nil // nothing on screen would use it
-	}
-	idx, ok := m.currentTrack()
-	if !ok {
-		return nil
-	}
-	t := &m.cat.Tracks[idx]
-	return m.ensureArt(t.Path, t.HasArt)
-}
-
-// markArtPresent records that these tracks now carry artwork, so the list and
-// the detail panel agree with the files without waiting for a rescan.
-func (m *Model) markArtPresent(paths []string) {
-	want := make(map[string]struct{}, len(paths))
-	for _, p := range paths {
-		want[p] = struct{}{}
-	}
-	for i := range m.cat.Tracks {
-		if _, ok := want[m.cat.Tracks[i].Path]; ok {
-			m.cat.Tracks[i].HasArt = true
-		}
-	}
+	m.src.setQuery(m.search.Value(), m.sortSpec())
+	m.cursor, m.offset = 0, 0
+	_ = keep // the row a track lands on is only known once the page arrives
+	return m.ensureVisible()
 }

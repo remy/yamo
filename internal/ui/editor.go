@@ -1,13 +1,14 @@
 package ui
 
 import (
-	"github.com/remy/tag-manager/internal/catalog"
+	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/tag-manager/internal/library"
 )
 
 // editField describes one slot in the edit panel.
 type editField struct {
 	Label    string
-	Field    catalog.Field
+	Field    string // canonical field name, as the API takes it
 	Numeric  bool
 	Complete bool // offer suggestions drawn from values already in the library
 }
@@ -17,17 +18,17 @@ type editField struct {
 // that benefit from a wide input sit on the left; the short numeric ones sit
 // on the right where a narrow column costs nothing.
 var editFields = []editField{
-	{Label: "Title", Field: catalog.FieldTitle, Complete: true},
-	{Label: "Artist", Field: catalog.FieldArtist, Complete: true},
-	{Label: "Album", Field: catalog.FieldAlbum, Complete: true},
-	{Label: "Album Artist", Field: catalog.FieldAlbumArtist, Complete: true},
-	{Label: "Composer", Field: catalog.FieldComposer, Complete: true},
+	{Label: "Title", Field: "title", Complete: true},
+	{Label: "Artist", Field: "artist", Complete: true},
+	{Label: "Album", Field: "album", Complete: true},
+	{Label: "Album Artist", Field: "albumartist", Complete: true},
+	{Label: "Composer", Field: "composer", Complete: true},
 
-	{Label: "Track", Field: catalog.FieldTrackNo, Numeric: true},
-	{Label: "Disc", Field: catalog.FieldDisc, Numeric: true},
-	{Label: "Year", Field: catalog.FieldYear, Numeric: true},
-	{Label: "Genre", Field: catalog.FieldGenre, Complete: true},
-	{Label: "Comment", Field: catalog.FieldComment},
+	{Label: "Track", Field: "track", Numeric: true},
+	{Label: "Disc", Field: "disc", Numeric: true},
+	{Label: "Year", Field: "year", Numeric: true},
+	{Label: "Genre", Field: "genre", Complete: true},
+	{Label: "Comment", Field: "comment"},
 }
 
 const editRows = 5 // rows per column; len(editFields) is 2*editRows
@@ -48,7 +49,7 @@ type editor struct {
 
 // suggestions is the autocomplete list shown under a field being edited.
 type suggestions struct {
-	items []catalog.ValueCount
+	items []client.ValueCount
 	sel   int
 	open  bool
 }
@@ -66,9 +67,9 @@ func (s *suggestions) move(delta int) {
 	s.sel = (s.sel + delta + len(s.items)) % len(s.items)
 }
 
-func (s *suggestions) current() (catalog.ValueCount, bool) {
+func (s *suggestions) current() (client.ValueCount, bool) {
 	if !s.open || s.sel < 0 || s.sel >= len(s.items) {
-		return catalog.ValueCount{}, false
+		return client.ValueCount{}, false
 	}
 	return s.items[s.sel], true
 }
@@ -107,14 +108,18 @@ func clamp(v, lo, hi int) int {
 }
 
 // fieldValue returns the value to display for a field across the given tracks,
-// and whether the tracks disagree about it.
-func fieldValue(cat *catalog.Catalog, idxs []int32, f catalog.Field) (value string, mixed bool) {
-	if len(idxs) == 0 {
+// and whether they disagree about it.
+//
+// With a selection made by query the tracks here are only those already
+// fetched, so "they agree" means the ones that have been read agree. The panel
+// says as much rather than implying it has seen them all.
+func fieldValue(tracks []library.Track, field string) (value string, mixed bool) {
+	if len(tracks) == 0 {
 		return "", false
 	}
-	first := cat.Tracks[idxs[0]].String(f)
-	for _, i := range idxs[1:] {
-		if cat.Tracks[i].String(f) != first {
+	first := trackField(&tracks[0], field)
+	for i := range tracks[1:] {
+		if trackField(&tracks[i+1], field) != first {
 			return first, true
 		}
 	}

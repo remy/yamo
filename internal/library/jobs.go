@@ -102,6 +102,11 @@ type Jobs struct {
 	mu   sync.Mutex
 	jobs map[string]*Job
 	svc  *Service
+
+	// running counts jobs in flight so shutdown can wait for them. A job
+	// writes to music files; returning from Close while one is mid-write
+	// would be a lie.
+	running sync.WaitGroup
 }
 
 func newJobs(s *Service) *Jobs {
@@ -127,7 +132,9 @@ func (r *Jobs) Start(kind string, fn func(ctx context.Context, j *Job) (any, err
 	r.sweepLocked()
 	r.mu.Unlock()
 
+	r.running.Add(1)
 	go func() {
+		defer r.running.Done()
 		defer cancel()
 		result, err := fn(ctx, j)
 		j.finish(result, err, ctx.Err() != nil && err != nil)
@@ -180,9 +187,12 @@ func (r *Jobs) Cancel(id string) error {
 	return nil
 }
 
+// cancelAll asks every running job to stop and waits for them.
+//
+// Jobs check for cancellation between files, so this returns once the file
+// currently being written is finished rather than in the middle of one.
 func (r *Jobs) cancelAll() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	for _, j := range r.jobs {
 		j.mu.Lock()
 		if j.State == JobRunning && j.cancel != nil {
@@ -190,6 +200,8 @@ func (r *Jobs) cancelAll() {
 		}
 		j.mu.Unlock()
 	}
+	r.mu.Unlock()
+	r.running.Wait()
 }
 
 // sweepLocked drops jobs that finished long enough ago to be uninteresting.

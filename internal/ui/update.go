@@ -2,66 +2,93 @@ package ui
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/tag-manager/internal/library"
 )
 
+// searchTickMsg fires when typing has settled.
+type searchTickMsg struct{ gen int }
+
 // Update handles one message. Key handling is split by mode so that each
-// context owns its whole binding set rather than sharing one large switch with
-// mode checks scattered through it.
+// context owns its whole binding set rather than sharing one large switch.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.clampCursor()
-		// The first size message is also the first chance to read a cover.
-		return m, m.currentArtCmd()
+		return m, tea.Batch(append(m.ensureVisible(), m.currentArtCmd())...)
 
-	case saveResult:
-		return m, m.applySaveResult(msg)
+	case pageLoadedMsg:
+		if msg.err != nil {
+			m.src.apply(msg) // clears the in-flight marker
+			m.setStatus(statusError, "could not read the library: %v", msg.err)
+			return m, nil
+		}
+		if !m.src.apply(msg) {
+			return m, nil
+		}
+		m.clampCursor()
+		return m, tea.Batch(append(m.ensureVisible(), m.currentArtCmd())...)
+
+	case searchTickMsg:
+		// Only the newest keystroke's timer runs the search; the rest are the
+		// intermediate states the user typed through.
+		if msg.gen != m.searchGen {
+			return m, nil
+		}
+		return m, tea.Batch(m.runSearch()...)
 
 	case artLoadedMsg:
 		m.applyArtLoaded(msg)
 		return m, nil
 
-	case artYankedMsg:
-		if msg.err != nil || msg.pic == nil {
-			m.setStatus(statusError, "could not read artwork: %v", msg.err)
+	case suggestionsMsg:
+		// Ignore a reply for a field or prefix the user has already left.
+		if !m.ed.editing || editFields[m.ed.focus].Field != msg.field || m.ed.in.Value() != msg.prefix {
 			return m, nil
 		}
-		return m, m.storeClip(msg.pic, msg.path)
-
-	case artPastedMsg:
-		m.artWriting = 0
-		// The files on disk have changed, so any cached cover is now stale.
-		for _, p := range msg.paths {
-			delete(m.art, p)
+		items := msg.items
+		// A single suggestion identical to what is typed tells the user nothing.
+		if len(items) == 1 && items[0].Value == msg.prefix {
+			items = nil
 		}
-		m.markArtPresent(msg.paths)
-		switch {
-		case msg.failed > 0:
-			m.setStatus(statusError, "wrote artwork to %d tracks, %d failed: %v",
-				msg.done, msg.failed, msg.err)
-		default:
-			m.setStatus(statusOK, "wrote artwork to %s tracks", FormatCount(msg.done))
-		}
+		m.ed.sug.items = items
+		m.ed.sug.sel = 0
+		m.ed.sug.open = len(items) > 0
 		return m, nil
 
+	case artCopiedMsg:
+		if msg.err != nil {
+			m.setStatus(statusError, "could not copy artwork: %v", msg.err)
+			return m, nil
+		}
+		m.setStatus(statusOK, "copied %s", msg.info.Summary)
+		return m, nil
+
+	case artPastedMsg:
+		return m, m.finishPaste(msg)
+
+	case saveResultMsg:
+		return m, m.applySaveResult(msg)
+
 	case saveFinishedMsg:
-		m.finishSave()
+		cmds := m.finishSave()
 		if m.quitting {
 			return m, tea.Quit
 		}
-		return m, nil
+		return m, tea.Batch(cmds...)
+
+	case library.Event:
+		return m, m.applyServerEvent(msg)
 
 	case tea.KeyMsg:
-		// The cover shown in the panel follows the cursor, so any key that
-		// moves it may need a new one read.
-		before, _ := m.currentTrack()
+		before := m.cursor
 		model, cmd := m.handleKey(msg)
-		after, ok := m.currentTrack()
-		if ok && after != before {
+		if m.cursor != before {
 			if load := m.currentArtCmd(); load != nil {
 				return model, tea.Batch(cmd, load)
 			}
@@ -71,10 +98,58 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// finishPaste folds an artwork write back into the view.
+func (m *Model) finishPaste(msg artPastedMsg) tea.Cmd {
+	m.artWriting = 0
+	if msg.err != nil {
+		m.setStatus(statusError, "could not write artwork: %v", msg.err)
+		return nil
+	}
+	var res library.BatchResult
+	if err := client.DecodeResult(msg.job, &res); err != nil {
+		m.setStatus(statusError, "artwork written, but the result could not be read: %v", err)
+		return nil
+	}
+	switch {
+	case res.Failed > 0:
+		m.setStatus(statusError, "wrote artwork to %d tracks, %d failed", res.Changed, res.Failed)
+	case res.Changed == 0:
+		m.setStatus(statusInfo, "those tracks already had that image")
+	default:
+		m.setStatus(statusOK, "wrote artwork to %s tracks", FormatCount(res.Changed))
+	}
+	// The files changed, so both the rows and any cached covers are stale.
+	m.art = map[string]*artInfo{}
+	m.src.invalidate()
+	return tea.Batch(append(m.ensureVisible(), m.currentArtCmd())...)
+}
+
+// applyServerEvent reacts to a change made by another client.
+func (m *Model) applyServerEvent(e library.Event) tea.Cmd {
+	switch e.Type {
+	case library.EventCatalogReplaced:
+		m.src.invalidate()
+		m.setStatus(statusInfo, "the library was rescanned")
+		return tea.Batch(m.ensureVisible()...)
+	case library.EventTracksChanged:
+		// Ignore the echo of this client's own writes; a save refetches
+		// anyway, and refetching mid-save would fight it.
+		if m.saving != nil {
+			return nil
+		}
+		for _, id := range e.TrackIDs {
+			delete(m.art, id)
+		}
+		m.src.invalidate()
+		return tea.Batch(m.ensureVisible()...)
+	}
+	return nil
+}
+
 func (m *Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// A save or an artwork write in flight blocks editing, but must not trap
 	// the user.
-	if m.saver != nil || m.artWriting > 0 {
+	if m.saving != nil || m.artWriting > 0 {
 		if k.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -114,9 +189,7 @@ func (m *Model) keyHelp(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeBrowse
 		m.helpOffset = 0
 	}
-	if m.helpOffset < 0 {
-		m.helpOffset = 0
-	}
+	m.helpOffset = max(m.helpOffset, 0)
 	return m, nil
 }
 
@@ -125,7 +198,7 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "q":
-		if m.cat.DirtyCount() > 0 {
+		if m.src.dirtyCount() > 0 {
 			m.mode = ModeConfirmQuit
 			return m, nil
 		}
@@ -138,52 +211,54 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "esc":
 		switch {
-		case len(m.selected) > 0:
-			m.selected = map[int32]struct{}{}
+		case !m.sel.empty():
+			m.sel.clear()
 			m.setStatus(statusInfo, "selection cleared")
 		case !m.search.Empty():
 			m.search.Clear()
-			m.runSearch()
 			m.setStatus(statusInfo, "filter cleared")
+			return m, tea.Batch(m.runSearch()...)
 		}
 		return m, nil
 
 	case "j", "down":
-		m.moveCursor(1)
+		return m, tea.Batch(m.moveCursor(1)...)
 	case "k", "up":
-		m.moveCursor(-1)
+		return m, tea.Batch(m.moveCursor(-1)...)
 	case "ctrl+d":
-		m.moveCursor(m.visibleRows() / 2)
+		return m, tea.Batch(m.moveCursor(m.visibleRows() / 2)...)
 	case "ctrl+u":
-		m.moveCursor(-m.visibleRows() / 2)
+		return m, tea.Batch(m.moveCursor(-m.visibleRows() / 2)...)
 	case "pgdown", "ctrl+f":
-		m.moveCursor(m.visibleRows())
+		return m, tea.Batch(m.moveCursor(m.visibleRows())...)
 	case "pgup", "ctrl+b":
-		m.moveCursor(-m.visibleRows())
+		return m, tea.Batch(m.moveCursor(-m.visibleRows())...)
 	case "g", "home":
 		m.cursor = 0
 		m.clampCursor()
+		return m, tea.Batch(m.ensureVisible()...)
 	case "G", "end":
-		m.cursor = len(m.results) - 1
+		m.cursor = m.total() - 1
 		m.clampCursor()
+		return m, tea.Batch(m.ensureVisible()...)
 
 	case " ":
 		m.toggleSelect()
-		m.moveCursor(1)
+		return m, tea.Batch(m.moveCursor(1)...)
 	case "v":
 		m.selectRange()
-		m.setStatus(statusInfo, "%d selected", len(m.selected))
+		m.setStatus(statusInfo, "%s selected", FormatCount(m.sel.count(m.total())))
 	case "a":
-		for _, r := range m.results {
-			m.selected[r] = struct{}{}
-		}
-		m.setStatus(statusInfo, "%d selected", len(m.selected))
+		// Marking by query rather than by identifier: this may be a hundred
+		// thousand tracks, and only the query travels.
+		m.sel.selectAll(m.search.Value())
+		m.setStatus(statusInfo, "%s selected — everything matching", FormatCount(m.total()))
 	case "n":
-		m.selected = map[int32]struct{}{}
+		m.sel.clear()
 		m.setStatus(statusInfo, "selection cleared")
 
 	case "e", "enter":
-		if len(m.results) == 0 {
+		if m.total() == 0 {
 			m.setStatus(statusWarn, "nothing to edit")
 			return m, nil
 		}
@@ -192,12 +267,11 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "s":
-		m.cycleSort(1)
+		return m, tea.Batch(m.cycleSort(1)...)
 	case "S":
 		m.sortDesc = !m.sortDesc
-		m.sortResults()
-		m.clampCursor()
 		m.setStatus(statusInfo, "sort %s", m.sortLabel())
+		return m, tea.Batch(m.applySort()...)
 
 	case "ctrl+s":
 		return m, m.startSave()
@@ -210,6 +284,7 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		m.showDetail = !m.showDetail
 		m.clampCursor()
+		return m, m.currentArtCmd()
 
 	case "A":
 		m.showArt = !m.showArt
@@ -222,7 +297,7 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.pasteArt()
 
 	case "R", "ctrl+l":
-		m.refreshFilter()
+		return m, tea.Batch(m.refreshFilter()...)
 
 	case "?":
 		m.mode = ModeHelp
@@ -239,17 +314,13 @@ func (m *Model) keySearch(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeBrowse
 		return m, nil
 	case "up":
-		m.moveCursor(-1)
-		return m, nil
+		return m, tea.Batch(m.moveCursor(-1)...)
 	case "down":
-		m.moveCursor(1)
-		return m, nil
+		return m, tea.Batch(m.moveCursor(1)...)
 	case "pgup":
-		m.moveCursor(-m.visibleRows())
-		return m, nil
+		return m, tea.Batch(m.moveCursor(-m.visibleRows())...)
 	case "pgdown":
-		m.moveCursor(m.visibleRows())
-		return m, nil
+		return m, tea.Batch(m.moveCursor(m.visibleRows())...)
 	case "left":
 		m.search.Left()
 		return m, nil
@@ -277,8 +348,14 @@ func (m *Model) keySearch(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	m.runSearch()
-	return m, nil
+	return m, m.debounceSearch()
+}
+
+// debounceSearch schedules a search once typing settles.
+func (m *Model) debounceSearch() tea.Cmd {
+	m.searchGen++
+	gen := m.searchGen
+	return tea.Tick(searchDebounce, func(time.Time) tea.Msg { return searchTickMsg{gen: gen} })
 }
 
 // insertPrintable appends typed text to an input, ignoring control keys.
@@ -312,7 +389,6 @@ func (m *Model) keyEdit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.keyEditNavigate(k)
 	}
 
-	// The field's input is live.
 	switch key {
 	case "esc":
 		e.editing = false
@@ -331,13 +407,11 @@ func (m *Model) keyEdit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.commitEditingField()
 		e.nextFocus(1)
-		m.beginEditing()
-		return m, nil
+		return m, m.beginEditing()
 	case "shift+tab":
 		m.commitEditingField()
 		e.nextFocus(-1)
-		m.beginEditing()
-		return m, nil
+		return m, m.beginEditing()
 	case "down":
 		if e.sug.open {
 			e.sug.move(1)
@@ -345,8 +419,7 @@ func (m *Model) keyEdit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.commitEditingField()
 		e.moveFocus(m.editColumns(), 0, 1)
-		m.beginEditing()
-		return m, nil
+		return m, m.beginEditing()
 	case "up":
 		if e.sug.open {
 			e.sug.move(-1)
@@ -354,8 +427,7 @@ func (m *Model) keyEdit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.commitEditingField()
 		e.moveFocus(m.editColumns(), 0, -1)
-		m.beginEditing()
-		return m, nil
+		return m, m.beginEditing()
 	case "left":
 		e.in.Left()
 		return m, nil
@@ -383,8 +455,7 @@ func (m *Model) keyEdit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	m.refreshSuggestions()
-	return m, nil
+	return m, m.refreshSuggestions()
 }
 
 func (m *Model) keyEditNavigate(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -394,7 +465,7 @@ func (m *Model) keyEditNavigate(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = ModeBrowse
 		e.active = false
 	case "enter", "i":
-		m.beginEditing()
+		return m, m.beginEditing()
 	case "tab":
 		e.nextFocus(1)
 	case "shift+tab":
@@ -408,9 +479,9 @@ func (m *Model) keyEditNavigate(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right", "l":
 		e.moveFocus(m.editColumns(), 1, 0)
 	case "J":
-		m.moveCursor(1)
+		return m, tea.Batch(m.moveCursor(1)...)
 	case "K":
-		m.moveCursor(-1)
+		return m, tea.Batch(m.moveCursor(-1)...)
 	case "u":
 		m.doUndo()
 	case "ctrl+r":
@@ -421,70 +492,13 @@ func (m *Model) keyEditNavigate(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Typing a printable character starts editing with that character,
 		// which is what a spreadsheet does and what the fingers expect.
 		if k.Type == tea.KeyRunes {
-			m.beginEditing()
+			cmd := m.beginEditing()
 			m.ed.in.Clear()
 			m.ed.in.InsertString(string(k.Runes))
-			m.refreshSuggestions()
+			return m, tea.Batch(cmd, m.refreshSuggestions())
 		}
 	}
 	return m, nil
-}
-
-// beginEditing loads the focused field's current value into the input.
-func (m *Model) beginEditing() {
-	e := &m.ed
-	targets := m.editTargets()
-	if len(targets) == 0 {
-		return
-	}
-	f := editFields[e.focus]
-	value, mixed := fieldValue(m.cat, targets, f.Field)
-	if mixed {
-		value = "" // start blank rather than silently proposing one track's value
-	}
-	e.in.SetValue(value)
-	e.editing = true
-	e.sug.close()
-}
-
-// commitEditingField applies the input to every edit target.
-func (m *Model) commitEditingField() {
-	e := &m.ed
-	if !e.editing {
-		return
-	}
-	f := editFields[e.focus]
-	value := strings.TrimSpace(e.in.Value())
-	e.editing = false
-	e.sug.close()
-
-	n := m.commitField(f.Field, value)
-	switch {
-	case n == 0:
-		m.setStatus(statusInfo, "%s unchanged", f.Label)
-	case n == 1:
-		m.setStatus(statusOK, "%s set", f.Label)
-	default:
-		m.setStatus(statusOK, "%s set on %d tracks", f.Label, n)
-	}
-}
-
-// refreshSuggestions recomputes the autocomplete list for the live input.
-func (m *Model) refreshSuggestions() {
-	e := &m.ed
-	f := editFields[e.focus]
-	if !f.Complete {
-		e.sug.close()
-		return
-	}
-	items := m.cat.Index().Values(f.Field).Complete(e.in.Value(), maxSuggestions)
-	// A single suggestion identical to what is typed tells the user nothing.
-	if len(items) == 1 && items[0].Value == e.in.Value() {
-		items = nil
-	}
-	e.sug.items = items
-	e.sug.sel = 0
-	e.sug.open = len(items) > 0
 }
 
 func (m *Model) keyConfirmQuit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -503,59 +517,69 @@ func (m *Model) keyConfirmQuit(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// cycleSort advances to the next sortable column, passing through the
-// unsorted (catalogue order) state.
-func (m *Model) cycleSort(delta int) {
-	for i := 0; i < len(m.cols)+1; i++ {
-		m.sortCol += delta
-		if m.sortCol >= len(m.cols) {
-			m.sortCol = -1
-		}
-		if m.sortCol < -1 {
-			m.sortCol = len(m.cols) - 1
-		}
-		if m.sortCol == -1 || m.cols[m.sortCol].Title != "" {
-			break
-		}
+// beginEditing loads the focused field's current value into the input.
+func (m *Model) beginEditing() tea.Cmd {
+	e := &m.ed
+	targets := m.editTargets()
+	if len(targets) == 0 {
+		return nil
 	}
-	m.sortResults()
-	m.clampCursor()
-	m.setStatus(statusInfo, "sort %s", m.sortLabel())
+	f := editFields[e.focus]
+	value, mixed := fieldValue(targets, f.Field)
+	if mixed {
+		value = "" // start blank rather than silently proposing one track's value
+	}
+	e.in.SetValue(value)
+	e.editing = true
+	e.sug.close()
+	return nil
 }
 
-func (m *Model) sortLabel() string {
-	if m.sortCol < 0 || m.sortCol >= len(m.cols) {
-		return "by path"
-	}
-	dir := "ascending"
-	if m.sortDesc {
-		dir = "descending"
-	}
-	return strings.ToLower(m.cols[m.sortCol].Title) + " " + dir
-}
-
-func (m *Model) doUndo() {
-	if len(m.undo) == 0 {
-		m.setStatus(statusInfo, "nothing to undo")
+// commitEditingField stages the input against every edit target.
+func (m *Model) commitEditingField() {
+	e := &m.ed
+	if !e.editing {
 		return
 	}
-	b := m.undo[len(m.undo)-1]
-	m.undo = m.undo[:len(m.undo)-1]
-	b.revert(m.cat)
-	m.redo = append(m.redo, b)
-	m.refreshAfterEdit()
-	m.setStatus(statusOK, "undid %s on %d tracks", b.label, len(b.edits))
+	f := editFields[e.focus]
+	value := strings.TrimSpace(e.in.Value())
+	e.editing = false
+	e.sug.close()
+
+	n := m.stageField(f.Field, value)
+	switch {
+	case n == 0:
+		m.setStatus(statusInfo, "%s unchanged", f.Label)
+	case n == 1:
+		m.setStatus(statusOK, "%s set  ·  ^s to write", f.Label)
+	default:
+		m.setStatus(statusOK, "%s set on %d tracks  ·  ^s to write", f.Label, n)
+	}
 }
 
-func (m *Model) doRedo() {
-	if len(m.redo) == 0 {
-		m.setStatus(statusInfo, "nothing to redo")
-		return
+// suggestionsMsg carries autocomplete candidates back from the server.
+type suggestionsMsg struct {
+	field  string
+	prefix string
+	items  []client.ValueCount
+}
+
+// refreshSuggestions asks the server for values matching what is being typed.
+func (m *Model) refreshSuggestions() tea.Cmd {
+	e := &m.ed
+	f := editFields[e.focus]
+	if !f.Complete {
+		e.sug.close()
+		return nil
 	}
-	b := m.redo[len(m.redo)-1]
-	m.redo = m.redo[:len(m.redo)-1]
-	b.apply(m.cat)
-	m.undo = append(m.undo, b)
-	m.refreshAfterEdit()
-	m.setStatus(statusOK, "redid %s on %d tracks", b.label, len(b.edits))
+	c, field, prefix := m.c, f.Field, e.in.Value()
+	return func() tea.Msg {
+		ctx, cancel := contextWithTimeout(5 * time.Second)
+		defer cancel()
+		items, err := c.Values(ctx, field, prefix, maxSuggestions)
+		if err != nil {
+			return suggestionsMsg{field: field, prefix: prefix}
+		}
+		return suggestionsMsg{field: field, prefix: prefix, items: items}
+	}
 }

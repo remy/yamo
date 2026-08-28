@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/remy/tag-manager/internal/library"
 )
 
 // Label column widths inside the edit grid. "Album Artist" is the longest
@@ -23,9 +25,9 @@ func (m *Model) renderEditPanel(inner, budget int) []string {
 	w := inner - 2
 	targets := m.editTargets()
 
-	head := fmt.Sprintf("editing %s", pluralTracks(len(targets)))
+	head := "editing " + m.selectionSummary()
 	headStyle := th.Title
-	if bad := m.unwritableTargets(); len(bad) > 0 {
+	if bad := unwritableFormats(targets); len(bad) > 0 {
 		head += fmt.Sprintf("  ·  %s cannot be written", describeFormats(bad))
 		headStyle = th.Warn
 	}
@@ -87,6 +89,24 @@ func windowAroundFocus(rows []string, focus, n int) []string {
 	return rows[start : start+n]
 }
 
+// unwritableFormats counts edit targets whose container this build cannot
+// write, grouped by format. Reporting it while editing turns what would
+// otherwise be a batch of save-time failures into something the user knows
+// before they type.
+func unwritableFormats(targets []library.Track) map[string]int {
+	var out map[string]int
+	for i := range targets {
+		if targets[i].Writable {
+			continue
+		}
+		if out == nil {
+			out = map[string]int{}
+		}
+		out[targets[i].Format]++
+	}
+	return out
+}
+
 // describeFormats renders a count-by-format map in a stable order.
 func describeFormats(m map[string]int) string {
 	names := make([]string, 0, len(m))
@@ -101,15 +121,8 @@ func describeFormats(m map[string]int) string {
 	return strings.Join(parts, ", ")
 }
 
-func pluralTracks(n int) string {
-	if n == 1 {
-		return "1 track"
-	}
-	return fmt.Sprintf("%s tracks", FormatCount(n))
-}
-
 // renderGrid2 lays the fields out in two columns, filled column-major.
-func (m *Model) renderGrid2(w int, targets []int32) []string {
+func (m *Model) renderGrid2(w int, targets []library.Track) []string {
 	leftW := (w-gridGap)*3/5 - labelWideW - 1
 	rightW := w - gridGap - (leftW + labelWideW + 1) - labelThinW - 1
 	if leftW < 6 {
@@ -130,7 +143,7 @@ func (m *Model) renderGrid2(w int, targets []int32) []string {
 }
 
 // renderGrid1 stacks every field in a single column for narrow terminals.
-func (m *Model) renderGrid1(w int, targets []int32) []string {
+func (m *Model) renderGrid1(w int, targets []library.Track) []string {
 	valW := w - labelWideW - 1
 	if valW < 6 {
 		valW = 6
@@ -144,7 +157,7 @@ func (m *Model) renderGrid1(w int, targets []int32) []string {
 
 // renderField draws one label and value, showing a live input when the field
 // is being edited and a marker when a multi-track selection disagrees.
-func (m *Model) renderField(i, labelW, valueW int, targets []int32) string {
+func (m *Model) renderField(i, labelW, valueW int, targets []library.Track) string {
 	th := m.theme
 	f := editFields[i]
 	focused := i == m.ed.focus
@@ -160,7 +173,7 @@ func (m *Model) renderField(i, labelW, valueW int, targets []int32) string {
 		return label + " " + m.ed.in.Render(valueW, true, th, "")
 	}
 
-	value, mixed := fieldValue(m.cat, targets, f.Field)
+	value, mixed := fieldValue(targets, f.Field)
 	switch {
 	case mixed:
 		return label + " " + th.Warn.Render(Pad(mixedMarker, valueW))
