@@ -61,7 +61,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .
 .app { display: grid; grid-template-columns: 210px 1fr; height: 100% }
 .sidebar {
   background: var(--bg-side); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; overflow: hidden;
+  display: flex; flex-direction: column; overflow: hidden; min-height: 0;
 }
 .brand { padding: 14px 16px 10px; font-weight: 700; font-size: 15px; color: var(--accent) }
 nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
@@ -89,7 +89,11 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .facet .n { color: var(--ink-dim); font-variant-numeric: tabular-nums }
 .sidebar-foot { border-top: 1px solid var(--line); padding: 8px 16px; display: flex; flex-direction: column; gap: 4px }
 
-.main { display: flex; flex-direction: column; min-width: 0 }
+/* min-height:0 again, and this is the one that mattered. A grid item defaults
+   to min-height:auto just as a flex item does, so without this the column
+   stretches to its content and every overflow rule below it is inert — the
+   scroller never scrolls and the window does instead. */
+.main { display: flex; flex-direction: column; min-width: 0; min-height: 0 }
 .topbar {
   display: flex; align-items: center; gap: 12px; padding: 8px 14px;
   border-bottom: 1px solid var(--line);
@@ -116,14 +120,22 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 }
 .thead button.num { text-align: right }
 .thead button[data-active] { color: var(--ink); font-weight: 600 }
-.scroller { flex: 1; overflow-y: auto; position: relative }
+/* min-height:0 is load-bearing. A flex item defaults to min-height:auto, which
+   means it refuses to shrink below its content — so this pane would size to the
+   whole list, overflow would never engage, and the window would scroll instead
+   of the pane. With a hundred thousand rows that is the difference between a
+   viewport-sized scroller and a three-million-pixel one. */
+.scroller { flex: 1; min-height: 0; overflow-y: auto; position: relative }
 .sizer { position: relative }
 .rows { position: absolute; inset: 0 }
 .row {
   height: var(--row); padding-right: 12px; border-bottom: 1px solid transparent;
-  position: absolute; left: 0; right: 0; contain: strict;
+  position: absolute; left: 0; right: 0; top: 0; contain: strict;
+  will-change: transform;
 }
-.row:nth-child(even) { background: color-mix(in srgb, var(--hover) 55%, transparent) }
+/* Striping follows the row's index in the list, not its position in the pool,
+   because a recycled row moves between odd and even as it is reused. */
+.row.alt { background: color-mix(in srgb, var(--hover) 55%, transparent) }
 .row:hover { background: var(--hover) }
 .row[aria-selected="true"] { background: var(--sel); color: var(--sel-ink) }
 .row[aria-selected="true"] .dim { color: rgba(255,255,255,.8) }

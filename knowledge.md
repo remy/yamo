@@ -422,3 +422,13 @@ Recorded because several were invisible to the obvious test:
   and page fetching are driven from `Update`, never from `View`.
 - **Styles set colour only.** Widths are computed in cells by hand; a style
   that changed a string's width would break every vertical rule on screen.
+- **In the web app, `min-height: 0` is load-bearing.** A flex *or grid* item
+  defaults to `min-height: auto` and will not shrink below its content, so an
+  `overflow: auto` descendant never actually scrolls — the pane grows and the
+  window scrolls instead. It needs setting on `.main` (a grid item) as well as
+  `.scroller`. The symptom is the whole list in the DOM and `scrollTop` stuck
+  at zero, and it is invisible with a small fixture: it only appears once the
+  content is taller than the viewport.
+- **Virtualising is not enough on its own.** Rebuilding the visible rows each
+  frame costs a few hundred element allocations per frame. Rows are pooled and
+  reused, moved with `transform`, and only changed text is rewritten.

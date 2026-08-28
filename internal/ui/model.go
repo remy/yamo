@@ -2,7 +2,6 @@ package ui
 
 import (
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/remy/tag-manager/internal/client"
@@ -29,14 +28,6 @@ const (
 	statusWarn
 	statusError
 )
-
-// searchDebounce is how long typing settles before a search is sent.
-//
-// In a single process a search was a few milliseconds and could run on every
-// keystroke. Over a network it is a round trip, so the requests are collapsed;
-// the previous results stay on screen while the next are in flight, which
-// reads as responsive rather than as flicker.
-const searchDebounce = 80 * time.Millisecond
 
 // selection is the set of tracks an operation applies to.
 //
@@ -136,7 +127,6 @@ type Model struct {
 	mode          Mode
 
 	search      input
-	searchGen   int
 	roots       []string
 	filterStale bool
 

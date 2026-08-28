@@ -58,7 +58,7 @@ func (m *Model) renderStatus(inner int) string {
 func (m *Model) hintsFor() string {
 	switch m.mode {
 	case ModeSearch:
-		return "⏎ done   esc cancel   ↑↓ move"
+		return "⏎ search   esc cancel   ↑↓ move"
 	case ModeEdit:
 		if m.ed.editing {
 			return "⏎ commit   tab accept   esc cancel"
@@ -92,7 +92,7 @@ func (m *Model) helpAll(inner int) []string {
 			{"i", "show or hide the detail panel"},
 		}},
 		{"finding", []entry{
-			{"/", "search; results update as you type"},
+			{"/", "search; press ⏎ to run it"},
 			{"artist:elvis", "restrict a term to one field"},
 			{"artist:\"elvis presley\"", "quote values containing spaces"},
 			{"year:1977, year:>1980", "compare numeric fields"},

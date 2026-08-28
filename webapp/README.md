@@ -38,13 +38,15 @@ answers.
 
 ## What it does
 
-- **Songs** — a virtualised table over the whole library, sorted by any column
-  server-side. Click a heading to sort, click again to reverse.
+- **Songs** — a recycled table over the whole library, sorted by any column
+  server-side. Click a heading to sort, click again to reverse. A hundred
+  thousand tracks is around thirty DOM rows, reused as you scroll.
 - **Albums** — a grid of covers, lazily fetched. Clicking one searches for
   exactly that album, using the `query` each album carries.
 - **Search** — the full query language: `artist:elvis`, `year:>1980`,
-  `-genre:live`, `album:"sun sessions"`. Debounced, because each keystroke is
-  a round trip.
+  `-genre:live`, `album:"sun sessions"`. Runs on ⏎, not as you type: a request
+  per keystroke against a large library is not free, and a half-typed `year:>`
+  is never sent. Escape clears it.
 - **Genre and artist facets** in the sidebar, from `/v1/values/{field}`.
 - **Get Info** — modelled on the dialog in Apple Music, restricted to the
   fields this API can write. Click a row and press ⌘I, or double-click.
@@ -63,6 +65,18 @@ URL holds its blob in memory until it is revoked.
 and a stream reader. `Api.events` is an async generator; the SSE format is
 simple enough that parsing it by hand is a few lines. An edit made in the
 terminal or on another device drops the affected rows here without polling.
+
+**Rows are recycled, not rebuilt.** A pool of row elements is created once and
+moved with `transform`, and only the text that actually changed is rewritten.
+Rebuilding the visible rows each frame — which is what `replaceChildren` does —
+means a few hundred element allocations per frame for a list that only ever
+shows thirty.
+
+Two CSS traps sit underneath that, both the same one: a flex *or grid* item
+defaults to `min-height: auto` and refuses to shrink below its content, so
+without `min-height: 0` on both `.main` and `.scroller` the pane sizes itself
+to the full list, `overflow` never engages, and the window scrolls instead. The
+symptom is every row in the DOM and a `scrollTop` stuck at zero.
 
 **Selecting everything does not send every id.** ⌘A sets a flag; the save then
 sends the *query* as the selector, so editing ten tracks and editing a hundred

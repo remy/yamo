@@ -150,15 +150,8 @@ func typeString(t *testing.T, m *Model, s string) {
 		}
 		press(t, m, string(r))
 	}
-	// Search is debounced, so the timer has to be allowed to fire.
-	settleSearch(t, m)
-}
-
-// settleSearch runs the debounce timer immediately rather than waiting for it.
-func settleSearch(t *testing.T, m *Model) {
-	t.Helper()
-	_, cmd := m.Update(searchTickMsg{gen: m.searchGen})
-	pump(t, m, cmd)
+	// The search runs on enter, not on each keystroke.
+	press(t, m, "enter")
 }
 
 // TestFrameGeometry is the load-bearing test for the interface: every line the

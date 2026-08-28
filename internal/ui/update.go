@@ -9,9 +9,6 @@ import (
 	"github.com/remy/tag-manager/internal/library"
 )
 
-// searchTickMsg fires when typing has settled.
-type searchTickMsg struct{ gen int }
-
 // Update handles one message. Key handling is split by mode so that each
 // context owns its whole binding set rather than sharing one large switch.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -33,14 +30,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.clampCursor()
 		return m, tea.Batch(append(m.ensureVisible(), m.currentArtCmd())...)
-
-	case searchTickMsg:
-		// Only the newest keystroke's timer runs the search; the rest are the
-		// intermediate states the user typed through.
-		if msg.gen != m.searchGen {
-			return m, nil
-		}
-		return m, tea.Batch(m.runSearch()...)
 
 	case artLoadedMsg:
 		m.applyArtLoaded(msg)
@@ -306,12 +295,22 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// keySearch edits the query. The search itself runs on enter.
+//
+// Searching as each key is pressed means a request per keystroke against a
+// library that may run to six figures, and sends half-typed expressions like
+// "year:>" on the way to the real one.
 func (m *Model) keySearch(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "enter":
+	case "enter":
 		m.mode = ModeBrowse
+		return m, tea.Batch(m.runSearch()...)
+	case "esc":
+		// Abandon the edit and put back what was being shown.
+		m.mode = ModeBrowse
+		m.search.SetValue(m.src.query)
 		return m, nil
 	case "up":
 		return m, tea.Batch(m.moveCursor(-1)...)
@@ -348,14 +347,7 @@ func (m *Model) keySearch(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m, m.debounceSearch()
-}
-
-// debounceSearch schedules a search once typing settles.
-func (m *Model) debounceSearch() tea.Cmd {
-	m.searchGen++
-	gen := m.searchGen
-	return tea.Tick(searchDebounce, func(time.Time) tea.Msg { return searchTickMsg{gen: gen} })
+	return m, nil
 }
 
 // insertPrintable appends typed text to an input, ignoring control keys.

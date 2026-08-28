@@ -10,6 +10,7 @@ const el = (tag, cls, text) => {
 
 // The columns of the track table. `sort` is what the server is asked for.
 const COLUMNS = [
+  { key: 'track',  label: '#',      sort: 'track',  width: '54px', num: true, dim: true },
   { key: 'title',  label: 'Title',  sort: 'title',  width: '2.2fr' },
   { key: 'artist', label: 'Artist', sort: 'artist', width: '1.6fr' },
   { key: 'album',  label: 'Album',  sort: 'album',  width: '1.6fr' },
@@ -151,10 +152,12 @@ function trackAt(i) {
 
 // --- rendering --------------------------------------------------------
 
+function colTemplate() { return COLUMNS.map(c => c.width).join(' '); }
+
 function renderHead() {
   const head = $('#thead');
-  head.style.setProperty('--cols', COLUMNS.map(c => c.width).join(' '));
-  $('#rows').style.setProperty('--cols', COLUMNS.map(c => c.width).join(' '));
+  head.style.setProperty('--cols', colTemplate());
+  $('#rows').style.setProperty('--cols', colTemplate());
   head.replaceChildren(...COLUMNS.map(c => {
     const b = el('button', c.num ? 'num' : '', c.label);
     const [field, desc] = state.sort.startsWith('-')
@@ -162,7 +165,7 @@ function renderHead() {
       : [state.sort.split(',')[0], false];
     if (c.sort === field) {
       b.dataset.active = '1';
-      b.textContent = `${c.label} ${desc ? '▾' : '▴'}`;
+      b.textContent = `${c.label} ${desc ? '\u25be' : '\u25b4'}`;
     }
     b.addEventListener('click', () => {
       state.sort = (field === c.sort && !desc) ? `-${c.sort}` : c.sort;
@@ -173,42 +176,90 @@ function renderHead() {
   }));
 }
 
+// The row pool.
+//
+// Rows are created once and reused. Rebuilding them on every scroll — which is
+// what replaceChildren does — means creating a few hundred elements per frame,
+// and at sixty frames a second that is tens of thousands of allocations for a
+// list that only ever shows thirty of them. A recycled row is moved with a
+// transform and has its text rewritten, which costs nothing by comparison.
+const pool = [];
+
+function poolRow(k) {
+  while (pool.length <= k) {
+    const row = el('div', 'row');
+    row.cells = COLUMNS.map(c => {
+      const span = el('span', [c.num ? 'num' : '', c.dim ? 'dim' : ''].filter(Boolean).join(' '));
+      row.append(span);
+      return span;
+    });
+    row.shown = null;   // the row index currently displayed, for cheap diffing
+    $('#rows').append(row);
+    pool.push(row);
+  }
+  return pool[k];
+}
+
 function render() {
   const sc = $('#scroller');
   $('#sizer').style.height = `${state.total * ROW_H}px`;
-  const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 5);
-  const count = Math.ceil(sc.clientHeight / ROW_H) + 10;
-  const frag = document.createDocumentFragment();
 
-  for (let i = first; i < Math.min(first + count, state.total); i++) {
-    const t = trackAt(i);
-    const row = el('div', 'row');
-    row.style.top = `${i * ROW_H}px`;
-    row.style.setProperty('--cols', COLUMNS.map(c => c.width).join(' '));
-    if (!t) {
-      row.classList.add('pending');
-      row.append(...COLUMNS.map(() => el('span', '', '')));
-    } else {
-      row.dataset.id = t.id;
-      row.dataset.index = i;
-      if (state.selected.has(t.id)) row.setAttribute('aria-selected', 'true');
-      for (const c of COLUMNS) {
-        const cls = [c.num ? 'num' : '', c.dim ? 'dim' : ''].filter(Boolean).join(' ');
-        row.append(el('span', cls, cellText(t, c.key)));
-      }
+  const first = Math.max(0, Math.floor(sc.scrollTop / ROW_H) - 4);
+  const visible = Math.ceil(sc.clientHeight / ROW_H) + 8;
+  const last = Math.min(first + visible, state.total);
+
+  for (let k = 0; k < Math.max(visible, pool.length); k++) {
+    const row = poolRow(k);
+    const i = first + k;
+    if (i >= last) {                       // surplus rows park rather than die
+      if (!row.hidden) { row.hidden = true; row.shown = null; }
+      continue;
     }
-    frag.append(row);
+    row.hidden = false;
+    // Transform rather than top: moving a row this way does not invalidate
+    // layout, only compositing.
+    row.style.transform = `translateY(${i * ROW_H}px)`;
+    paintRow(row, i);
   }
-  $('#rows').replaceChildren(frag);
+
   $('#count').textContent = `${state.total.toLocaleString()} songs` +
-    (state.selected.size ? ` · ${state.selected.size} selected` : '');
+    (state.selected.size ? ` \u00b7 ${state.selected.size.toLocaleString()} selected` : '');
   $('#edit-btn').disabled = state.selected.size === 0;
+}
+
+// paintRow writes a track into a pooled row, touching only what changed.
+function paintRow(row, i) {
+  const t = trackAt(i);
+  const id = t ? t.id : '';
+  const selected = t ? state.selected.has(t.id) : false;
+  const key = `${i}|${id}|${selected ? 1 : 0}`;
+  if (row.shown === key) return;           // nothing about this row has changed
+  row.shown = key;
+
+  row.dataset.index = i;
+  row.classList.toggle('alt', i % 2 === 1);
+  row.classList.toggle('pending', !t);
+  if (t) {
+    row.dataset.id = t.id;
+    row.setAttribute('aria-selected', String(selected));
+    for (let c = 0; c < COLUMNS.length; c++) {
+      const text = cellText(t, COLUMNS[c].key);
+      if (row.cells[c].textContent !== text) row.cells[c].textContent = text;
+    }
+  } else {
+    delete row.dataset.id;
+    row.removeAttribute('aria-selected');
+    for (const cell of row.cells) if (cell.textContent !== '') cell.textContent = '';
+  }
 }
 
 function cellText(t, key) {
   switch (key) {
     case 'time': return formatTime(t.durationMs);
     case 'year': return t.year || '';
+    // A track number is shown alone unless the file also says how many there
+    // are, which is the form the tag itself uses.
+    case 'track': return t.track ? (t.trackTotal ? `${t.track}/${t.trackTotal}` : String(t.track)) : '';
     default: return t[key] || '';
   }
 }
@@ -219,8 +270,18 @@ const formatTime = ms => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-$('#scroller').addEventListener('scroll', () => { render(); ensurePages(); }, { passive: true });
-window.addEventListener('resize', () => { render(); ensurePages(); });
+let frameQueued = false;
+function onScroll() {
+  if (frameQueued) return;
+  frameQueued = true;
+  requestAnimationFrame(() => {
+    frameQueued = false;
+    render();
+    ensurePages();
+  });
+}
+$('#scroller').addEventListener('scroll', onScroll, { passive: true });
+window.addEventListener('resize', onScroll);
 
 // --- selection --------------------------------------------------------
 
@@ -273,18 +334,29 @@ function selectAllMatching() {
 
 // --- search and facets ------------------------------------------------
 
-let searchTimer;
-$('#search').addEventListener('input', e => {
-  clearTimeout(searchTimer);
-  const v = e.target.value;
-  // Debounced: over a network each keystroke is a round trip.
-  searchTimer = setTimeout(() => {
-    state.query = v;
-    state.selectAll = false;
-    state.selected.clear();
-    refresh(true);
-  }, 180);
+// Search runs on Enter, not as you type.
+//
+// Debouncing keystrokes still means a query per pause, and a query over a
+// network against a large library is not free. Waiting for Enter also means a
+// half-typed expression like `year:>` is never sent.
+$('#search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    runSearch(e.target.value);
+  } else if (e.key === 'Escape' && e.target.value !== '') {
+    e.preventDefault();
+    e.target.value = '';
+    runSearch('');
+  }
 });
+
+function runSearch(value) {
+  if (value === state.query) return;
+  state.query = value;
+  state.selectAll = false;
+  state.selected.clear();
+  refresh(true);
+}
 
 async function loadFacets() {
   const render = (host, values, field) => {
