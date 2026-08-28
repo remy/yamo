@@ -157,8 +157,10 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
    extending a selection with shift and arrow keys. */
 .row.cursor { outline: 2px solid var(--sel); outline-offset: -2px }
 .row.cursor[aria-selected="true"] { outline-color: color-mix(in srgb, var(--sel-ink) 70%, transparent) }
-.scroller:focus { outline: none }
-.scroller:focus-visible { outline: 2px solid var(--sel); outline-offset: -2px }
+/* No ring on the scroller itself: it is focused programmatically after a
+   search or a view change, so :focus-visible would light it up unprompted.
+   The .row.cursor outline already shows where the keyboard is. */
+.scroller:focus, .scroller:focus-visible { outline: none }
 .row[aria-selected="true"] .dim { color: rgba(255,255,255,.8) }
 .row > span {
   padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
