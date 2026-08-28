@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"errors"
 	"sort"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/remy/tag-manager/internal/artclip"
 	"github.com/remy/tag-manager/internal/catalog"
+	"github.com/remy/tag-manager/internal/tags"
 )
 
 // Mode is the interface's current input context. Every keystroke is dispatched
@@ -63,9 +66,15 @@ type Model struct {
 	status     string
 	statusKind statusKind
 
-	saver *saver
+	saver      *saver
+	artWriting int
+
+	art      map[string]*artInfo
+	clip     *artclip.Store
+	imgProto ImageProtocol
 
 	showDetail  bool
+	showArt     bool
 	filterStale bool
 	helpOffset  int
 	quitting    bool
@@ -82,6 +91,9 @@ func New(cat *catalog.Catalog, catalogPath string) *Model {
 		selected:    map[int32]struct{}{},
 		query:       catalog.ParseQuery(""),
 		showDetail:  true,
+		art:         map[string]*artInfo{},
+		clip:        artclip.New(artclip.DefaultDir(catalogPath)),
+		imgProto:    DetectImageProtocol(),
 	}
 	m.runSearch()
 	m.setStatus(statusInfo, "%s tracks loaded  ·  press ? for help", FormatCount(cat.Len()))
@@ -371,4 +383,124 @@ func (m *Model) dirtyTracks() []int32 {
 		}
 	}
 	return out
+}
+
+// yankArt copies the current track's cover to the clipboard, so it can be
+// pasted onto other tracks here or from the command line later.
+func (m *Model) yankArt() tea.Cmd {
+	idx, ok := m.currentTrack()
+	if !ok {
+		return nil
+	}
+	t := &m.cat.Tracks[idx]
+	if !t.HasArt {
+		m.setStatus(statusWarn, "this track has no artwork to copy")
+		return nil
+	}
+	// Use the cached copy when the panel has already read it.
+	if info, ok := m.art[t.Path]; ok && info != nil && info.pic != nil {
+		return m.storeClip(info.pic, t.Path)
+	}
+	return func() tea.Msg {
+		pic, err := tags.ReadCover(t.Path)
+		return artYankedMsg{path: t.Path, pic: pic, err: err}
+	}
+}
+
+// storeClip writes a picture to the clipboard and reports it.
+func (m *Model) storeClip(pic *tags.Picture, source string) tea.Cmd {
+	if err := m.clip.Copy(pic, source); err != nil {
+		m.setStatus(statusError, "could not copy artwork: %v", err)
+		return nil
+	}
+	m.setStatus(statusOK, "copied %s", pic.Summary())
+	return nil
+}
+
+// pasteArt writes the clipboard image onto every edit target.
+//
+// Unlike a tag edit this is not deferred to a save: artwork is written
+// straight to the files. Holding several hundred covers in memory to write
+// later would cost more than the library itself, and there is no useful way to
+// show a pending image change in a list of text.
+func (m *Model) pasteArt() tea.Cmd {
+	held, err := m.clip.Paste()
+	if err != nil {
+		if errors.Is(err, artclip.ErrEmpty) {
+			m.setStatus(statusWarn, "nothing copied yet — press y on a track with artwork")
+		} else {
+			m.setStatus(statusError, "could not read the clipboard: %v", err)
+		}
+		return nil
+	}
+	targets := m.editTargets()
+	if len(targets) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(targets))
+	for _, i := range targets {
+		paths = append(paths, m.cat.Tracks[i].Path)
+	}
+
+	m.artWriting = len(paths)
+	m.setStatus(statusInfo, "writing artwork to %s tracks…", FormatCount(len(paths)))
+	pic := held.Picture
+	return func() tea.Msg {
+		var done, failed int
+		var firstErr error
+		for _, p := range paths {
+			e := &tags.Edit{}
+			e.SetArtwork([]tags.Picture{pic})
+			if err := tags.Write(p, e); err != nil {
+				failed++
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			done++
+		}
+		return artPastedMsg{done: done, failed: failed, err: firstErr, paths: paths}
+	}
+}
+
+// artYankedMsg carries a cover read for the clipboard.
+type artYankedMsg struct {
+	path string
+	pic  *tags.Picture
+	err  error
+}
+
+// artPastedMsg reports the outcome of writing artwork to a set of files.
+type artPastedMsg struct {
+	done, failed int
+	err          error
+	paths        []string
+}
+
+// currentArtCmd starts reading the cover for the track under the cursor.
+func (m *Model) currentArtCmd() tea.Cmd {
+	if !m.showDetail && !m.showArt {
+		return nil // nothing on screen would use it
+	}
+	idx, ok := m.currentTrack()
+	if !ok {
+		return nil
+	}
+	t := &m.cat.Tracks[idx]
+	return m.ensureArt(t.Path, t.HasArt)
+}
+
+// markArtPresent records that these tracks now carry artwork, so the list and
+// the detail panel agree with the files without waiting for a rescan.
+func (m *Model) markArtPresent(paths []string) {
+	want := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		want[p] = struct{}{}
+	}
+	for i := range m.cat.Tracks {
+		if _, ok := want[m.cat.Tracks[i].Path]; ok {
+			m.cat.Tracks[i].HasArt = true
+		}
+	}
 }

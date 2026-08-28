@@ -22,6 +22,14 @@ type Edit struct {
 	TrackTotal *int32
 	Disc       *int32
 	DiscTotal  *int32
+
+	// Artwork replaces every embedded image. A nil pointer leaves the file's
+	// pictures alone; a non-nil empty slice removes them.
+	//
+	// Artwork is the one edit that cannot land inside a tag's reserved
+	// padding, because a cover is orders of magnitude larger than the space
+	// any format sets aside. Setting one rewrites the file.
+	Artwork *[]Picture
 }
 
 // Empty reports whether the edit would change nothing.
@@ -29,8 +37,15 @@ func (e *Edit) Empty() bool {
 	return e.Title == nil && e.Artist == nil && e.AlbumArtist == nil &&
 		e.Album == nil && e.Genre == nil && e.Composer == nil &&
 		e.Comment == nil && e.Year == nil && e.Track == nil &&
-		e.TrackTotal == nil && e.Disc == nil && e.DiscTotal == nil
+		e.TrackTotal == nil && e.Disc == nil && e.DiscTotal == nil &&
+		e.Artwork == nil
 }
+
+// SetArtwork records a replacement image set.
+func (e *Edit) SetArtwork(pics []Picture) { e.Artwork = &pics }
+
+// RemoveArtwork records that every embedded image should go.
+func (e *Edit) RemoveArtwork() { e.Artwork = &[]Picture{} }
 
 // SetString records a string field change by name. Names match FieldNames in
 // the catalog package; unknown names are ignored.

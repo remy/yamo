@@ -15,10 +15,38 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.ready = true
 		m.clampCursor()
-		return m, nil
+		// The first size message is also the first chance to read a cover.
+		return m, m.currentArtCmd()
 
 	case saveResult:
 		return m, m.applySaveResult(msg)
+
+	case artLoadedMsg:
+		m.applyArtLoaded(msg)
+		return m, nil
+
+	case artYankedMsg:
+		if msg.err != nil || msg.pic == nil {
+			m.setStatus(statusError, "could not read artwork: %v", msg.err)
+			return m, nil
+		}
+		return m, m.storeClip(msg.pic, msg.path)
+
+	case artPastedMsg:
+		m.artWriting = 0
+		// The files on disk have changed, so any cached cover is now stale.
+		for _, p := range msg.paths {
+			delete(m.art, p)
+		}
+		m.markArtPresent(msg.paths)
+		switch {
+		case msg.failed > 0:
+			m.setStatus(statusError, "wrote artwork to %d tracks, %d failed: %v",
+				msg.done, msg.failed, msg.err)
+		default:
+			m.setStatus(statusOK, "wrote artwork to %s tracks", FormatCount(msg.done))
+		}
+		return m, nil
 
 	case saveFinishedMsg:
 		m.finishSave()
@@ -28,14 +56,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		return m.handleKey(msg)
+		// The cover shown in the panel follows the cursor, so any key that
+		// moves it may need a new one read.
+		before, _ := m.currentTrack()
+		model, cmd := m.handleKey(msg)
+		after, ok := m.currentTrack()
+		if ok && after != before {
+			if load := m.currentArtCmd(); load != nil {
+				return model, tea.Batch(cmd, load)
+			}
+		}
+		return model, cmd
 	}
 	return m, nil
 }
 
 func (m *Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// A save in flight blocks editing, but must not trap the user.
-	if m.saver != nil {
+	// A save or an artwork write in flight blocks editing, but must not trap
+	// the user.
+	if m.saver != nil || m.artWriting > 0 {
 		if k.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -171,6 +210,16 @@ func (m *Model) keyBrowse(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "i":
 		m.showDetail = !m.showDetail
 		m.clampCursor()
+
+	case "A":
+		m.showArt = !m.showArt
+		m.clampCursor()
+		return m, m.currentArtCmd()
+
+	case "y":
+		return m, m.yankArt()
+	case "p":
+		return m, m.pasteArt()
 
 	case "R", "ctrl+l":
 		m.refreshFilter()

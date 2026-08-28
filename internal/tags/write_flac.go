@@ -23,6 +23,23 @@ func writeFLAC(path string, e *Edit) error {
 		var cur Metadata
 		vc.applyTo(&cur)
 		applyEditToVorbis(vc, e, &cur)
+
+		if e.Artwork != nil {
+			// FLAC keeps images in their own metadata blocks. A file
+			// converted from Ogg may also carry one base64-encoded in the
+			// comment, so clear that too or the old cover would survive.
+			vc.set("METADATA_BLOCK_PICTURE", "")
+			kept := other[:0]
+			for _, b := range other {
+				if b.typ != flacPicture {
+					kept = append(kept, b)
+				}
+			}
+			for i := range *e.Artwork {
+				kept = append(kept, flacBlock{typ: flacPicture, body: encodeFLACPicture(&(*e.Artwork)[i])})
+			}
+			other = kept
+		}
 		return other, true
 	})
 }

@@ -47,6 +47,9 @@ func writeOgg(path string, e *Edit) error {
 		var cur Metadata
 		vc.applyTo(&cur)
 		applyEditToVorbis(vc, e, &cur)
+		if e.Artwork != nil {
+			setVorbisPictures(vc, *e.Artwork)
+		}
 		return true
 	})
 }

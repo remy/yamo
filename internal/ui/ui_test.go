@@ -68,6 +68,29 @@ func TestFrameGeometry(t *testing.T) {
 		{"help", func() { m.mode = ModeHelp }},
 		{"confirm-quit", func() { m.mode = ModeConfirmQuit }},
 		{"no-detail", func() { m.mode = ModeBrowse; m.showDetail = false }},
+		{"art-panel", func() {
+			m.mode = ModeBrowse
+			m.showArt = true
+			m.imgProto = ImageNone
+			m.search.Clear()
+			m.runSearch()
+		}},
+		{"art-panel-with-image", func() {
+			// Force an image protocol on and hand the panel a real cover, so
+			// the escape sequence is measured the way a terminal would.
+			m.mode = ModeBrowse
+			m.showArt = true
+			m.imgProto = ImageITerm2
+			m.art = map[string]*artInfo{
+				m.cat.Tracks[0].Path: {pic: &tags.Picture{
+					Kind: tags.PictureFrontCover, MIME: "image/jpeg",
+					Width: 600, Height: 600, Data: fakeImageBytes(),
+				}},
+			}
+			m.cat.Tracks[0].HasArt = true
+			m.search.Clear()
+			m.runSearch()
+		}},
 		{"empty-results", func() {
 			m.mode = ModeBrowse
 			m.showDetail = true
@@ -97,8 +120,76 @@ func TestFrameGeometry(t *testing.T) {
 		}
 	}
 	// Reset the filter so later assertions in this file are not affected.
+	m.showArt = false
 	m.search.Clear()
 	m.runSearch()
+}
+
+// fakeImageBytes is a byte blob standing in for a cover. Its content does not
+// matter: the point is that it base64-encodes into a long run containing every
+// letter, which is what breaks a naive escape-sequence scanner.
+func fakeImageBytes() []byte {
+	b := make([]byte, 4096)
+	for i := range b {
+		b[i] = byte(i * 7)
+	}
+	return b
+}
+
+// TestStripANSIHandlesImageSequences guards the frame against inline images.
+func TestStripANSIHandlesImageSequences(t *testing.T) {
+	th := NewTheme()
+	img := RenderImage(ImageITerm2, fakeImageBytes(), 18, 9)
+	if img == "" {
+		t.Fatal("no image sequence produced")
+	}
+	line := th.Row.Render("left") + img + strings.Repeat(" ", 18) + th.Dim.Render("right")
+	// The image occupies cells the terminal paints, not cells in the string,
+	// so only the text and the explicit padding should measure.
+	if got, want := DisplayWidth(stripANSI(line)), 4+18+5; got != want {
+		t.Errorf("measured %d cells, want %d", got, want)
+	}
+
+	kit := RenderImage(ImageKitty, fakeImageBytes(), 18, 9)
+	if kit == "" {
+		t.Fatal("no kitty sequence produced")
+	}
+	if got := DisplayWidth(stripANSI(kit)); got != 0 {
+		t.Errorf("a kitty image measured %d cells, want 0", got)
+	}
+	// The payload must be split into continuation chunks.
+	if n := strings.Count(kit, "\x1b_G"); n < 2 {
+		t.Errorf("kitty payload was not chunked: %d escapes", n)
+	}
+}
+
+// TestDetectImageProtocol covers the environment sniffing.
+func TestDetectImageProtocol(t *testing.T) {
+	cases := []struct {
+		env  map[string]string
+		want ImageProtocol
+	}{
+		{map[string]string{"TERM_PROGRAM": "iTerm.app"}, ImageITerm2},
+		{map[string]string{"LC_TERMINAL": "iTerm2"}, ImageITerm2},
+		{map[string]string{"TERM": "xterm-kitty"}, ImageKitty},
+		{map[string]string{"KITTY_WINDOW_ID": "1"}, ImageKitty},
+		{map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, ImageNone},
+		{map[string]string{}, ImageNone},
+		// Inside tmux the sequences do not survive, so nothing is claimed.
+		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TMUX": "/tmp/x"}, ImageNone},
+		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TAGMGR_NO_IMAGES": "1"}, ImageNone},
+	}
+	for _, c := range cases {
+		for _, k := range []string{"TERM", "TERM_PROGRAM", "LC_TERMINAL", "KITTY_WINDOW_ID", "TMUX", "TAGMGR_NO_IMAGES"} {
+			t.Setenv(k, "")
+		}
+		for k, v := range c.env {
+			t.Setenv(k, v)
+		}
+		if got := DetectImageProtocol(); got != c.want {
+			t.Errorf("env %v gave %v, want %v", c.env, got, c.want)
+		}
+	}
 }
 
 // TestTooSmallDoesNotPanic covers sizes below the usable minimum.

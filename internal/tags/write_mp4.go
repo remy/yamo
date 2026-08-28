@@ -336,6 +336,11 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 	out := make([]mp4Item, 0, len(items)+len(repl))
 	seen := map[string]bool{}
 	for _, it := range items {
+		// Artwork is handled separately: unlike every other item there may be
+		// several covr atoms, so they are dropped here and re-added below.
+		if it.Name == atomCover && e.Artwork != nil {
+			continue
+		}
 		if v, ok := repl[it.Name]; ok {
 			if !seen[it.Name] && v != nil {
 				out = append(out, mp4Item{Name: it.Name, Body: v})
@@ -344,6 +349,11 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 			continue
 		}
 		out = append(out, it)
+	}
+	if e.Artwork != nil {
+		for i := range *e.Artwork {
+			out = append(out, mp4Item{Name: atomCover, Body: encodeMP4Cover(&(*e.Artwork)[i])})
+		}
 	}
 	for _, name := range ilstOrder {
 		if v, ok := repl[name]; ok && !seen[name] && v != nil {

@@ -124,6 +124,49 @@ FLAC writes a few kilobytes rather than 40 MB. When the tag has to grow beyond
 its padding the file is rebuilt alongside the original and renamed over it, so
 an interrupted write cannot leave a damaged track.
 
+### Cover art
+
+Art is moved around with a clipboard: copy one image, then paste it onto as
+many tracks as you like. The clipboard is on disk, so a cover copied in the
+browser can be pasted from the command line and the other way round.
+
+```sh
+tagmgr art                                   # what art the library has
+tagmgr art -copy cover.jpg                   # put an image on the clipboard
+tagmgr art -copy "01 track.flac"             # ...or lift one off a track
+tagmgr art -paste artist:elvis -apply        # write it to matching tracks
+tagmgr art -from-folder -apply               # embed the folder.jpg beside each track
+tagmgr art -export ~/covers                  # write covers out as files
+tagmgr art -remove 'album:demos' -apply      # take art off
+```
+
+In the browser: `y` copies the cover under the cursor, `p` pastes it onto the
+marked tracks, and `A` opens the art panel — which draws the cover as an actual
+image in iTerm2, Kitty, WezTerm and Ghostty, and falls back to text everywhere
+else. Unlike tag edits, artwork is written straight to disk rather than held
+for `^s`: holding several hundred covers in memory to write later would cost
+more than the library itself.
+
+`tagmgr art` with no other flag reports what is there, grouped by image:
+
+```
+  tracks  image                           embedded  example album
+      12  600×600 jpeg 125 KB              1.5 MiB  Sun Sessions
+```
+
+That grouping is the useful part. Measured on a real library, **85% of
+embedded artwork is duplicate bytes** — the same cover repeated once per track.
+
+Two things to know:
+
+- **Embedding art rewrites the file.** A cover is far larger than the padding
+  any format reserves, so unlike every other edit the audio has to move. Tracks
+  whose art already matches are skipped, which makes a repeated run free.
+- **`-from-folder` is usually what you want.** It looks beside each track for
+  `cover.jpg`, `folder.jpg`, `front.jpg` and the like — how a downloaded
+  library normally stores art, and the usual reason none of it appears on a
+  phone. The directory is scanned once per album, not once per track.
+
 ### Stripping
 
 `tagmgr strip` removes every tag that is not on a keep list, leaving a uniform
@@ -290,6 +333,5 @@ python3 -m venv .venv && ./.venv/bin/pip install pyte
 - WMA, WAV and AIFF are read but not written.
 - `strip` and `restore` cover MP3, FLAC, MP4, Ogg Vorbis and Opus. WMA, WAV
   and AIFF are read but not written, so they are reported and skipped.
-- Cover art is detected but not displayed or edited.
 - The catalogue is not watched; run `tagmgr scan` after adding music.
 - One catalogue at a time; use `-catalog` to keep several.

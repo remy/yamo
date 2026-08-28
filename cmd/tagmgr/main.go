@@ -20,6 +20,7 @@ Usage:
   tagmgr [flags]                 browse and edit the catalogue (default)
   tagmgr scan [flags] <dir>...   build or refresh the catalogue
   tagmgr find [flags] <query>    print matching tracks and exit
+  tagmgr art [flags] [query]     inspect, copy and replace cover art
   tagmgr strip [flags] [query]   remove every tag except a fixed set
   tagmgr restore [flags]         put stripped tags back from a backup
   tagmgr info [flags]            show catalogue statistics
@@ -90,6 +91,8 @@ func run(args []string) error {
 		return cmdScan(args)
 	case "find", "search":
 		return cmdFind(args)
+	case "art", "cover":
+		return cmdArt(args)
 	case "strip":
 		return cmdStrip(args)
 	case "restore":
@@ -125,6 +128,8 @@ func cmdHelp(args []string) error {
 		return cmdScan([]string{"-h"})
 	case "find", "search":
 		return cmdFind([]string{"-h"})
+	case "art", "cover":
+		return cmdArt([]string{"-h"})
 	case "strip":
 		return cmdStrip([]string{"-h"})
 	case "restore":
@@ -154,7 +159,7 @@ func parseFlags(fs *flag.FlagSet, args []string, summary, footer string) error {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderArgs(fs, args)); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			writeUsage(os.Stdout, fs, summary, footer)
 			return errHelpRequested
@@ -162,6 +167,58 @@ func parseFlags(fs *flag.FlagSet, args []string, summary, footer string) error {
 		return fmt.Errorf("%w (try: tagmgr help %s)", err, fs.Name())
 	}
 	return nil
+}
+
+// reorderArgs moves flags ahead of positional arguments.
+//
+// Go's flag package stops parsing at the first non-flag argument. Every
+// command here takes a query, and writing the flag after it is the natural
+// way to type one — but "tagmgr strip artist:elvis -apply" would then treat
+// -apply as part of the query and silently do nothing. For a command that
+// writes to a hundred thousand files, silently doing nothing is the good
+// outcome; the bad one is a flag that was meant to make an operation safer
+// being dropped just as quietly.
+//
+// The positionals are emitted after a "--" so that a query beginning with a
+// dash, such as -genre:live, is not then mistaken for a flag in turn.
+func reorderArgs(fs *flag.FlagSet, args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if len(a) > 1 && a[0] == '-' {
+			flags = append(flags, a)
+			// A non-boolean flag written as "-name value" owns the argument
+			// after it, which has to travel with it.
+			if flagTakesValue(fs, a) && i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+			continue
+		}
+		positional = append(positional, a)
+	}
+	if len(positional) == 0 {
+		return flags
+	}
+	return append(append(flags, "--"), positional...)
+}
+
+// flagTakesValue reports whether a flag consumes the following argument.
+func flagTakesValue(fs *flag.FlagSet, arg string) bool {
+	name := strings.TrimLeft(arg, "-")
+	if strings.ContainsRune(name, '=') {
+		return false // the value is attached
+	}
+	f := fs.Lookup(name)
+	if f == nil {
+		return false // unknown; let Parse report it rather than guessing
+	}
+	bf, ok := f.Value.(interface{ IsBoolFlag() bool })
+	return !ok || !bf.IsBoolFlag()
 }
 
 // writeUsage prints a command's summary, its flags, and any trailing notes.

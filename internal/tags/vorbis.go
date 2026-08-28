@@ -165,3 +165,19 @@ func indexByte(b []byte, c byte) int {
 	}
 	return -1
 }
+
+// setVorbisPictures replaces the base64-encoded picture fields Ogg uses to
+// carry cover art, which has no block of its own in that container.
+func setVorbisPictures(vc *vorbisComment, pics []Picture) {
+	const key = "METADATA_BLOCK_PICTURE"
+	out := vc.fields[:0]
+	for _, f := range vc.fields {
+		if f.key != key {
+			out = append(out, f)
+		}
+	}
+	vc.fields = out
+	for i := range pics {
+		vc.fields = append(vc.fields, vorbisField{key: key, value: encodeVorbisPicture(&pics[i])})
+	}
+}

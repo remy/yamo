@@ -169,6 +169,23 @@ func applyEditToFrames(tag *id3Tag, e *Edit, cur *Metadata) {
 	if e.Comment != nil {
 		setCommentFrame(tag, *e.Comment)
 	}
+	if e.Artwork != nil {
+		setPictureFrames(tag, *e.Artwork)
+	}
+}
+
+// setPictureFrames replaces every APIC frame with the given images.
+func setPictureFrames(tag *id3Tag, pics []Picture) {
+	out := tag.frames[:0]
+	for _, f := range tag.frames {
+		if f.id != "APIC" {
+			out = append(out, f)
+		}
+	}
+	tag.frames = out
+	for i := range pics {
+		tag.frames = append(tag.frames, id3Frame{id: "APIC", payload: encodeAPIC(&pics[i])})
+	}
 }
 
 // setTextFrame replaces the first matching frame and drops any duplicates. An

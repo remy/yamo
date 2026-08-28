@@ -27,6 +27,10 @@ func (m *Model) renderStatus(inner int) string {
 		msg = fmt.Sprintf("saving %d/%d…", s.done, s.total)
 		style = th.Accent
 	}
+	if m.artWriting > 0 {
+		msg = fmt.Sprintf("writing artwork to %s tracks…", FormatCount(m.artWriting))
+		style = th.Accent
+	}
 	if m.mode == ModeConfirmQuit {
 		msg = fmt.Sprintf("%d tracks have unsaved changes — (s)ave and quit, (y)es quit anyway, (n)o",
 			m.cat.DirtyCount())
@@ -65,7 +69,7 @@ func (m *Model) hintsFor() string {
 	case ModeConfirmQuit:
 		return ""
 	default:
-		return "? help   / search   e edit   space mark   ^s save   q quit"
+		return "? help   / search   e edit   space mark   y/p art   ^s save   q quit"
 	}
 }
 
@@ -102,6 +106,12 @@ func (m *Model) helpAll(inner int) []string {
 			{"space", "mark a track and move on"},
 			{"v", "mark from the last mark to here"},
 			{"a / n", "mark all results / clear marks"},
+		}},
+		{"artwork", []entry{
+			{"A", "show the cover, as an image where the terminal can"},
+			{"y", "copy this track's cover to the clipboard"},
+			{"p", "paste it onto the marked tracks, or this one"},
+			{"", "artwork is written straight to disk, not held for ^s"},
 		}},
 		{"editing", []entry{
 			{"e or ⏎", "open the editor for the marks, or this track"},

@@ -128,8 +128,11 @@ func (m *Model) panelWants() int {
 	case ModeHelp:
 		return 0
 	default:
+		if m.showArt && m.height >= 22 {
+			return artPanelRows
+		}
 		if m.showDetail && m.height >= 18 {
-			return 3
+			return 4
 		}
 		return 0
 	}
@@ -302,7 +305,10 @@ func (m *Model) renderPanel(inner, h int) []string {
 	case ModeHelp:
 		return nil
 	default:
-		if m.showDetail {
+		switch {
+		case m.showArt && h >= artPanelRows:
+			lines = m.renderArtPreview(inner)
+		case m.showDetail:
 			lines = m.renderDetail(inner)
 		}
 	}
@@ -317,7 +323,8 @@ func (m *Model) renderPanel(inner, h int) []string {
 func (m *Model) renderDetail(inner int) []string {
 	th := m.theme
 	w := inner - 2
-	blank := []string{" " + Pad("", w) + " ", " " + Pad("", w) + " ", " " + Pad("", w) + " "}
+	blank := []string{" " + Pad("", w) + " ", " " + Pad("", w) + " ",
+		" " + Pad("", w) + " ", " " + Pad("", w) + " "}
 
 	idx, ok := m.currentTrack()
 	if !ok {
@@ -351,7 +358,9 @@ func (m *Model) renderDetail(inner int) []string {
 		"comment":      t.Comment,
 	}, []string{"album artist", "composer", "comment"}), w))
 
-	return []string{" " + line1 + " ", " " + line2 + " ", " " + line3 + " "}
+	line4 := m.artLine(w)
+
+	return []string{" " + line1 + " ", " " + line2 + " ", " " + line3 + " ", " " + line4 + " "}
 }
 
 func labelled(values map[string]string, order []string) string {
@@ -399,18 +408,48 @@ func max(a, b int) int {
 	return b
 }
 
-// stripANSI removes escape sequences so a styled string can be measured.
+// stripANSI removes escape sequences so a styled string can be measured in
+// terminal cells.
+//
+// It has to understand more than colour codes. An inline image is an OSC or
+// APC sequence carrying base64, and base64 contains every letter — so a naive
+// scan that stopped at the first 'm' would cut a sequence in half and count
+// the remainder as visible text. The frame is laid out in exact cells, so a
+// mismeasured line puts the right-hand rule in the wrong column.
 func stripANSI(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x1b {
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
+	for i := 0; i < len(s); {
+		if s[i] != 0x1b || i+1 >= len(s) {
+			b.WriteByte(s[i])
+			i++
 			continue
 		}
-		b.WriteByte(s[i])
+		switch s[i+1] {
+		case '[': // CSI: ends at the first byte in @ to ~
+			i += 2
+			for i < len(s) && (s[i] < '@' || s[i] > '~') {
+				i++
+			}
+			if i < len(s) {
+				i++
+			}
+		case ']', '_', 'P', '^', 'X': // OSC, APC, DCS, PM, SOS: end at BEL or ST
+			i += 2
+			for i < len(s) {
+				if s[i] == 0x07 { // BEL
+					i++
+					break
+				}
+				if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '\\' { // ST
+					i += 2
+					break
+				}
+				i++
+			}
+		default: // a two-byte escape
+			i += 2
+		}
 	}
 	return b.String()
 }
