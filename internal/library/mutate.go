@@ -192,10 +192,21 @@ func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.
 		if !ok || !f.Editable() {
 			continue
 		}
+		name := catalog.FieldNames[f]
+		if f == catalog.FieldCompilation {
+			// A flag is compared as a flag: "true" and "1" are the same
+			// answer, and only a real change is worth rewriting a file for.
+			want := catalog.IsTrue(val)
+			if want == cur.Compilation {
+				continue
+			}
+			e.SetBool(name, want)
+			appliers = append(appliers, func(t *catalog.Track) { t.Compilation = want })
+			continue
+		}
 		if cur.String(f) == val {
 			continue // already that value; do not rewrite the file for nothing
 		}
-		name := catalog.FieldNames[f]
 		switch f {
 		case catalog.FieldYear, catalog.FieldTrackNo, catalog.FieldDisc:
 			e.SetInt(name, atoi32(val))

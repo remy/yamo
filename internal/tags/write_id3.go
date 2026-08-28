@@ -178,6 +178,16 @@ func applyEditToFrames(tag *id3Tag, e *Edit, cur *Metadata) {
 			setTextFrame(tag, "TDRL", year)
 		}
 	}
+	if e.Compilation != nil {
+		// ffmpeg writes the flag as TXXX:TCMP, so clear that spelling too or
+		// the two would disagree and whichever a reader saw first would win.
+		removeUserTextFrame(tag, "TCMP")
+		if *e.Compilation {
+			setTextFrame(tag, "TCMP", "1")
+		} else {
+			removeFrames(tag, "TCMP")
+		}
+	}
 	if e.Comment != nil {
 		setCommentFrame(tag, *e.Comment)
 	}

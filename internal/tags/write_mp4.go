@@ -332,6 +332,13 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 	if e.Disc != nil || e.DiscTotal != nil {
 		repl[atomDisc] = mp4NumberBody(pick(e.Disc, cur.Disc), pick(e.DiscTotal, cur.DiscTotal), 6)
 	}
+	if e.Compilation != nil {
+		// Clearing the flag writes a zero rather than dropping the atom.
+		// iTunes writes cpil=0 on everything, and a reader that treats a
+		// missing atom and a false one differently would then disagree with
+		// the rest of the library.
+		repl[atomCompilation] = mp4FlagBody(*e.Compilation)
+	}
 
 	out := make([]mp4Item, 0, len(items)+len(repl))
 	seen := map[string]bool{}
@@ -366,7 +373,7 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 // ilstOrder gives newly added items a deterministic order.
 var ilstOrder = []string{
 	atomTitle, atomArtist, atomAlbumArtist, atomAlbum, atomGenreText,
-	atomDate, atomTrack, atomDisc, atomComposer, atomComment,
+	atomDate, atomTrack, atomDisc, atomComposer, atomComment, atomCompilation,
 }
 
 func pick(v *int32, cur int32) int32 {
@@ -382,6 +389,17 @@ func mp4TextBody(value string) []byte {
 	binary.BigEndian.PutUint32(data[0:4], 1) // well-known type 1: UTF-8
 	data = append(data, value...)
 	return atom("data", data)
+}
+
+// mp4FlagBody builds the body of a boolean item: one byte, well-known type 21,
+// which is how cpil and pgap are stored.
+func mp4FlagBody(on bool) []byte {
+	data := make([]byte, 8, 9)
+	binary.BigEndian.PutUint32(data[0:4], 21) // well-known type 21: signed int
+	if on {
+		return atom("data", append(data, 1))
+	}
+	return atom("data", append(data, 0))
 }
 
 // mp4NumberBody builds the body of a trkn or disk item. Apple writes eight

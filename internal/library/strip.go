@@ -511,6 +511,11 @@ func normalizeEdit(md *tags.Metadata, fields []tags.Tag) *tags.Edit {
 			setStr("composer", md.Composer)
 		case tags.TagComment:
 			setStr("comment", md.Comment)
+		case tags.TagCompilation:
+			// A flag has no empty form to skip: false is a value, not an
+			// absence, so it is always re-asserted.
+			v := md.Compilation
+			e.Compilation = &v
 		case tags.TagDate:
 			setInt("year", md.Year)
 		case tags.TagTrack:

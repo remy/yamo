@@ -31,6 +31,8 @@ const INFO_FIELDS = [
   { field: 'year',        label: 'year', short: true },
   { field: 'track',       label: 'track', pair: 'tracktotal' },
   { field: 'disc',        label: 'disc number', pair: 'disctotal' },
+  { field: 'compilation', label: 'compilation', check: true,
+    hint: 'Album is a compilation of songs by various artists' },
   { field: 'comment',     label: 'comments' },
 ];
 
@@ -1054,6 +1056,9 @@ function common(field) {
 
 function valueOf(t, field) {
   switch (field) {
+    // A flag is compared as the string it is sent as, so "unchanged" means the
+    // same thing here as it does on the wire.
+    case 'compilation': return t.compilation ? '1' : '0';
     case 'albumartist': return t.albumArtist;
     case 'track': return t.track;
     case 'tracktotal': return t.trackTotal;
@@ -1071,6 +1076,26 @@ function buildDetails(multi) {
   for (const f of INFO_FIELDS) {
     grid.append(el('label', '', f.label));
     const [val, mixed] = common(f.field);
+
+    if (f.check) {
+      // A checkbox has a third state that a text field does not need: across a
+      // mixed selection it is indeterminate, and saving leaves each track's own
+      // answer alone unless it is actually clicked.
+      const box = el('input');
+      box.type = 'checkbox';
+      box.dataset.field = f.field;
+      box.checked = val === '1';
+      box.indeterminate = mixed;
+      box.disabled = !writable;
+      const wrap = el('div', 'check');
+      wrap.append(box, el('span', 'muted small', mixed ? 'Mixed' : f.hint));
+      box.addEventListener('change', () => {
+        wrap.querySelector('span').textContent = f.hint;
+      });
+      grid.append(wrap);
+      continue;
+    }
+
     const input = el('input');
     input.dataset.field = f.field;
     input.value = mixed ? '' : (val || '');
@@ -1429,6 +1454,19 @@ async function saveInfo({ keepOpen = false } = {}) {
   for (const input of $('#details-grid').querySelectorAll('input')) {
     const field = input.dataset.field;
     const [val, mixed] = common(field);
+
+    if (input.type === 'checkbox') {
+      // Still indeterminate means it was never touched, so every track keeps
+      // its own answer. A flag is cleared by sending "0" rather than null:
+      // null means "remove the tag", and readers treat a missing flag and a
+      // false one alike, so "0" is the honest way to say no.
+      if (input.indeterminate) continue;
+      const now = input.checked ? '1' : '0';
+      if (!mixed && now === String(val ?? '')) continue;
+      changes[field] = now;
+      continue;
+    }
+
     const typed = input.value.trim();
     if (mixed && typed === '') continue;        // left alone across a mixed set
     if (!mixed && typed === String(val ?? '')) continue;  // unchanged

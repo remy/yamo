@@ -637,6 +637,7 @@ components:
         | `year:1970-1979` | an inclusive range |
         | `-genre:live` | exclude matches |
         | `album:` | the field is empty |
+        | `compilation:1` | the Various Artists flag is set (`comp:` and `va:` also work) |
 
         Terms are combined with AND. Matching ignores case and accents, so
         `bjork` finds `Björk`. An empty query matches everything.
@@ -732,6 +733,11 @@ components:
         size: { type: integer, format: int64 }
         modTime: { type: integer, format: int64, description: Unix seconds. }
         hasArt: { type: boolean }
+        compilation:
+          type: boolean
+          description: >-
+            The Various Artists flag, which keeps such an album together rather
+            than letting it fragment into one album per track.
         writable:
           type: boolean
           description: False for formats this build can read but not write.
@@ -778,6 +784,13 @@ components:
         tracktotal: { type: [string, "null"] }
         disc: { type: [string, "null"] }
         disctotal: { type: [string, "null"] }
+        compilation:
+          type: [string, "null"]
+          description: >-
+            The Various Artists flag, as a string like every other value here.
+            `"1"`, `"true"`, `"yes"` and `"on"` set it; `"0"`, `"false"`, `""`
+            and `null` clear it.
+          examples: ["1", "0"]
 
     Selector:
       type: object

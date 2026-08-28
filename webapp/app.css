@@ -218,6 +218,10 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .grid input.mixed::placeholder { font-style: italic }
 .grid input:disabled { background: var(--bg-side); color: var(--ink-dim) }
 .grid .pair { display: flex; align-items: center; gap: 6px }
+.grid .check { display: flex; align-items: center; gap: 8px }
+.grid .check input { width: auto; margin: 0 }
+/* An indeterminate box is the mixed state, and must not read as unticked. */
+.grid .check input:indeterminate { opacity: .55 }
 .grid .pair input { width: 64px }
 .grid .val { color: var(--ink); overflow-wrap: anywhere }
 /* The path stays plain selectable text; the button beside it does the copying,

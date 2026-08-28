@@ -123,7 +123,8 @@ func compileTerm(tok token) (term, bool) {
 		}
 	}
 
-	if t.field == FieldYear || t.field == FieldTrackNo || t.field == FieldDisc {
+	if t.field == FieldYear || t.field == FieldTrackNo || t.field == FieldDisc ||
+		t.field == FieldCompilation {
 		if op, lo, hi, ok := parseNumeric(s); ok {
 			t.op, t.lo, t.hi = op, lo, hi
 			return t, true

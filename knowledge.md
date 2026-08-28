@@ -303,6 +303,30 @@ small login endpoint (works natively with both). **Neither is implemented.**
 Unwritable formats are counted and reported, never silently skipped. The editor
 warns before you type rather than failing at save time.
 
+### The compilation flag is a tri-state everywhere it travels
+
+`Edit.Compilation` is a `*bool`, the `Changes` value is a string, and the web
+app's checkbox has an indeterminate state. All three exist for the same reason:
+"leave this alone" has to be distinguishable from "set it to false", or editing
+one field across an album would silently clear the flag on every track.
+
+Reading it is per-container: ID3 `TCMP` (and ffmpeg's `TXXX:TCMP`), MP4 `cpil`
+as a raw byte with well-known type 21, Vorbis `COMPILATION`. Clearing it writes
+`cpil=0` rather than dropping the atom, because iTunes writes the atom on
+everything and a reader that distinguishes absent from false would then
+disagree with the rest of the library.
+
+It rides the numeric path in the query language, so `compilation:1`,
+`compilation:0` and the aliases `comp:`/`va:` all work.
+
+Adding it to the catalogue needed no snapshot version bump: the flags byte
+beside `HasArt` had spare bits. An older snapshot decodes with the bit clear,
+which reads as "not a compilation" until the next scan says otherwise.
+
+The TUI cannot edit it. Its editor is a fixed two-by-five grid — `editRows` is
+a constant and `renderField(editRows+row)` assumes exactly ten fields — so an
+eleventh needs a layout change rather than a list entry.
+
 ### The ID3 date is written twice, on purpose
 
 `writeID3v2` writes the year to `TYER` (or `TDRC` in a v2.4 tag) **and** to

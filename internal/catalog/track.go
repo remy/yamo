@@ -40,6 +40,10 @@ type Track struct {
 	Format   tags.Format
 	HasArt   bool
 
+	// Compilation is the Various Artists flag, which is what stops such an
+	// album fragmenting into one album per track.
+	Compilation bool
+
 	// Changed records which fields have been edited in memory but not yet
 	// written back to the file. Tracking the specific fields, rather than a
 	// single dirty flag, means a save writes only what the user actually
@@ -88,6 +92,7 @@ func (t *Track) FromMetadata(md *tags.Metadata) {
 	t.SampleRate = md.SampleRate
 	t.Channels = md.Channels
 	t.HasArt = md.HasArt
+	t.Compilation = md.Compilation
 	t.Format = md.Format
 }
 
@@ -106,6 +111,7 @@ func (t *Track) ToMetadata() tags.Metadata {
 		TrackTotal:  t.TrackTotal,
 		Disc:        t.Disc,
 		DiscTotal:   t.DiscTotal,
+		Compilation: t.Compilation,
 		Format:      t.Format,
 	}
 }
@@ -124,6 +130,7 @@ const (
 	FieldYear
 	FieldTrackNo
 	FieldDisc
+	FieldCompilation
 	FieldPath
 	numFields
 )
@@ -140,6 +147,7 @@ var FieldNames = [numFields]string{
 	FieldYear:        "year",
 	FieldTrackNo:     "track",
 	FieldDisc:        "disc",
+	FieldCompilation: "compilation",
 	FieldPath:        "path",
 }
 
@@ -155,6 +163,7 @@ var fieldAliases = map[string]Field{
 	"year":    FieldYear, "y": FieldYear, "date": FieldYear,
 	"track": FieldTrackNo, "trackno": FieldTrackNo, "n": FieldTrackNo,
 	"disc": FieldDisc, "d": FieldDisc,
+	"compilation": FieldCompilation, "comp": FieldCompilation, "va": FieldCompilation,
 	"path": FieldPath, "p": FieldPath, "file": FieldPath,
 }
 
@@ -187,10 +196,26 @@ func (t *Track) String(f Field) string {
 		return itoa32(t.TrackNo)
 	case FieldDisc:
 		return itoa32(t.Disc)
+	case FieldCompilation:
+		if t.Compilation {
+			return "1"
+		}
+		return ""
 	case FieldPath:
 		return t.Path
 	}
 	return ""
+}
+
+// IsTrue reads the spellings a client or a tag may use for a flag. Taggers and
+// people disagree: "1", "true", "yes" and "on" all turn up, and an empty value
+// means the flag is not set rather than that it is unknown.
+func IsTrue(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 // SetString assigns a text field, parsing decimals for the numeric ones.
@@ -217,6 +242,8 @@ func (t *Track) SetString(f Field, v string) {
 		t.TrackNo = atoi32(v)
 	case FieldDisc:
 		t.Disc = atoi32(v)
+	case FieldCompilation:
+		t.Compilation = IsTrue(v)
 	}
 }
 

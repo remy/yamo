@@ -140,6 +140,15 @@ func (ix *Index) matchTerm(i int, t *term) bool {
 			return t.matchNumeric(tr.TrackNo)
 		case FieldDisc:
 			return t.matchNumeric(tr.Disc)
+		case FieldCompilation:
+			// A flag rides the numeric path so that compilation:1 and
+			// compilation:0 both work, and so does the bare compilation:
+			// form that finds tracks without it.
+			var v int32
+			if tr.Compilation {
+				v = 1
+			}
+			return t.matchNumeric(v)
 		}
 		return false
 	}

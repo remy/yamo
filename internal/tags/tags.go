@@ -90,6 +90,12 @@ type Metadata struct {
 
 	HasArt bool
 	Format Format
+
+	// Compilation is the flag that keeps a Various Artists album together
+	// rather than splitting it into one album per track. It is a boolean in
+	// every container, stored as "1" in ID3's TCMP and as a single byte in
+	// MP4's cpil.
+	Compilation bool
 }
 
 // FormatForExt maps a file extension (with or without the leading dot) to a

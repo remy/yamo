@@ -188,10 +188,17 @@ func stripID3(path string, keep KeepSet, apply bool, rep *StripReport) error {
 		t := tagForID3Frame(fr.id, fr.payload)
 		if keep[t] {
 			kept = append(kept, fr)
-			if wasV22 {
+			switch {
+			case wasV22:
 				// Every frame in a v2.2 tag is under its three-character name.
 				rep.noteNonCanonical(t)
-			} else if t == TagGenre {
+			case fr.id == "TXXX" && len(t.NativeKeys(FormatMP3)) > 0:
+				// A user-defined frame holding something with a frame of its
+				// own. ffmpeg writes the compilation flag as TXXX:TCMP and the
+				// comment as TXXX:comment, and a reader that does not know
+				// that finds neither.
+				rep.noteNonCanonical(t)
+			case t == TagGenre:
 				if v := frameText(fr.payload); normaliseGenre(v) != v {
 					rep.noteNonCanonical(t) // "(19)" rather than "Industrial"
 				}

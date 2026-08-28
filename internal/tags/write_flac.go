@@ -196,6 +196,13 @@ func applyEditToVorbis(vc *vorbisComment, e *Edit, cur *Metadata) {
 			vc.set(key, *v)
 		}
 	}
+	if e.Compilation != nil {
+		if *e.Compilation {
+			vc.set("COMPILATION", "1")
+		} else {
+			vc.set("COMPILATION", "")
+		}
+	}
 	setStr("TITLE", e.Title)
 	setStr("ARTIST", e.Artist)
 	setStr("ALBUM", e.Album)

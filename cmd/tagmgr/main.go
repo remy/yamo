@@ -49,10 +49,12 @@ const queryHelp = `Query syntax:
   year:1970-1979            an inclusive range
   -genre:christmas          exclude matches
   album:                    the field is empty
+  compilation:1             the Various Artists flag is set
   artist:elvis year:>1960   terms are combined with AND
 
 Fields: title, artist, albumartist, album, genre, composer, comment,
-year, track, disc, path. Most have short aliases (ar, al, g, y).
+year, track, disc, compilation, path. Most have short aliases (ar, al,
+g, y, comp).
 
 Matching ignores case and accents, so "bjork" finds "Björk".
 

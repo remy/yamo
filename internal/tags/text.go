@@ -209,6 +209,17 @@ func genreByID(n int) string {
 	return ""
 }
 
+// isTrueFlag reads the boolean a tag uses for a yes/no field. Taggers disagree
+// about how to spell it: "1", "true" and "yes" all turn up, and iTunes writes a
+// raw byte that arrives here as "\x01".
+func isTrueFlag(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "0", "false", "no", "\x00":
+		return false
+	}
+	return true
+}
+
 // normaliseGenre resolves the "(17)", "(17)Hard Rock" and bare "17" forms that
 // ID3v2 genre frames use, falling back to the literal text.
 func normaliseGenre(s string) string {

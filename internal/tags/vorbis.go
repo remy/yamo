@@ -152,6 +152,7 @@ func (vc *vorbisComment) applyTo(md *Metadata) {
 			md.DiscTotal = parseIntPrefix(t)
 		}
 	}
+	md.Compilation = isTrueFlag(vc.get("COMPILATION"))
 	if vc.get("METADATA_BLOCK_PICTURE") != "" {
 		md.HasArt = true
 	}

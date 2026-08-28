@@ -44,6 +44,10 @@ type Track struct {
 	HasArt   bool   `json:"hasArt"`
 	Writable bool   `json:"writable"`
 
+	// Compilation keeps a Various Artists album together rather than letting
+	// it fragment into one album per track.
+	Compilation bool `json:"compilation,omitempty"`
+
 	// Version identifies the file's state on disk. A client may send it back
 	// as If-Match; a mismatch means the file changed underneath, which is what
 	// makes editing the same library from two devices safe.
@@ -75,6 +79,7 @@ func toTrack(t *catalog.Track) Track {
 		Size:        t.Size,
 		ModTime:     t.ModTime,
 		HasArt:      t.HasArt,
+		Compilation: t.Compilation,
 		Writable:    t.Format.Writable(),
 		Version:     TrackVersion(t),
 	}

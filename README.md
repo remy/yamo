@@ -150,6 +150,7 @@ The same query language works in the search bar and on the command line.
 | `year:1970-1979` | an inclusive range |
 | `-genre:christmas` | exclude matches |
 | `album:` | tracks where the field is empty |
+| `compilation:1` | the Various Artists flag is set (`comp:`, `va:`) |
 | `artist:elvis year:>1960` | terms are ANDed |
 
 Matching is case- and accent-insensitive in both directions: `bjork` finds

@@ -208,6 +208,7 @@ const (
 	atomAlbum       = "\xa9alb"
 	atomGenreText   = "\xa9gen"
 	atomGenreID     = "gnre"
+	atomCompilation = "cpil"
 	atomDate        = "\xa9day"
 	atomComposer    = "\xa9wrt"
 	atomComment     = "\xa9cmt"
@@ -264,6 +265,12 @@ func parseILST(ilst []byte, md *Metadata) {
 		case atomDate:
 			if md.Year == 0 {
 				md.Year = parseYear(val)
+			}
+		case atomCompilation:
+			// cpil is a single byte rather than text, so the decoded string is
+			// no use: read the payload.
+			if b := mp4DataBytes(body); len(b) > 0 {
+				md.Compilation = b[0] != 0
 			}
 		}
 		return true

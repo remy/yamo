@@ -20,7 +20,13 @@ const (
 	snapshotVersion = 1
 )
 
-const flagHasArt = 1 << 0
+const (
+	flagHasArt = 1 << 0
+	// The flags byte had spare bits, so this needed no snapshot version bump.
+	// An older snapshot decodes with the bit clear, which reads as "not a
+	// compilation" until the next scan says otherwise.
+	flagCompilation = 1 << 1
+)
 
 // ErrBadSnapshot means the file is not a snapshot this build can read.
 var ErrBadSnapshot = errors.New("catalog: unrecognised snapshot")
@@ -111,6 +117,9 @@ func Encode(c *Catalog) []byte {
 		if t.HasArt {
 			flags |= flagHasArt
 		}
+		if t.Compilation {
+			flags |= flagCompilation
+		}
 		buf = append(buf, t.Channels, byte(t.Format), flags)
 	}
 	return buf
@@ -194,6 +203,7 @@ func Decode(buf []byte) (*Catalog, error) {
 		t.Channels = d.b[d.p]
 		t.Format = tags.Format(d.b[d.p+1])
 		t.HasArt = d.b[d.p+2]&flagHasArt != 0
+		t.Compilation = d.b[d.p+2]&flagCompilation != 0
 		d.p += 3
 		if d.err != nil {
 			return nil, d.err

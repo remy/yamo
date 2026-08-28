@@ -17,6 +17,11 @@ type Edit struct {
 	Composer    *string
 	Comment     *string
 
+	// Compilation is the Various Artists flag. A tri-state pointer rather
+	// than a bool: nil leaves the file's own answer alone, which is what
+	// separates "do not touch this" from "set it to false".
+	Compilation *bool
+
 	Year       *int32
 	Track      *int32
 	TrackTotal *int32
@@ -36,7 +41,7 @@ type Edit struct {
 func (e *Edit) Empty() bool {
 	return e.Title == nil && e.Artist == nil && e.AlbumArtist == nil &&
 		e.Album == nil && e.Genre == nil && e.Composer == nil &&
-		e.Comment == nil && e.Year == nil && e.Track == nil &&
+		e.Comment == nil && e.Compilation == nil && e.Year == nil && e.Track == nil &&
 		e.TrackTotal == nil && e.Disc == nil && e.DiscTotal == nil &&
 		e.Artwork == nil
 }
@@ -66,6 +71,14 @@ func (e *Edit) SetString(field, value string) {
 		e.Composer = &v
 	case "comment":
 		e.Comment = &v
+	}
+}
+
+// SetBool records a flag change by name.
+func (e *Edit) SetBool(field string, value bool) {
+	v := value
+	if field == "compilation" {
+		e.Compilation = &v
 	}
 }
 

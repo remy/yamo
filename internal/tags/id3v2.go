@@ -266,6 +266,8 @@ func (t *id3Tag) applyTo(md *Metadata) {
 			if md.Comment == "" && tagForID3Frame(f.id, f.payload) == TagComment {
 				md.Comment = commentText(f.payload)
 			}
+		case "TCMP", "TCP":
+			md.Compilation = isTrueFlag(frameText(f.payload))
 		case "APIC", "PIC":
 			md.HasArt = true
 		case "TXXX", "TXX":
@@ -291,6 +293,10 @@ func (t *id3Tag) applyTo(md *Metadata) {
 				if md.Year == 0 {
 					md.Year = parseYear(val)
 				}
+			case TagCompilation:
+				// ffmpeg writes the flag as TXXX:TCMP rather than as the
+				// frame the specification provides.
+				md.Compilation = isTrueFlag(val)
 			}
 		}
 	}

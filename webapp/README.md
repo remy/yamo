@@ -50,11 +50,21 @@ answers.
 - **Search** — the full query language: `artist:elvis`, `year:>1980`,
   `-genre:live`, `album:"sun sessions"`. Runs on ⏎, not as you type: a request
   per keystroke against a large library is not free, and a half-typed `year:>`
-  is never sent. Escape clears it.
+  is never sent. Escape clears it, as does the ✕ inside the field.
+  It does complete as you type, on the term under the caret rather than on the
+  whole line: `art` offers `artist:`, `artist:elv` offers the artists beginning
+  "elv" with their counts, and taking one quotes the value if it needs quoting
+  and leaves the neighbouring terms alone. Arrows to choose, ⏎ or Tab to
+  accept — the ⏎ that takes a suggestion is not the one that runs the search.
 - **Genre and artist facets** in the sidebar, from `/v1/values/{field}`.
 - **Keyboard** — arrows move the focused row, shift-arrow extends the
   selection, Home/End/PageUp/PageDown jump, ⏎ opens Get Info, Escape closes it
   or clears the selection, ⌘A selects everything matching.
+- **Compilation** — a checkbox in Get Info, which is the flag that keeps a
+  Various Artists album together instead of letting it fragment into one album
+  per track. Across a mixed selection it shows indeterminate and is left alone
+  unless clicked, so editing a genre across an album cannot silently reset it.
+  `compilation:1` also works in the search bar.
 - **Get Info** — modelled on the dialog in Apple Music, restricted to the
   fields this API can write. ⏎ saves from anywhere in the sheet, Escape
   discards. Click a row and press ⏎ or ⌘I, or double-click. The ‹ › buttons
@@ -117,7 +127,9 @@ symptom is every row in the DOM and a `scrollTop` stuck at zero.
 
 **Two browser layout traps are worth knowing about.** A modal `<dialog>` draws
 in the top layer, so the suggestion list has to live *inside* it — anywhere
-else and it renders behind the backdrop however high its `z-index`. And a
+else and it renders behind the backdrop however high its `z-index`. A closed
+dialog is `display: none` and takes its children with it, so the search bar
+cannot borrow that list and has a second one of its own. And a
 `<form method="dialog">` closes on ⏎ *without submitting*, so pressing enter in
 a field silently discarded the edit; the form is submitted explicitly instead.
 
