@@ -76,11 +76,29 @@ type Metadata struct {
 	Genre       string
 	Composer    string
 	Comment     string
-	Year        int32
-	Track       int32
-	TrackTotal  int32
-	Disc        int32
-	DiscTotal   int32
+
+	// The sort fields hold the form a library orders by rather than the form
+	// it displays: "Beatles, The" beside "The Beatles", "Presley, Elvis"
+	// beside "Elvis Presley". Every container gives them tags of their own
+	// because the two are genuinely different strings, and a player that has
+	// only the display form has to guess — usually by stripping a leading
+	// "The", which is wrong for The The and for every name that is not
+	// English.
+	//
+	// AlbumArtistSort earns its place twice over: on a compilation it is
+	// routinely the only field that says the album belongs to Various
+	// Artists, because iTunes writes the sort tag and no album artist at all.
+	TitleSort       string
+	ArtistSort      string
+	AlbumSort       string
+	AlbumArtistSort string
+	ComposerSort    string
+
+	Year       int32
+	Track      int32
+	TrackTotal int32
+	Disc       int32
+	DiscTotal  int32
 
 	// Audio properties, derived from the stream header rather than the tag.
 	DurationMS int32

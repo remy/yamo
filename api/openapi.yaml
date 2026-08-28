@@ -638,9 +638,14 @@ components:
         | `-genre:live` | exclude matches |
         | `album:` | the field is empty |
         | `compilation:1` | the Various Artists flag is set (`comp:` and `va:` also work) |
+        | `albumartistsort:various` | the sort fields, which a bare term does not search |
 
         Terms are combined with AND. Matching ignores case and accents, so
         `bjork` finds `Björk`. An empty query matches everything.
+
+        A bare term searches the display fields only. The sort fields and
+        `path` are reachable by name, so searching for `presley` does not also
+        return every track whose sort tag reads "Presley, Elvis".
       schema: { type: string }
     Limit:
       name: limit
@@ -705,7 +710,8 @@ components:
     FieldName:
       type: string
       description: A metadata field.
-      enum: [title, artist, albumartist, album, genre, composer, comment, year, track, disc, path]
+      enum: [title, artist, albumartist, album, genre, composer, comment, year, track, disc, path,
+             titlesort, artistsort, albumsort, albumartistsort, composersort]
 
     Track:
       type: object
@@ -720,6 +726,17 @@ components:
         genre: { type: string }
         composer: { type: string }
         comment: { type: string }
+        titleSort: { type: string }
+        artistSort: { type: string }
+        albumSort: { type: string }
+        albumArtistSort:
+          type: string
+          description: >-
+            How the album artist sorts, which is a separate tag from the album
+            artist itself. On an iTunes compilation it is routinely the only
+            field that says Various Artists, because iTunes writes the sort tag
+            and no album artist at all.
+        composerSort: { type: string }
         year: { type: integer, format: int32 }
         track: { type: integer, format: int32 }
         trackTotal: { type: integer, format: int32 }
@@ -779,6 +796,11 @@ components:
         genre: { type: [string, "null"] }
         composer: { type: [string, "null"] }
         comment: { type: [string, "null"] }
+        titlesort: { type: [string, "null"] }
+        artistsort: { type: [string, "null"] }
+        albumsort: { type: [string, "null"] }
+        albumartistsort: { type: [string, "null"] }
+        composersort: { type: [string, "null"] }
         year: { type: [string, "null"] }
         track: { type: [string, "null"] }
         tracktotal: { type: [string, "null"] }

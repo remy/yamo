@@ -86,6 +86,10 @@ func Open(opts Options) (*Service, error) {
 			return nil, fmt.Errorf("loading catalogue: %w", err)
 		}
 		cat = catalog.New() // no catalogue yet; the first scan makes one
+		// A snapshot this build cannot read still knows where the music is,
+		// and that is worth salvaging: a rescan with no roots scans nothing,
+		// so dropping them would turn a version bump into a manual recovery.
+		cat.Roots = catalog.LoadRoots(opts.CatalogPath)
 	}
 
 	s := &Service{

@@ -9,9 +9,17 @@ import (
 // Everything up to and including Comment is covered by an unqualified search;
 // Path sits last so it is reachable with path: but does not flood bare queries
 // with directory-name matches.
+// The sort fields sit past Path for the same reason Path sits past Comment:
+// they are reachable with artistsort: and the rest, but a bare query for
+// "presley" should not match every track whose sort tag happens to say
+// "Presley, Elvis" when its artist does not. They cost almost nothing to
+// carry — a track without them adds five NUL bytes to its blob — and leaving
+// them out would make a qualified query for one silently match nothing.
 var blobOrder = [...]Field{
 	FieldTitle, FieldArtist, FieldAlbumArtist, FieldAlbum,
 	FieldGenre, FieldComposer, FieldComment, FieldPath,
+	FieldTitleSort, FieldArtistSort, FieldAlbumSort,
+	FieldAlbumArtistSort, FieldComposerSort,
 }
 
 const (

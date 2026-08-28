@@ -138,11 +138,28 @@ func applyEditToFrames(tag *id3Tag, e *Edit, cur *Metadata) {
 	set("TALB", e.Album)
 	set("TCON", e.Genre)
 	set("TCOM", e.Composer)
+	set("TSOT", e.TitleSort)
+	set("TSOP", e.ArtistSort)
+	set("TSOA", e.AlbumSort)
+	set("TSO2", e.AlbumArtistSort)
+	set("TSOC", e.ComposerSort)
 
 	if e.AlbumArtist != nil {
 		// A TXXX:ALBUMARTIST would otherwise shadow the TPE2 just written.
 		removeUserTextFrame(tag, "ALBUMARTIST")
 		removeUserTextFrame(tag, "ALBUM ARTIST")
+	}
+	// Picard and ffmpeg both write sort fields as TXXX under their Vorbis
+	// names, so the same shadowing applies: leaving one behind means two
+	// frames disagreeing and whichever a reader saw first winning.
+	for name, v := range map[string]*string{
+		"TITLESORT": e.TitleSort, "ARTISTSORT": e.ArtistSort,
+		"ALBUMSORT": e.AlbumSort, "ALBUMARTISTSORT": e.AlbumArtistSort,
+		"COMPOSERSORT": e.ComposerSort,
+	} {
+		if v != nil {
+			removeUserTextFrame(tag, name)
+		}
 	}
 	if s, ok := resolvePair(e.Track, e.TrackTotal, cur.Track, cur.TrackTotal); ok {
 		setTextFrame(tag, "TRCK", s)

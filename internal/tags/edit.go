@@ -17,6 +17,16 @@ type Edit struct {
 	Composer    *string
 	Comment     *string
 
+	// The sort forms of the fields above. Separate pointers because setting
+	// an artist says nothing about how it should sort: renaming "Elvis
+	// Presley" to "Elvis Presley & The Jordanaires" leaves "Presley, Elvis"
+	// exactly as correct as it was.
+	TitleSort       *string
+	ArtistSort      *string
+	AlbumSort       *string
+	AlbumArtistSort *string
+	ComposerSort    *string
+
 	// Compilation is the Various Artists flag. A tri-state pointer rather
 	// than a bool: nil leaves the file's own answer alone, which is what
 	// separates "do not touch this" from "set it to false".
@@ -43,6 +53,8 @@ func (e *Edit) Empty() bool {
 		e.Album == nil && e.Genre == nil && e.Composer == nil &&
 		e.Comment == nil && e.Compilation == nil && e.Year == nil && e.Track == nil &&
 		e.TrackTotal == nil && e.Disc == nil && e.DiscTotal == nil &&
+		e.TitleSort == nil && e.ArtistSort == nil && e.AlbumSort == nil &&
+		e.AlbumArtistSort == nil && e.ComposerSort == nil &&
 		e.Artwork == nil
 }
 
@@ -71,6 +83,16 @@ func (e *Edit) SetString(field, value string) {
 		e.Composer = &v
 	case "comment":
 		e.Comment = &v
+	case "titlesort":
+		e.TitleSort = &v
+	case "artistsort":
+		e.ArtistSort = &v
+	case "albumsort":
+		e.AlbumSort = &v
+	case "albumartistsort":
+		e.AlbumArtistSort = &v
+	case "composersort":
+		e.ComposerSort = &v
 	}
 }
 

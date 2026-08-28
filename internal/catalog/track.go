@@ -24,6 +24,15 @@ type Track struct {
 	Composer    string
 	Comment     string
 
+	// The sort forms, held beside the fields they order rather than derived
+	// from them: only the file can say that "Plan B" sorts under V for a
+	// Various Artists compilation.
+	TitleSort       string
+	ArtistSort      string
+	AlbumSort       string
+	AlbumArtistSort string
+	ComposerSort    string
+
 	Size    int64
 	ModTime int64 // Unix seconds
 
@@ -82,6 +91,11 @@ func (t *Track) FromMetadata(md *tags.Metadata) {
 	t.Genre = md.Genre
 	t.Composer = md.Composer
 	t.Comment = md.Comment
+	t.TitleSort = md.TitleSort
+	t.ArtistSort = md.ArtistSort
+	t.AlbumSort = md.AlbumSort
+	t.AlbumArtistSort = md.AlbumArtistSort
+	t.ComposerSort = md.ComposerSort
 	t.Year = md.Year
 	t.TrackNo = md.Track
 	t.TrackTotal = md.TrackTotal
@@ -106,6 +120,13 @@ func (t *Track) ToMetadata() tags.Metadata {
 		Genre:       t.Genre,
 		Composer:    t.Composer,
 		Comment:     t.Comment,
+
+		TitleSort:       t.TitleSort,
+		ArtistSort:      t.ArtistSort,
+		AlbumSort:       t.AlbumSort,
+		AlbumArtistSort: t.AlbumArtistSort,
+		ComposerSort:    t.ComposerSort,
+
 		Year:        t.Year,
 		Track:       t.TrackNo,
 		TrackTotal:  t.TrackTotal,
@@ -132,6 +153,15 @@ const (
 	FieldDisc
 	FieldCompilation
 	FieldPath
+
+	// The sort fields come after Path so that adding them cannot renumber the
+	// ones above, and so Editable's single exclusion stays a comparison
+	// against Path rather than a range.
+	FieldTitleSort
+	FieldArtistSort
+	FieldAlbumSort
+	FieldAlbumArtistSort
+	FieldComposerSort
 	numFields
 )
 
@@ -149,6 +179,12 @@ var FieldNames = [numFields]string{
 	FieldDisc:        "disc",
 	FieldCompilation: "compilation",
 	FieldPath:        "path",
+
+	FieldTitleSort:       "titlesort",
+	FieldArtistSort:      "artistsort",
+	FieldAlbumSort:       "albumsort",
+	FieldAlbumArtistSort: "albumartistsort",
+	FieldComposerSort:    "composersort",
 }
 
 // fieldAliases maps the short forms a query may use to a Field.
@@ -165,6 +201,12 @@ var fieldAliases = map[string]Field{
 	"disc": FieldDisc, "d": FieldDisc,
 	"compilation": FieldCompilation, "comp": FieldCompilation, "va": FieldCompilation,
 	"path": FieldPath, "p": FieldPath, "file": FieldPath,
+
+	"titlesort": FieldTitleSort, "ts": FieldTitleSort,
+	"artistsort": FieldArtistSort, "as": FieldArtistSort,
+	"albumsort": FieldAlbumSort, "als": FieldAlbumSort,
+	"albumartistsort": FieldAlbumArtistSort, "aas": FieldAlbumArtistSort,
+	"composersort": FieldComposerSort, "cs": FieldComposerSort,
 }
 
 // LookupField resolves a query field name, which may be an alias.
@@ -203,6 +245,16 @@ func (t *Track) String(f Field) string {
 		return ""
 	case FieldPath:
 		return t.Path
+	case FieldTitleSort:
+		return t.TitleSort
+	case FieldArtistSort:
+		return t.ArtistSort
+	case FieldAlbumSort:
+		return t.AlbumSort
+	case FieldAlbumArtistSort:
+		return t.AlbumArtistSort
+	case FieldComposerSort:
+		return t.ComposerSort
 	}
 	return ""
 }
@@ -244,6 +296,16 @@ func (t *Track) SetString(f Field, v string) {
 		t.Disc = atoi32(v)
 	case FieldCompilation:
 		t.Compilation = IsTrue(v)
+	case FieldTitleSort:
+		t.TitleSort = v
+	case FieldArtistSort:
+		t.ArtistSort = v
+	case FieldAlbumSort:
+		t.AlbumSort = v
+	case FieldAlbumArtistSort:
+		t.AlbumArtistSort = v
+	case FieldComposerSort:
+		t.ComposerSort = v
 	}
 }
 

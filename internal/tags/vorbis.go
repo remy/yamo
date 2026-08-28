@@ -137,6 +137,12 @@ func (vc *vorbisComment) applyTo(md *Metadata) {
 	setIfEmpty(&md.Composer, vc.get("COMPOSER"))
 	setIfEmpty(&md.Comment, vc.getAny("COMMENT", "DESCRIPTION"))
 
+	setIfEmpty(&md.TitleSort, vc.get("TITLESORT"))
+	setIfEmpty(&md.ArtistSort, vc.get("ARTISTSORT"))
+	setIfEmpty(&md.AlbumSort, vc.get("ALBUMSORT"))
+	setIfEmpty(&md.AlbumArtistSort, vc.getAny("ALBUMARTISTSORT", "ALBUM ARTIST SORT"))
+	setIfEmpty(&md.ComposerSort, vc.get("COMPOSERSORT"))
+
 	if md.Year == 0 {
 		md.Year = parseYear(vc.getAny("DATE", "YEAR", "ORIGINALDATE"))
 	}

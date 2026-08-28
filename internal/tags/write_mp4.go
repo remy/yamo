@@ -314,6 +314,11 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 	setText(atomAlbum, e.Album)
 	setText(atomComposer, e.Composer)
 	setText(atomComment, e.Comment)
+	setText(atomTitleSort, e.TitleSort)
+	setText(atomArtistSort, e.ArtistSort)
+	setText(atomAlbumSort, e.AlbumSort)
+	setText(atomAlbumArtistSort, e.AlbumArtistSort)
+	setText(atomComposerSort, e.ComposerSort)
 
 	if e.Genre != nil {
 		setText(atomGenreText, e.Genre)
@@ -370,10 +375,14 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 	return out
 }
 
-// ilstOrder gives newly added items a deterministic order.
+// ilstOrder gives newly added items a deterministic order. An atom missing
+// from this list can be replaced but never added, so every name setText may
+// produce has to appear here.
 var ilstOrder = []string{
 	atomTitle, atomArtist, atomAlbumArtist, atomAlbum, atomGenreText,
 	atomDate, atomTrack, atomDisc, atomComposer, atomComment, atomCompilation,
+	atomTitleSort, atomArtistSort, atomAlbumSort, atomAlbumArtistSort,
+	atomComposerSort,
 }
 
 func pick(v *int32, cur int32) int32 {

@@ -319,13 +319,79 @@ disagree with the rest of the library.
 It rides the numeric path in the query language, so `compilation:1`,
 `compilation:0` and the aliases `comp:`/`va:` all work.
 
-Adding it to the catalogue needed no snapshot version bump: the flags byte
-beside `HasArt` had spare bits. An older snapshot decodes with the bit clear,
-which reads as "not a compilation" until the next scan says otherwise.
+Adding it to the catalogue was originally done without a snapshot version bump,
+on the reasoning that the flags byte beside `HasArt` had spare bits and an older
+snapshot would decode with the bit clear until the next scan said otherwise.
+That reasoning was wrong — see the next section — and the snapshot is now at
+version 2.
 
 The TUI cannot edit it. Its editor is a fixed two-by-five grid — `editRows` is
 a constant and `renderField(editRows+row)` assumes exactly ten fields — so an
 eleventh needs a layout change rather than a list entry.
+
+### A new snapshot field needs a version bump, because scanning is incremental
+
+The compilation flag shipped without one. The flags byte had a spare bit, an
+older snapshot decoded with it clear, and the comment said it would fill in "at
+the next scan". It never did, for any existing library.
+
+The reason is `readOne` in `internal/scan`: a file whose size and modification
+time are unchanged is carried over from the previous catalogue *without being
+opened*. That is what makes a rescan of 100k tracks a map lookup rather than an
+IO storm, and it also means the previous catalogue's values are the new
+catalogue's values. A field the old snapshot could not hold therefore stays
+empty through every incremental scan, forever. Deleting `catalog.db` by hand
+was the only cure, and nothing told the user to.
+
+So: **a field added to the snapshot is only backward-compatible if something
+re-reads the files, and incremental scanning guarantees nothing does.** Bump
+`snapshotVersion`. Rejecting the old file costs exactly one full scan and is
+the only thing that makes the field appear.
+
+The bump has one sharp edge worth knowing about. `Decode` returning
+`ErrBadSnapshot` makes the service start from `catalog.New()`, which loses the
+roots along with the tracks — and a rescan with no roots scans nothing, so the
+very operation that fixes everything becomes impossible to ask for.
+`catalog.LoadRoots` exists for that: it reads the roots out of any snapshot
+version, because the header (magic, version, reserved flags, scan time, roots)
+has not changed and only the track records have. The service calls it on the
+rejection path.
+
+### The sort fields are tags, not derivations
+
+`titlesort`, `artistsort`, `albumsort`, `albumartistsort` and `composersort`
+are read from ID3 (`TSOT`/`TSOP`/`TSOA`/`TSO2`/`TSOC`, plus the v2.2 three-letter
+spellings and the `TXXX` forms Picard and ffmpeg write), MP4 (`sonm`, `soar`,
+`soal`, `soaa`, `soco` — no `©` prefix on any of them), and Vorbis
+(`TITLESORT` and friends).
+
+They are not computed from the display fields and must never be. A player that
+has only "The Beatles" has to guess, and guessing means stripping a leading
+"The" — wrong for The The, and meaningless outside English. Only the file can
+say how it files itself.
+
+`albumartistsort` is the one that motivated all of this. iTunes writes it on a
+compilation and writes *no* `albumartist` at all, so it is frequently the only
+tag in the file that says Various Artists. Navidrome shows a synthesised
+`albumArtist: "Various Artists"` for such a track — that value is derived from
+`compilation=1`, not read from the file. Do not go looking for a `TPE2` to
+match it.
+
+Each one is an independent `*string` on `Edit`: setting an artist says nothing
+about how it should sort. Renaming "Elvis Presley" to "Elvis Presley & The
+Jordanaires" leaves "Presley, Elvis" exactly as correct as it was.
+
+They sit past `FieldPath` in `blobOrder`, so they are searchable by name
+(`albumartistsort:various`) but a bare term does not touch them — otherwise
+searching for an artist would also return every track that merely sorts under
+that name. Leaving them out of the index entirely was the alternative, and it
+is worse: `blobSlot` returns -1 for a field that is not there and `matchTerm`
+then silently matches nothing, so a qualified query would look like a real
+answer while being unable to give one.
+
+In the web app they get a Sorting tab rather than five more rows on Details,
+which is where Apple Music puts them too. The TUI cannot edit them, for the
+same fixed-grid reason it cannot edit the compilation flag.
 
 ### The ID3 date is written twice, on purpose
 

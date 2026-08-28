@@ -898,3 +898,56 @@ func TestOpenWithoutCatalogue(t *testing.T) {
 	}
 	_ = context.Background()
 }
+
+// TestPatchSortFields walks the sort tags the whole way down: through the API
+// field names, into the file, and back out through the catalogue.
+//
+// This is the case the whole feature came from — an iTunes m4a carrying an
+// album artist sort of "Various Artists" and no album artist at all, which
+// nothing above the tags package could see.
+func TestPatchSortFields(t *testing.T) {
+	s, _ := realService(t, 2)
+	first := s.List(ListParams{Sort: "track"}).Items[0]
+
+	updated, err := s.Patch(first.ID, Changes{
+		"albumartistsort": strptr("Various Artists"),
+		"artistsort":      strptr("Presley, Elvis"),
+	}, "")
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if updated.AlbumArtistSort != "Various Artists" || updated.ArtistSort != "Presley, Elvis" {
+		t.Fatalf("patch returned %+v", updated)
+	}
+
+	md, err := tags.NewReader().ReadFile(first.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md.AlbumArtistSort != "Various Artists" || md.ArtistSort != "Presley, Elvis" {
+		t.Errorf("the file on disk says albumartistsort=%q artistsort=%q",
+			md.AlbumArtistSort, md.ArtistSort)
+	}
+	// A sort name is not a rename: the display fields are untouched.
+	if md.Artist != first.Artist {
+		t.Errorf("artist changed from %q to %q", first.Artist, md.Artist)
+	}
+
+	// Reachable by name in a query, but not by a bare term — otherwise
+	// searching for an artist would also return every track that merely sorts
+	// under that name.
+	if n := s.List(ListParams{Query: "albumartistsort:various"}).Total; n != 1 {
+		t.Errorf("albumartistsort:various matched %d, want 1", n)
+	}
+	if n := s.List(ListParams{Query: "artistsort:presley"}).Total; n != 1 {
+		t.Errorf("artistsort:presley matched %d, want 1", n)
+	}
+
+	if _, err := s.Patch(first.ID, Changes{"albumartistsort": nil}, ""); err != nil {
+		t.Fatalf("clearing: %v", err)
+	}
+	md, _ = tags.NewReader().ReadFile(first.Path)
+	if md.AlbumArtistSort != "" {
+		t.Errorf("albumartistsort survived clearing: %q", md.AlbumArtistSort)
+	}
+}

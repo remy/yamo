@@ -215,6 +215,13 @@ const (
 	atomTrack       = "trkn"
 	atomDisc        = "disk"
 	atomCover       = "covr"
+
+	// The sort atoms, which unlike the display ones carry no 0xA9 prefix.
+	atomTitleSort       = "sonm"
+	atomArtistSort      = "soar"
+	atomAlbumSort       = "soal"
+	atomAlbumArtistSort = "soaa"
+	atomComposerSort    = "soco"
 )
 
 // parseILST decodes the iTunes metadata item list.
@@ -260,6 +267,16 @@ func parseILST(ilst []byte, md *Metadata) {
 			}
 		case atomComposer:
 			setIfEmpty(&md.Composer, val)
+		case atomTitleSort:
+			setIfEmpty(&md.TitleSort, val)
+		case atomArtistSort:
+			setIfEmpty(&md.ArtistSort, val)
+		case atomAlbumSort:
+			setIfEmpty(&md.AlbumSort, val)
+		case atomAlbumArtistSort:
+			setIfEmpty(&md.AlbumArtistSort, val)
+		case atomComposerSort:
+			setIfEmpty(&md.ComposerSort, val)
 		case atomComment:
 			setIfEmpty(&md.Comment, val)
 		case atomDate:

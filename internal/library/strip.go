@@ -511,6 +511,16 @@ func normalizeEdit(md *tags.Metadata, fields []tags.Tag) *tags.Edit {
 			setStr("composer", md.Composer)
 		case tags.TagComment:
 			setStr("comment", md.Comment)
+		case tags.TagTitleSort:
+			setStr("titlesort", md.TitleSort)
+		case tags.TagArtistSort:
+			setStr("artistsort", md.ArtistSort)
+		case tags.TagAlbumSort:
+			setStr("albumsort", md.AlbumSort)
+		case tags.TagAlbumArtistSort:
+			setStr("albumartistsort", md.AlbumArtistSort)
+		case tags.TagComposerSort:
+			setStr("composersort", md.ComposerSort)
 		case tags.TagCompilation:
 			// A flag has no empty form to skip: false is a value, not an
 			// absence, so it is always re-asserted.

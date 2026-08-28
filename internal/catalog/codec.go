@@ -16,15 +16,28 @@ import (
 // artist, album and directory strings of a real library collapse to one copy
 // each, and decoding is a linear walk with no parsing or allocation per field.
 const (
-	snapshotMagic   = "TAGMGRDB"
-	snapshotVersion = 1
+	snapshotMagic = "TAGMGRDB"
+
+	// Version 2 added the sort fields and the compilation flag.
+	//
+	// Compilation arrived first without a bump, on the reasoning that the
+	// flags byte had spare bits and an older snapshot would decode with the
+	// bit clear until the next scan said otherwise. The next scan never says
+	// otherwise: scanning is incremental, and a file whose size and
+	// modification time are unchanged is carried over from the previous
+	// catalogue without ever being opened. So the bit stayed clear for every
+	// file in an existing library, permanently, and no rescan short of
+	// deleting the snapshot could fill it in.
+	//
+	// The lesson generalises: a field added to a snapshot is only
+	// backward-compatible if something re-reads the files, and incremental
+	// scanning guarantees nothing does. Rejecting an older snapshot outright
+	// costs one full scan and is the only thing that makes a new field appear.
+	snapshotVersion = 2
 )
 
 const (
-	flagHasArt = 1 << 0
-	// The flags byte had spare bits, so this needed no snapshot version bump.
-	// An older snapshot decodes with the bit clear, which reads as "not a
-	// compilation" until the next scan says otherwise.
+	flagHasArt      = 1 << 0
 	flagCompilation = 1 << 1
 )
 
@@ -58,7 +71,10 @@ func Encode(c *Catalog) []byte {
 
 	// Intern first so the table is complete before records are written, and
 	// so the buffer can be sized from real totals rather than a guess.
-	type rec struct{ dir, base, title, artist, albumArtist, album, genre, composer, comment uint64 }
+	type rec struct {
+		dir, base, title, artist, albumArtist, album, genre, composer, comment uint64
+		titleSort, artistSort, albumSort, albumArtistSort, composerSort        uint64
+	}
 	recs := make([]rec, len(c.Tracks))
 	for i := range c.Tracks {
 		t := &c.Tracks[i]
@@ -69,6 +85,12 @@ func Encode(c *Catalog) []byte {
 			albumArtist: in.id(t.AlbumArtist), album: in.id(t.Album),
 			genre: in.id(t.Genre), composer: in.id(t.Composer),
 			comment: in.id(t.Comment),
+			// The sort fields intern especially well: a whole library's worth
+			// of them collapses to one copy per distinct artist, and a track
+			// without any costs five zero bytes.
+			titleSort: in.id(t.TitleSort), artistSort: in.id(t.ArtistSort),
+			albumSort: in.id(t.AlbumSort), albumArtistSort: in.id(t.AlbumArtistSort),
+			composerSort: in.id(t.ComposerSort),
 		}
 	}
 
@@ -103,6 +125,11 @@ func Encode(c *Catalog) []byte {
 		buf = binary.AppendUvarint(buf, r.genre)
 		buf = binary.AppendUvarint(buf, r.composer)
 		buf = binary.AppendUvarint(buf, r.comment)
+		buf = binary.AppendUvarint(buf, r.titleSort)
+		buf = binary.AppendUvarint(buf, r.artistSort)
+		buf = binary.AppendUvarint(buf, r.albumSort)
+		buf = binary.AppendUvarint(buf, r.albumArtistSort)
+		buf = binary.AppendUvarint(buf, r.composerSort)
 		buf = binary.AppendUvarint(buf, uint64(nonNeg(t.Size)))
 		buf = binary.AppendUvarint(buf, uint64(nonNeg(t.ModTime)))
 		buf = binary.AppendUvarint(buf, uint64(nonNeg32(t.Year)))
@@ -187,6 +214,11 @@ func Decode(buf []byte) (*Catalog, error) {
 		t.Genre = get(d.uvarint())
 		t.Composer = get(d.uvarint())
 		t.Comment = get(d.uvarint())
+		t.TitleSort = get(d.uvarint())
+		t.ArtistSort = get(d.uvarint())
+		t.AlbumSort = get(d.uvarint())
+		t.AlbumArtistSort = get(d.uvarint())
+		t.ComposerSort = get(d.uvarint())
 		t.Size = int64(d.uvarint())
 		t.ModTime = int64(d.uvarint())
 		t.Year = int32(d.uvarint())
@@ -280,6 +312,40 @@ func Load(path string) (*Catalog, error) {
 		return nil, err
 	}
 	return Decode(b)
+}
+
+// LoadRoots reads only the library roots from a snapshot, whatever version it
+// is, and returns nil if it cannot.
+//
+// This is the recovery path for a snapshot a version bump has just rejected.
+// The tracks in it are unusable — that is the whole point of rejecting it —
+// but the roots are still the right answer to "where is the music", and they
+// are the one thing a caller cannot reconstruct. Without them a version bump
+// would leave the server not merely with an empty catalogue but with nothing
+// to scan, so the rescan that fixes everything could not be asked for.
+//
+// The header has held the same shape since version 1: magic, version,
+// reserved flags, scan time, then the root list. Only the track records have
+// changed, and those are not read here.
+func LoadRoots(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil || len(b) < 20 || string(b[:8]) != snapshotMagic {
+		return nil
+	}
+	d := &decoder{b: b, p: 20} // magic, version, reserved flags, scan time
+	n := d.uvarint()
+	if d.err != nil || n > 1<<16 {
+		return nil
+	}
+	roots := make([]string, 0, n)
+	for i := uint64(0); i < n; i++ {
+		r := d.str()
+		if d.err != nil {
+			return nil
+		}
+		roots = append(roots, r)
+	}
+	return roots
 }
 
 func nonNeg(v int64) int64 {

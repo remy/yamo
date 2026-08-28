@@ -208,10 +208,18 @@ func applyEditToVorbis(vc *vorbisComment, e *Edit, cur *Metadata) {
 	setStr("ALBUM", e.Album)
 	setStr("GENRE", e.Genre)
 	setStr("COMPOSER", e.Composer)
+	setStr("TITLESORT", e.TitleSort)
+	setStr("ARTISTSORT", e.ArtistSort)
+	setStr("ALBUMSORT", e.AlbumSort)
+	setStr("COMPOSERSORT", e.ComposerSort)
 
 	if e.AlbumArtist != nil {
 		vc.set("ALBUMARTIST", *e.AlbumArtist)
 		vc.set("ALBUM ARTIST", "")
+	}
+	if e.AlbumArtistSort != nil {
+		vc.set("ALBUMARTISTSORT", *e.AlbumArtistSort)
+		vc.set("ALBUM ARTIST SORT", "")
 	}
 	if e.Comment != nil {
 		vc.set("COMMENT", *e.Comment)

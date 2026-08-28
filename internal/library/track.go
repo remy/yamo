@@ -27,6 +27,16 @@ type Track struct {
 	Composer    string `json:"composer,omitempty"`
 	Comment     string `json:"comment,omitempty"`
 
+	// The sort forms of the fields above. On a compilation the album artist
+	// sort is often the only tag that names Various Artists at all, so a
+	// client that cannot see it cannot explain why the album groups the way
+	// it does.
+	TitleSort       string `json:"titleSort,omitempty"`
+	ArtistSort      string `json:"artistSort,omitempty"`
+	AlbumSort       string `json:"albumSort,omitempty"`
+	AlbumArtistSort string `json:"albumArtistSort,omitempty"`
+	ComposerSort    string `json:"composerSort,omitempty"`
+
 	Year       int32 `json:"year,omitempty"`
 	TrackNo    int32 `json:"track,omitempty"`
 	TrackTotal int32 `json:"trackTotal,omitempty"`
@@ -66,6 +76,13 @@ func toTrack(t *catalog.Track) Track {
 		Genre:       t.Genre,
 		Composer:    t.Composer,
 		Comment:     t.Comment,
+
+		TitleSort:       t.TitleSort,
+		ArtistSort:      t.ArtistSort,
+		AlbumSort:       t.AlbumSort,
+		AlbumArtistSort: t.AlbumArtistSort,
+		ComposerSort:    t.ComposerSort,
+
 		Year:        t.Year,
 		TrackNo:     t.TrackNo,
 		TrackTotal:  t.TrackTotal,

@@ -94,12 +94,21 @@
 
     <div class="tabs" role="tablist">
       <button type="button" class="tab" data-tab="details" aria-selected="true">Details</button>
+      <button type="button" class="tab" data-tab="sorting">Sorting</button>
       <button type="button" class="tab" data-tab="artwork">Artwork</button>
       <button type="button" class="tab" data-tab="file">File</button>
     </div>
 
     <section class="panel" data-panel="details">
       <div class="grid" id="details-grid"></div>
+    </section>
+
+    <section class="panel" data-panel="sorting" hidden>
+      <p class="muted small">
+        How this song files itself, which is separate from how it reads. Leave a
+        field empty and the name itself is used.
+      </p>
+      <div class="grid" id="sorting-grid"></div>
     </section>
 
     <section class="panel" data-panel="artwork" hidden>

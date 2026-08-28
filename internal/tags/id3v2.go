@@ -266,6 +266,16 @@ func (t *id3Tag) applyTo(md *Metadata) {
 			if md.Comment == "" && tagForID3Frame(f.id, f.payload) == TagComment {
 				md.Comment = commentText(f.payload)
 			}
+		case "TSOT", "TST":
+			setIfEmpty(&md.TitleSort, frameText(f.payload))
+		case "TSOP", "TSP":
+			setIfEmpty(&md.ArtistSort, frameText(f.payload))
+		case "TSOA", "TSA":
+			setIfEmpty(&md.AlbumSort, frameText(f.payload))
+		case "TSO2", "TS2":
+			setIfEmpty(&md.AlbumArtistSort, frameText(f.payload))
+		case "TSOC", "TSC":
+			setIfEmpty(&md.ComposerSort, frameText(f.payload))
 		case "TCMP", "TCP":
 			md.Compilation = isTrueFlag(frameText(f.payload))
 		case "APIC", "PIC":
@@ -297,6 +307,16 @@ func (t *id3Tag) applyTo(md *Metadata) {
 				// ffmpeg writes the flag as TXXX:TCMP rather than as the
 				// frame the specification provides.
 				md.Compilation = isTrueFlag(val)
+			case TagTitleSort:
+				setIfEmpty(&md.TitleSort, val)
+			case TagArtistSort:
+				setIfEmpty(&md.ArtistSort, val)
+			case TagAlbumSort:
+				setIfEmpty(&md.AlbumSort, val)
+			case TagAlbumArtistSort:
+				setIfEmpty(&md.AlbumArtistSort, val)
+			case TagComposerSort:
+				setIfEmpty(&md.ComposerSort, val)
 			}
 		}
 	}

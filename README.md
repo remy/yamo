@@ -151,11 +151,14 @@ The same query language works in the search bar and on the command line.
 | `-genre:christmas` | exclude matches |
 | `album:` | tracks where the field is empty |
 | `compilation:1` | the Various Artists flag is set (`comp:`, `va:`) |
+| `albumartistsort:various` | the sort fields, by name only (`aas:`, `as:`, …) |
 | `artist:elvis year:>1960` | terms are ANDed |
 
 Matching is case- and accent-insensitive in both directions: `bjork` finds
-Björk, and `Beyoncé` finds Beyoncé. Unqualified terms search the tag fields but
-not the file path; use `path:` for that.
+Björk, and `Beyoncé` finds Beyoncé. Unqualified terms search the display tag
+fields but not the file path or the sort fields; use `path:`, `artistsort:` and
+the rest for those. Searching for `presley` should not also return every track
+that merely files itself under "Presley, Elvis".
 
 On the command line a query starting with `-` needs `--` first, so the flag
 parser leaves it alone:
@@ -289,13 +292,17 @@ kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 | `artistsort` | TSOP | ARTISTSORT | soar |
 | `albumsort` | TSOA | ALBUMSORT | soal |
 | `albumartistsort` | TSO2 | ALBUMARTISTSORT | soaa |
+| `composersort` | TSOC | COMPOSERSORT | soco |
 | `artwork` | APIC | METADATA_BLOCK_PICTURE | covr |
 | `gapless` | COMM:iTunSMPB | — | pgap, iTunSMPB |
 | `soundcheck` | COMM:iTunNORM | — | iTunNORM |
 | `itunes` | — | — | stik, apID, purd, cnID, atID, plID, … |
 
 `compilation` is the flag that stops a Various Artists album fragmenting into
-one album per track. The sort tags are what put "The Beatles" under B.
+one album per track. The sort tags are what put "The Beatles" under B, and they
+are read, written and searchable in their own right: on an iTunes compilation
+`albumartistsort` is routinely the only tag that names Various Artists at all,
+because iTunes writes the sort tag and leaves `albumartist` empty.
 `gapless` is iTunes' own, and kept because nothing can reconstruct it: it is
 the only record of where the encoder padding starts.
 

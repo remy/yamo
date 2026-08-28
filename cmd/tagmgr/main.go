@@ -50,11 +50,16 @@ const queryHelp = `Query syntax:
   -genre:christmas          exclude matches
   album:                    the field is empty
   compilation:1             the Various Artists flag is set
+  albumartistsort:various   the sort fields, which a bare term skips
   artist:elvis year:>1960   terms are combined with AND
 
 Fields: title, artist, albumartist, album, genre, composer, comment,
-year, track, disc, compilation, path. Most have short aliases (ar, al,
-g, y, comp).
+year, track, disc, compilation, path, and the sort forms titlesort,
+artistsort, albumsort, albumartistsort, composersort. Most have short
+aliases (ar, al, g, y, comp, aas).
+
+A bare term searches the display fields only; the sort fields and path
+are reachable by name.
 
 Matching ignores case and accents, so "bjork" finds "Björk".
 

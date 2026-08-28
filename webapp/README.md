@@ -65,6 +65,11 @@ answers.
   per track. Across a mixed selection it shows indeterminate and is left alone
   unless clicked, so editing a genre across an album cannot silently reset it.
   `compilation:1` also works in the search bar.
+- **Sorting** — a tab of its own in Get Info, holding the five sort fields
+  (title, artist, album, album artist, composer). They are separate tags from
+  the names they order, so a sort name is not a rename; leaving one empty means
+  the name itself is used. On an iTunes compilation the sort album artist is
+  often the only field that says Various Artists at all.
 - **Get Info** — modelled on the dialog in Apple Music, restricted to the
   fields this API can write. ⏎ saves from anywhere in the sheet, Escape
   discards. Click a row and press ⏎ or ⌘I, or double-click. The ‹ › buttons
@@ -145,9 +150,9 @@ is a sample, and the guard belongs where a mistake is expensive.
 - No artwork editing. The API supports it (`PUT /v1/tracks/{id}/artwork` and
   the clipboard); the sheet only displays.
 - No scanning. Run `tagmgr scan` from a terminal.
-- `grouping`, `compilation`, `rating`, `bpm` and `play count` appear in Apple's
-  dialog but have no equivalent in this API, so they are absent rather than
-  shown and ignored.
+- `grouping`, `rating`, `bpm` and `play count` appear in Apple's dialog but
+  have no equivalent in this API, so they are absent rather than shown and
+  ignored.
 - No offline handling or retry. A dropped connection shows an error and waits
   to be reloaded.
 

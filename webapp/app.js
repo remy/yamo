@@ -36,6 +36,17 @@ const INFO_FIELDS = [
   { field: 'comment',     label: 'comments' },
 ];
 
+// The Sorting tab. Apple Music gives these a panel of their own and so does
+// this: they are five more text fields that look exactly like the ones on
+// Details, and mixing them in would bury the fields people actually came for.
+const SORT_FIELDS = [
+  { field: 'titlesort',       label: 'sort title' },
+  { field: 'artistsort',      label: 'sort artist' },
+  { field: 'albumsort',       label: 'sort album' },
+  { field: 'albumartistsort', label: 'sort album artist' },
+  { field: 'composersort',    label: 'sort composer' },
+];
+
 const ROW_H = 34;
 const PAGE = 200;
 const DEFAULT_SORT = 'artist,album,track';
@@ -948,7 +959,8 @@ async function openInfo() {
     : (first.writable ? '' : `${first.format} files cannot be written`);
 
   closeSuggest();
-  buildDetails(multi);
+  buildFields('#details-grid', INFO_FIELDS);
+  buildFields('#sorting-grid', SORT_FIELDS);
   buildFile(first, multi);
   loadInfoArt(first);
   paintStepper();
@@ -1060,6 +1072,13 @@ function valueOf(t, field) {
     // same thing here as it does on the wire.
     case 'compilation': return t.compilation ? '1' : '0';
     case 'albumartist': return t.albumArtist;
+    // The API spells these in camel case; the field name is what the edit
+    // endpoint takes, so the two have to be bridged somewhere.
+    case 'titlesort': return t.titleSort;
+    case 'artistsort': return t.artistSort;
+    case 'albumsort': return t.albumSort;
+    case 'albumartistsort': return t.albumArtistSort;
+    case 'composersort': return t.composerSort;
     case 'track': return t.track;
     case 'tracktotal': return t.trackTotal;
     case 'disc': return t.disc;
@@ -1068,12 +1087,15 @@ function valueOf(t, field) {
   }
 }
 
-function buildDetails(multi) {
-  const grid = $('#details-grid');
+// buildFields fills one grid from a field list. Details and Sorting are the
+// same widget twice over, so they share the builder and the save path finds
+// both by looking for the inputs rather than by knowing where they live.
+function buildFields(gridSel, fields) {
+  const grid = $(gridSel);
   grid.replaceChildren();
   const writable = state.editing.every(t => t.writable);
 
-  for (const f of INFO_FIELDS) {
+  for (const f of fields) {
     grid.append(el('label', '', f.label));
     const [val, mixed] = common(f.field);
 
@@ -1451,7 +1473,8 @@ $('#info').addEventListener('close', () => {
 // endpoint, which takes a selector rather than a list of values per track.
 async function saveInfo({ keepOpen = false } = {}) {
   const changes = {};
-  for (const input of $('#details-grid').querySelectorAll('input')) {
+  const inputs = document.querySelectorAll('#details-grid input, #sorting-grid input');
+  for (const input of inputs) {
     const field = input.dataset.field;
     const [val, mixed] = common(field);
 
