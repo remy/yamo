@@ -137,6 +137,54 @@ export class Api {
     return url;
   }
 
+  // putArtwork replaces one track's cover with raw image bytes.
+  //
+  // The body is the image itself rather than a multipart form: the server
+  // sniffs the format from the content, so there is nothing else to send.
+  async putArtwork(id, blob) {
+    const res = await fetch(`${this.base}/v1/tracks/${encodeURIComponent(id)}/artwork`, {
+      method: 'PUT',
+      headers: { ...this.headers, 'Content-Type': blob.type || 'application/octet-stream' },
+      body: blob,
+    });
+    if (!res.ok) {
+      let payload = null;
+      try { payload = await res.json(); } catch { /* the status will do */ }
+      throw new ApiError(res.status, payload, res.statusText);
+    }
+    this.forgetArtwork(id);
+    return res.json();
+  }
+
+  async deleteArtwork(id) {
+    await this.request('DELETE', `/v1/tracks/${encodeURIComponent(id)}/artwork`);
+    this.forgetArtwork(id);
+  }
+
+  // batchArtwork sets or clears artwork across a selection and returns a job.
+  // source is clipboard, upload, folder or remove; upload carries the image.
+  batchArtwork(selector, source, imageBase64) {
+    const body = { selector, source };
+    if (imageBase64) body.image = imageBase64;
+    return this.request('POST', '/v1/artwork/batch', { body });
+  }
+
+  // The clipboard is the server's, not the browser's, which is the point: a
+  // cover copied in the terminal can be pasted here and the other way round.
+  copyArtworkFromTrack(id) {
+    return this.request('PUT', `/v1/clipboard/artwork/from-track/${encodeURIComponent(id)}`);
+  }
+
+  async clipboardArtwork() {
+    try {
+      const res = await fetch(`${this.base}/v1/clipboard/artwork`, { headers: this.headers });
+      if (!res.ok) return null;
+      return URL.createObjectURL(await res.blob());
+    } catch {
+      return null;
+    }
+  }
+
   _cacheArt(id, url) {
     this._art.set(id, url);
     this._artOrder.push(id);

@@ -49,6 +49,14 @@
     <header class="topbar">
       <div class="search-wrap">
         <input id="search" type="search" placeholder="Search and press ⏎ — artist:elvis, year:&gt;1980, -genre:live" spellcheck="false">
+        <!-- Not the browser's own clear button: only WebKit draws one for a
+             type="search" field, it cannot be styled, and it is not reachable
+             from the keyboard. It is hidden in app.css in favour of this. -->
+        <button type="button" id="search-clear" class="search-clear"
+                title="Clear search" aria-label="Clear search" hidden>✕</button>
+        <!-- The search bar needs its own list rather than the sheet's below: a
+             closed <dialog> is display:none and takes its children with it. -->
+        <div id="search-suggest" class="suggest" hidden role="listbox"></div>
       </div>
       <div class="topbar-right">
         <span id="count" class="muted small"></span>
@@ -96,8 +104,21 @@
 
     <section class="panel" data-panel="artwork" hidden>
       <div class="artwork-panel">
-        <img id="artwork-large" alt="" class="artwork-large">
+        <!-- A label wrapping a hidden file input: clicking anywhere on the
+             well opens the picker, and the same element is the drop target. -->
+        <label id="artwork-drop" class="artwork-drop">
+          <img id="artwork-large" alt="" class="artwork-large" hidden>
+          <span id="artwork-hint" class="artwork-hint">Drop an image, paste one, or click to choose</span>
+          <input type="file" id="artwork-file" accept="image/jpeg,image/png" hidden>
+        </label>
         <div id="artwork-meta" class="muted small"></div>
+        <div class="artwork-actions">
+          <button type="button" id="art-copy" title="Put this cover on the server clipboard, so the terminal or a phone can paste it">Copy</button>
+          <button type="button" id="art-paste" title="Apply whatever is on the server clipboard">Paste</button>
+          <button type="button" id="art-folder" title="Embed the cover.jpg or folder.jpg sitting beside each track">Folder image</button>
+          <button type="button" id="art-remove" class="danger">Remove</button>
+        </div>
+        <div id="artwork-note" class="muted small"></div>
       </div>
     </section>
 

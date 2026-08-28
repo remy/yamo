@@ -161,6 +161,7 @@ async function applyRoute() {
   const restore = scrollMemory.get(location.hash) || 0;
 
   $('#search').value = r.query;
+  paintSearchClear();
   document.querySelectorAll('.nav').forEach(b =>
     b.setAttribute('aria-current', String(b.dataset.view === r.view)));
   $('#songs-view').hidden = r.view !== 'songs';
@@ -511,6 +512,23 @@ function selectAllMatching() {
 // network against a large library is not free. Waiting for Enter also means a
 // half-typed expression like `year:>` is never sent.
 $('#search').addEventListener('keydown', e => {
+  // The suggestion list gets first refusal on the keys it uses. The sheet has
+  // a list of its own, which is not this field's business — hence the second
+  // test rather than merely "is a list open".
+  if (suggestOpen() && suggest.input === e.target) {
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); highlightSuggest(1); return;
+      case 'ArrowUp':   e.preventDefault(); highlightSuggest(-1); return;
+      case 'Tab':       if (acceptSuggest()) e.preventDefault(); return;
+      case 'Escape':    e.preventDefault(); closeSuggest(); return;
+      case 'Enter':
+        // Taking a suggestion is not also running the search: the next Enter
+        // does that, once what will be searched for is on screen to be read.
+        if (suggest.index >= 0) { e.preventDefault(); acceptSuggest(); return; }
+        closeSuggest();
+        break;
+    }
+  }
   if (e.key === 'Enter') {
     e.preventDefault();
     runSearch(e.target.value);
@@ -519,8 +537,28 @@ $('#search').addEventListener('keydown', e => {
   } else if (e.key === 'Escape' && e.target.value !== '') {
     e.preventDefault();
     e.target.value = '';
+    paintSearchClear();
     runSearch('');
   }
+});
+
+// The clear button is only there when there is something to clear.
+function paintSearchClear() {
+  $('#search-clear').hidden = $('#search').value === '';
+}
+
+$('#search').addEventListener('input', paintSearchClear);
+
+// Clearing runs the empty search rather than merely emptying the box, which is
+// what Escape already does and what the button being inside the field implies.
+$('#search-clear').addEventListener('click', () => {
+  closeSuggest();
+  $('#search').value = '';
+  paintSearchClear();
+  // The keyboard goes back to the field: the button is about to vanish from
+  // under the pointer, and clearing a search is usually the start of another.
+  $('#search').focus();
+  runSearch('');
 });
 
 function runSearch(value) {
@@ -613,8 +651,11 @@ const observer = new IntersectionObserver(async entries => {
 // A title is unique to a track and completing it would only get in the way.
 const COMPLETES = new Set(['artist', 'album', 'albumartist', 'genre']);
 
+// There are two lists in the page, not one: a closed <dialog> is display:none
+// and takes its children with it, so the sheet's list cannot serve the search
+// bar. Only one is ever up, and `box` is whichever that is.
 const suggest = {
-  box: null,        // the floating list
+  box: null,        // the floating list in use, or null when none is
   input: null,      // the field it belongs to
   items: [],
   index: -1,
@@ -622,25 +663,29 @@ const suggest = {
   seq: 0,           // replies for a prefix already typed past are discarded
 };
 
-function suggestBox() {
-  suggest.box ||= $('#suggest');
-  return suggest.box;
-}
+const suggestOpen = () => suggest.box !== null;
 
 function closeSuggest() {
-  const box = suggestBox();
-  box.hidden = true;
-  // Empty it as well as hiding it, so nothing stale can flash on reopen.
-  box.replaceChildren();
+  if (suggest.box) {
+    suggest.box.hidden = true;
+    // Empty it as well as hiding it, so nothing stale can flash on reopen.
+    suggest.box.replaceChildren();
+  }
+  suggest.box = null;
   suggest.input = null;
   suggest.items = [];
   suggest.index = -1;
   clearTimeout(suggest.timer);
 }
 
-function openSuggest(input, items) {
-  const box = suggestBox();
+// An item is a value and its count, as the API returns them. A search term
+// suggestion carries a `label` to show instead, a `hint` where the count would
+// be, and an `apply` that puts it in the field, since a term is spliced into
+// what is already typed rather than being the whole of it.
+function openSuggest(box, input, items) {
   if (!items.length) { closeSuggest(); return; }
+  closeSuggest();                 // in case the other list is the one up
+  suggest.box = box;
   suggest.input = input;
   suggest.items = items;
   suggest.index = -1;
@@ -648,7 +693,8 @@ function openSuggest(input, items) {
   box.replaceChildren(...items.map((v, i) => {
     const row = el('div', 'suggest-item');
     row.setAttribute('role', 'option');
-    row.append(el('span', '', v.value), el('span', 'n', v.count.toLocaleString()));
+    row.append(el('span', '', v.label ?? v.value),
+               el('span', 'n', v.count != null ? v.count.toLocaleString() : (v.hint ?? '')));
     // mousedown, not click: the field must not lose focus before the value
     // is taken, or the blur handler closes the list first.
     row.addEventListener('mousedown', e => { e.preventDefault(); acceptSuggest(i); });
@@ -673,15 +719,16 @@ function highlightSuggest(delta) {
   if (!suggest.items.length) return;
   const n = suggest.items.length;
   suggest.index = (((suggest.index + 1 + delta) % (n + 1)) + (n + 1)) % (n + 1) - 1;
-  [...suggestBox().children].forEach((row, i) =>
+  [...suggest.box.children].forEach((row, i) =>
     row.setAttribute('aria-selected', String(i === suggest.index)));
-  if (suggest.index >= 0) suggestBox().children[suggest.index]?.scrollIntoView({ block: 'nearest' });
+  if (suggest.index >= 0) suggest.box.children[suggest.index]?.scrollIntoView({ block: 'nearest' });
 }
 
 function acceptSuggest(i = suggest.index) {
   if (!suggest.input || i < 0 || i >= suggest.items.length) return false;
-  suggest.input.value = suggest.items[i].value;
+  const input = suggest.input, item = suggest.items[i];
   closeSuggest();
+  if (item.apply) item.apply(); else input.value = item.value;
   return true;
 }
 
@@ -710,7 +757,7 @@ function wireSuggest(input, field) {
         if (document.activeElement !== input) return;
         if (input.value.trim() !== prefix) return;   // typed on while waiting
         // Offering exactly what is already typed is noise.
-        openSuggest(input, items.filter(v => v.value !== input.value));
+        openSuggest($('#suggest'), input, items.filter(v => v.value !== input.value));
       } catch { closeSuggest(); }
     }, 120);
   });
@@ -723,7 +770,7 @@ function wireSuggest(input, field) {
     if (suggest.input === input) closeSuggest();
   }, 120));
   input.addEventListener('keydown', e => {
-    if (suggestBox().hidden) return;
+    if (!suggestOpen() || suggest.input !== input) return;
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); highlightSuggest(1); break;
       case 'ArrowUp':   e.preventDefault(); highlightSuggest(-1); break;
@@ -737,6 +784,145 @@ function wireSuggest(input, field) {
     }
   });
 }
+
+// --- search autocomplete ----------------------------------------------
+//
+// The search bar takes a query language rather than a value, so completion
+// works on the term under the caret and not on the whole field. In
+// `-artist:elv presley` the term being typed is `-artist:elv`; what is worth
+// offering is artists beginning "elv"; and taking one has to go back in that
+// term's place, leaving the rest of the line alone.
+
+// The field prefixes the language accepts, in the order they are offered, with
+// the aliases each also answers to. It mirrors the server's table: a name the
+// server would not resolve is not a prefix there, and must not look like one
+// here. `hint` is shown where a count would be, for the fields whose syntax is
+// more than a value.
+const QUERY_FIELDS = [
+  { name: 'artist',      aliases: ['a', 'ar'] },
+  { name: 'album',       aliases: ['al', 'b'] },
+  { name: 'albumartist', aliases: ['aa', 'band'] },
+  { name: 'title',       aliases: ['t', 'name'] },
+  { name: 'genre',       aliases: ['g'] },
+  { name: 'composer',    aliases: ['c'] },
+  { name: 'comment',     aliases: [] },
+  { name: 'year',        aliases: ['y', 'date'], hint: '1977, >1980, 1970-1979' },
+  { name: 'track',       aliases: ['trackno', 'n'], hint: '5, >5' },
+  { name: 'disc',        aliases: ['d'], hint: '1, >1' },
+  { name: 'path',        aliases: ['p', 'file'] },
+];
+
+const FIELD_NAMES = new Map(QUERY_FIELDS.flatMap(
+  f => [f.name, ...f.aliases].map(alias => [alias, f.name])));
+
+// searchTokens splits a query the way the server does — on whitespace, with
+// double quotes holding a value together — and keeps each token's span, so the
+// one under the caret can be replaced without disturbing its neighbours.
+function searchTokens(s) {
+  const out = [];
+  let start = -1, inQuote = false;
+  for (let i = 0; i <= s.length; i++) {
+    const c = s[i];
+    if (i === s.length || (!inQuote && (c === ' ' || c === '\t'))) {
+      if (start >= 0) out.push({ start, end: i, text: s.slice(start, i) });
+      start = -1;
+    } else {
+      if (start < 0) start = i;
+      if (c === '"') inQuote = !inQuote;
+    }
+  }
+  return out;
+}
+
+// termAt is the term the caret sits in, parsed into the parts completion needs.
+// A caret in whitespace is an empty term starting there, which is what typing
+// on would begin.
+function termAt(input) {
+  const caret = input.selectionStart ?? input.value.length;
+  const tok = searchTokens(input.value).find(t => caret >= t.start && caret <= t.end)
+    || { start: caret, end: caret, text: '' };
+  // Quotes come out before anything is read off the text, as they do on the
+  // server: `"artist:elvis presley"` is an artist term there and so here.
+  let s = tok.text.replace(/"/g, ''), neg = false;
+  if (s.length > 1 && s.startsWith('-')) { neg = true; s = s.slice(1); }
+  // A prefix only counts when the name resolves, so `AC:DC` and a time like
+  // `3:04` stay literal text — again, as they do on the server.
+  const colon = s.indexOf(':');
+  const field = colon > 0 ? FIELD_NAMES.get(s.slice(0, colon).toLowerCase()) : undefined;
+  return { ...tok, neg, field: field || '', value: field ? s.slice(colon + 1) : s };
+}
+
+// replaceTerm splices text over the term under the caret and leaves the caret
+// after it. The term is found again here rather than remembered from when the
+// list was opened, since typing may have moved it since.
+function replaceTerm(input, text) {
+  const term = termAt(input);
+  const before = input.value.slice(0, term.start);
+  input.value = before + text + input.value.slice(term.end);
+  const at = before.length + text.length;
+  input.setSelectionRange(at, at);
+  paintSearchClear();
+}
+
+// A value is quoted only when it has to be: a space would otherwise end the
+// term and start another.
+const quoteValue = v => /[\s"]/.test(v) ? `"${v.replace(/"/g, '')}"` : v;
+
+// searchSuggest offers whatever fits the term under the caret: values once it
+// names a field, and otherwise the prefixes what has been typed could still
+// become — so `art` offers `artist:`, and `artist:elv` offers artists.
+function searchSuggest(input) {
+  clearTimeout(suggest.timer);
+  suggest.seq++;                     // discard anything already in flight
+  const term = termAt(input);
+  const sign = term.neg ? '-' : '';
+
+  if (!term.field) {
+    const typed = term.value.toLowerCase();
+    const fields = typed
+      ? QUERY_FIELDS.filter(f => f.name.startsWith(typed) || f.aliases.includes(typed))
+      : [];
+    openSuggest($('#search-suggest'), input, fields.map(f => ({
+      label: `${sign}${f.name}:`,
+      hint: f.hint ?? '',
+      // A prefix is not an answer, so taking one fills in the prefix only and
+      // leaves the caret after the colon, ready for the value.
+      apply: () => replaceTerm(input, `${sign}${f.name}:`),
+    })));
+    return;
+  }
+  // The fields whose values do not repeat are not worth a list: a title or a
+  // path is all but unique, and a numeric field takes `>1980` or `1970-1979`
+  // as readily as a value, so years would sit in front of what is being typed
+  // rather than help it. What is left is the set the sheet completes.
+  if (!COMPLETES.has(term.field)) { closeSuggest(); return; }
+
+  // Claim the box now, so a reply meant for a sheet field cannot land here.
+  suggest.input = input;
+  suggest.timer = setTimeout(async () => {
+    const seq = ++suggest.seq;
+    try {
+      const items = await state.api.values(term.field, term.value, 8);
+      if (seq !== suggest.seq || suggest.input !== input) return;
+      if (document.activeElement !== input) return;
+      // Typed on, or the caret moved to another term, while waiting.
+      const now = termAt(input);
+      if (now.field !== term.field || now.value !== term.value) return;
+      // Offering exactly what is already typed is noise.
+      openSuggest($('#search-suggest'), input, items
+        .filter(v => v.value !== term.value)
+        .map(v => ({ ...v, apply: () => replaceTerm(input, `${sign}${term.field}:${quoteValue(v.value)}`) })));
+    } catch { closeSuggest(); }
+  }, 120);
+}
+
+// The keys belong to the search field's own keydown listener, which has to see
+// them before the search does; only the rest is wired here.
+$('#search').addEventListener('input', () => searchSuggest($('#search')));
+$('#search').setAttribute('autocomplete', 'off');
+$('#search').addEventListener('blur', () => setTimeout(() => {
+  if (suggest.input === $('#search')) closeSuggest();
+}, 120));
 
 // --- get info ---------------------------------------------------------
 
@@ -764,9 +950,15 @@ async function openInfo() {
   buildFile(first, multi);
   loadInfoArt(first);
   paintStepper();
-  showTab('details');
-  // showModal on an already-open dialog throws; stepping reuses this one.
-  if (!$('#info').open) $('#info').showModal();
+  // showModal on an already-open dialog throws; stepping and refreshing after
+  // an edit both reuse this one. The tab only resets when the sheet is opened
+  // fresh: changing a cover and being thrown back to Details, or stepping to
+  // the next song and losing the artwork you were looking at, is the sheet
+  // second-guessing what you were doing.
+  if (!$('#info').open) {
+    showTab('details');
+    $('#info').showModal();
+  }
 }
 
 // --- stepping through the results -------------------------------------
@@ -1021,16 +1213,170 @@ async function loadInfoArt(t) {
   const large = $('#artwork-large');
   small.removeAttribute('src');
   large.removeAttribute('src');
+  large.hidden = true;
+  paintArtActions();
+
+  const many = state.selected.size > 1;
+  $('#artwork-hint').textContent = t.hasArt
+    ? '' : 'Drop an image, paste one, or click to choose';
   $('#artwork-meta').textContent = t.hasArt ? 'Loading…' : 'No artwork';
+  $('#artwork-note').textContent = many
+    // Worth saying before the click, not after: this is the one edit that
+    // moves the audio, because a cover does not fit in a tag's padding.
+    ? `Changes apply to all ${state.selected.size.toLocaleString()} selected songs, and rewrite each file.`
+    : 'Embedding a cover rewrites the file: it is far larger than the padding a tag reserves.';
   if (!t.hasArt) return;
+
   const url = await state.api.artwork(t.id);
   if (!url) { $('#artwork-meta').textContent = 'Artwork could not be read'; return; }
   small.src = url;
   large.src = url;
+  large.hidden = false;
+  $('#artwork-hint').textContent = '';
   large.onload = () => {
     $('#artwork-meta').textContent = `${large.naturalWidth} × ${large.naturalHeight}`;
   };
 }
+
+// --- artwork editing --------------------------------------------------
+//
+// One track goes through PUT and DELETE, which answer directly — a file that
+// cannot be written comes back 422 rather than as a job that reports one
+// failure. A selection goes through /v1/artwork/batch, whose selector is a
+// query, so "every track on this album" costs the same to send as one.
+
+const artDrop = $('#artwork-drop');
+
+function paintArtActions() {
+  if (!state.editing.length) return;
+  const writable = state.editing.every(t => t.writable);
+  const has = state.editing.some(t => t.hasArt);
+  for (const id of ['#art-copy', '#art-paste', '#art-folder', '#art-remove']) {
+    $(id).disabled = !writable;
+  }
+  // Copy reads rather than writes, and needs exactly one track to read from.
+  $('#art-copy').disabled = state.editing.length !== 1 || !state.editing[0].hasArt;
+  $('#art-remove').disabled = !writable || !has;
+  artDrop.classList.toggle('busy', !writable);
+}
+
+// artApply runs one artwork change and puts the result on screen.
+async function artApply(what, run) {
+  artDrop.classList.add('busy');
+  try {
+    await run();
+    for (const id of state.selected) state.api.forgetArtwork(id);
+    status(what, 'ok');
+    await refresh(false);
+    if ($('#info').open) await openInfo();
+  } catch (e) {
+    status(e instanceof ApiError && e.status === 422
+      ? `${e.message} — the artwork was not changed` : e.message, 'err');
+  } finally {
+    artDrop.classList.remove('busy');
+  }
+}
+
+// setArtwork embeds an image file or pasted blob.
+function setArtwork(file) {
+  if (!file || !/^image\//.test(file.type)) {
+    status('That is not an image', 'err');
+    return;
+  }
+  const n = state.selected.size;
+  if (n > 1 && !confirm(`Set this cover on ${n.toLocaleString()} songs?\n\n` +
+      'Each file is rewritten, since a cover does not fit in the space a tag reserves.')) {
+    return;
+  }
+  return artApply(n > 1 ? `Set the cover on ${n.toLocaleString()} songs` : 'Cover updated', async () => {
+    if (n === 1) {
+      await state.api.putArtwork(state.editing[0].id, file);
+      return;
+    }
+    // The batch endpoint takes the image as base64 in JSON rather than as a
+    // body of its own, since the selector has to travel with it.
+    await waitArtJob(await state.api.batchArtwork(infoSelector(), 'upload', await toBase64(file)));
+  });
+}
+
+// toBase64 reads a blob without blowing the stack on a large cover: spreading
+// a megabyte-long byte array into String.fromCharCode passes a million
+// arguments, which throws. FileReader hands back a data URL already encoded.
+const toBase64 = file => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(',', 2)[1]);
+  r.onerror = () => reject(new Error('the image could not be read'));
+  r.readAsDataURL(file);
+});
+
+async function waitArtJob(job) {
+  const done = await state.api.waitJob(job.id, j =>
+    status(`Writing ${j.progress.done} of ${j.progress.total}…`));
+  if (done.state !== 'succeeded') throw new Error(done.error || 'the job failed');
+  const r = done.result || {};
+  if (r.failed) throw new Error(`${r.failed} of ${r.matched} could not be written`);
+  return r;
+}
+
+$('#artwork-file').addEventListener('change', e => {
+  const file = e.target.files?.[0];
+  e.target.value = '';                      // so the same file can be picked twice
+  setArtwork(file);
+});
+
+// The drop target. Both dragover and dragenter must be cancelled or the
+// browser navigates to the dropped file instead.
+for (const type of ['dragenter', 'dragover']) {
+  artDrop.addEventListener(type, e => {
+    e.preventDefault();
+    artDrop.classList.add('over');
+  });
+}
+artDrop.addEventListener('dragleave', () => artDrop.classList.remove('over'));
+artDrop.addEventListener('drop', e => {
+  e.preventDefault();
+  artDrop.classList.remove('over');
+  setArtwork(e.dataTransfer?.files?.[0]);
+});
+
+// ⌘V with an image on the system clipboard, anywhere in the sheet.
+$('#info').addEventListener('paste', e => {
+  const file = [...(e.clipboardData?.files || [])].find(f => /^image\//.test(f.type));
+  if (!file) return;
+  e.preventDefault();
+  showTab('artwork');
+  setArtwork(file);
+});
+
+$('#art-copy').addEventListener('click', () => artApply('Cover copied to the clipboard', () =>
+  state.api.copyArtworkFromTrack(state.editing[0].id)));
+
+$('#art-paste').addEventListener('click', () => {
+  const n = state.selected.size;
+  if (n > 1 && !confirm(`Paste the clipboard cover onto ${n.toLocaleString()} songs?`)) return;
+  artApply(`Pasted onto ${n.toLocaleString()} ${n === 1 ? 'song' : 'songs'}`, () =>
+    state.api.batchArtwork(infoSelector(), 'clipboard').then(waitArtJob));
+});
+
+$('#art-folder').addEventListener('click', () => {
+  const n = state.selected.size;
+  if (!confirm(`Embed the cover image sitting beside ${n === 1 ? 'this song' : `these ${n.toLocaleString()} songs`}?\n\n` +
+      'Looks for cover.jpg or folder.jpg in each track\u2019s own directory.')) return;
+  artApply('Folder image embedded', () =>
+    state.api.batchArtwork(infoSelector(), 'folder').then(waitArtJob));
+});
+
+$('#art-remove').addEventListener('click', () => {
+  const n = state.selected.size;
+  if (!confirm(`Remove the artwork from ${n === 1 ? 'this song' : `${n.toLocaleString()} songs`}?`)) return;
+  artApply('Artwork removed', async () => {
+    if (n === 1) {
+      await state.api.deleteArtwork(state.editing[0].id);
+      return;
+    }
+    await waitArtJob(await state.api.batchArtwork(infoSelector(), 'remove'));
+  });
+});
 
 document.querySelectorAll('.tab').forEach(b =>
   b.addEventListener('click', () => showTab(b.dataset.tab)));

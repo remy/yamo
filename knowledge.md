@@ -323,6 +323,24 @@ whole library to v2.4, costs more compatibility than it buys.
 `stripID3` reports a file holding a year frame without `TDRL` as non-canonical,
 so a clean-up retrofits one.
 
+### Artwork is edited through two different endpoints on purpose
+
+The browser sends one track's cover with `PUT /v1/tracks/{id}/artwork` — raw
+image bytes, no multipart, since the server sniffs the format from the content
+— and a selection with `POST /v1/artwork/batch`, whose selector is a query. The
+single-track path exists because it answers directly: a file that cannot be
+written comes back `422` rather than as a job reporting one failure. The batch
+path carries the image as base64 in JSON, because the selector has to travel
+with it.
+
+Reading it back is the awkward part and always has been: `<img src>` cannot
+send an `Authorization` header, so every cover is fetched and handed to the DOM
+as a blob URL, and `Api._cacheArt` bounds that cache and revokes what it evicts
+— an object URL holds its blob in memory until it is revoked.
+
+`toBase64` uses `FileReader` rather than `String.fromCharCode(...bytes)`:
+spreading a megabyte-long array passes a million arguments and throws.
+
 ### Everything iTunes wrote is kept
 
 `TagGapless`, `TagSoundCheck` and `TagITunes` are all on the default keep list.

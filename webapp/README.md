@@ -70,6 +70,15 @@ answers.
   path itself stays plain selectable text, and the button ticks for a moment
   rather than the text being swapped for the word "Copied" — which hid the
   thing you were still reading.
+- **Artwork** — drop an image on the well in the Artwork tab, paste one with
+  ⌘V, or click to choose a file. **Copy** puts the cover on the *server's*
+  clipboard, so one copied in the terminal can be pasted here and the other way
+  round; **Paste** applies it; **Folder image** embeds the `cover.jpg` beside
+  each track, which is the usual reason a downloaded library shows no art on a
+  phone; **Remove** takes it off. One track goes through
+  `PUT`/`DELETE /v1/tracks/{id}/artwork`, a selection through
+  `POST /v1/artwork/batch`. Embedding rewrites the file — a cover is far larger
+  than the padding a tag reserves — so the panel says so before you click.
 - **Clean up** in the Get Info footer — removes every tag outside the keep
   list (encoder signatures, comments, private blobs, ratings, external
   identifiers) and moves kept values held under an older name into the field
