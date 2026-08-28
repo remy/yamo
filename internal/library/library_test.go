@@ -45,6 +45,12 @@ func newService(t *testing.T, n int) *Service {
 	for i := range c.Tracks {
 		c.Tracks[i].Path = fmt.Sprintf("%s-%d.mp3", strings.TrimSuffix(c.Tracks[i].Path, ".mp3"), i)
 	}
+	return openService(t, dir, c)
+}
+
+// openService saves a hand-built catalogue and opens a service over it.
+func openService(t *testing.T, dir string, c *catalog.Catalog) *Service {
+	t.Helper()
 	c.Roots = []string{filepath.Join(dir, "music")}
 	c.ScannedAt = time.Now()
 
@@ -188,6 +194,56 @@ func TestAlbumsGrouping(t *testing.T) {
 		// The query an album carries must reselect exactly it.
 		if got := s.Count(a.Query); got != a.Tracks {
 			t.Errorf("album query %q matched %d, want %d", a.Query, got, a.Tracks)
+		}
+	}
+}
+
+// TestAlbumQueryWithoutAlbumArtist covers the case that made the album grid
+// useless on a real library: grouping falls back to the artist when a file has
+// no album artist, but the query the album carried always named albumartist,
+// so clicking an album whose files never had one selected nothing at all.
+func TestAlbumQueryWithoutAlbumArtist(t *testing.T) {
+	dir := t.TempDir()
+	c := catalog.New()
+	add := func(album, artist, albumArtist string, n int) {
+		for i := 0; i < n; i++ {
+			c.Tracks = append(c.Tracks, catalog.Track{
+				Path:        filepath.Join(dir, "music", album, fmt.Sprintf("%02d.mp3", len(c.Tracks))),
+				Title:       fmt.Sprintf("Song %d", i),
+				Artist:      artist,
+				AlbumArtist: albumArtist,
+				Album:       album,
+				Format:      tags.FormatMP3,
+			})
+		}
+	}
+	add("Tagged", "Plan B", "Plan B", 4) // every file has an album artist
+	add("Untagged", "Plan B", "", 4)     // none has one: the reported bug
+	add("Partly", "Plan B", "Plan B", 3) // and a release tagged halfway through
+	add("Partly", "Plan B", "", 2)
+
+	// A compilation, where the album artist is the only thing holding the
+	// release together and the artist would scatter it.
+	for i, artist := range []string{"Ella Fitzgerald", "Nina Simone", "Etta James"} {
+		c.Tracks = append(c.Tracks, catalog.Track{
+			Path:        filepath.Join(dir, "music", "Compilation", fmt.Sprintf("%02d.mp3", i)),
+			Title:       fmt.Sprintf("Song %d", i),
+			Artist:      artist,
+			AlbumArtist: "Various Artists",
+			Album:       "Compilation",
+			Format:      tags.FormatMP3,
+		})
+	}
+	s := openService(t, dir, c)
+
+	res := s.Albums(ListParams{Limit: 100})
+	if res.Total != 4 {
+		t.Fatalf("grouped into %d albums, want 4", res.Total)
+	}
+	for _, a := range res.Items {
+		if got := s.Count(a.Query); got != a.Tracks {
+			t.Errorf("album %q carries query %q, which matches %d of its %d tracks",
+				a.Album, a.Query, got, a.Tracks)
 		}
 	}
 }

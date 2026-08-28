@@ -212,7 +212,9 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .grid .val { color: var(--ink); overflow-wrap: anywhere }
 .grid .val.copyable { cursor: pointer; border-radius: 4px; margin: -2px -4px; padding: 2px 4px }
 .grid .val.copyable:hover { background: var(--hover) }
-.grid .val.copied { color: #34c759 }
+/* Confirm the copy without replacing the path: swapping the text out moves
+   the eye to the wrong place and hides the thing just copied. */
+.grid .val.copied { background: rgba(52, 199, 89, .22); transition: background .15s }
 .suggest {
   position: fixed; z-index: 10; background: var(--bg-raise); color: var(--ink);
   border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
@@ -236,3 +238,10 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .info-foot .spacer { flex: 1 }
 .info-foot button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 6px; padding: .4rem .9rem }
 .info-foot button.primary { border-color: transparent; background: var(--accent); color: #fff }
+.info-foot button:disabled { opacity: .4; cursor: default }
+/* The stepper reads as one control, so the two halves share a border. */
+.stepper { display: flex }
+.stepper button { padding: .3rem .7rem; font-size: 15px; line-height: 1 }
+.stepper button:first-child { border-radius: 6px 0 0 6px }
+.stepper button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px }
+.stepper button:not(:disabled):hover { background: var(--hover) }

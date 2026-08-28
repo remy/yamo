@@ -290,7 +290,7 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 
 	s.mu.RLock()
 	hits := s.cat.Index().Search(catalog.ParseQuery(p.Query))
-	byKey := map[string]*Album{}
+	byKey := map[string]*albumAgg{}
 	for _, i := range hits {
 		t := &s.cat.Tracks[i]
 		// Grouping on album artist as well as album keeps two different
@@ -299,14 +299,20 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 		if artist == "" {
 			artist = t.Artist
 		}
-		key := catalog.Fold(artist) + "\x00" + catalog.Fold(t.Album)
+		folded := catalog.Fold(artist)
+		key := folded + "\x00" + catalog.Fold(t.Album)
 		a := byKey[key]
 		if a == nil {
-			a = &Album{
-				ID: TrackID(key), Album: t.Album, AlbumArtist: artist,
-				Query: albumQuery(artist, t.Album),
-			}
+			a = &albumAgg{Album: Album{ID: TrackID(key), Album: t.Album, AlbumArtist: artist}}
 			byKey[key] = a
+		}
+		// Which field names this group, counted rather than assumed: see
+		// artistField.
+		if t.AlbumArtist != "" {
+			a.byAlbumArtist++
+		}
+		if catalog.Fold(t.Artist) == folded {
+			a.byArtist++
 		}
 		a.Tracks++
 		a.DurationMS += int64(t.DurationMS)
@@ -321,7 +327,8 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 
 	items := make([]Album, 0, len(byKey))
 	for _, a := range byKey {
-		items = append(items, *a)
+		a.Query = albumQuery(a.artistField(), a.AlbumArtist, a.Album.Album)
+		items = append(items, a.Album)
 	}
 	sort.Slice(items, func(i, j int) bool {
 		if items[i].AlbumArtist != items[j].AlbumArtist {
@@ -338,12 +345,35 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 	return out
 }
 
+// albumAgg accumulates one group while it is being built. The counters exist
+// only to choose the query field and are not part of the API.
+type albumAgg struct {
+	Album
+	byAlbumArtist int // tracks that carry an album artist of their own
+	byArtist      int // tracks whose artist is the one naming this group
+}
+
+// artistField names the field that reselects the whole group.
+//
+// Grouping falls back to the artist when a file has no album artist, so a
+// query on albumartist would match none of those files — and in a library
+// where most files never had an album artist written, that is most albums.
+// Neither field can express a group that is genuinely mixed, so the one
+// covering more of it wins, and album artist breaks the tie as the more
+// specific of the two.
+func (a *albumAgg) artistField() string {
+	if a.byAlbumArtist >= a.byArtist {
+		return "albumartist"
+	}
+	return "artist"
+}
+
 // albumQuery builds a query that selects exactly one album, quoting the values
 // so that titles containing spaces survive the round trip.
-func albumQuery(artist, album string) string {
+func albumQuery(field, artist, album string) string {
 	var b strings.Builder
 	if artist != "" {
-		b.WriteString(`albumartist:"` + strings.ReplaceAll(artist, `"`, "") + `" `)
+		b.WriteString(field + `:"` + strings.ReplaceAll(artist, `"`, "") + `" `)
 	}
 	b.WriteString(`album:"` + strings.ReplaceAll(album, `"`, "") + `"`)
 	return b.String()

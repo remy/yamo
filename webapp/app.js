@@ -36,13 +36,14 @@ const INFO_FIELDS = [
 
 const ROW_H = 34;
 const PAGE = 200;
+const DEFAULT_SORT = 'artist,album,track';
 
 const state = {
   api: null,
   view: 'songs',
   query: '',        // what the user typed
   facet: '',        // an extra term from a sidebar click
-  sort: 'artist,album,track',
+  sort: DEFAULT_SORT,
   total: 0,
   pages: new Map(), // page index -> array of tracks
   loading: new Set(),
@@ -52,6 +53,8 @@ const state = {
   anchor: -1,        // where a shift-extended selection started
   selectAll: false,
   editing: [],      // tracks currently in the Get Info sheet
+  editIndex: -1,    // its row, so the sheet can step through the results
+  facetValues: null,// the sidebar lists, kept so a route change can repaint them
   eventsAbort: null,
 };
 
@@ -69,7 +72,12 @@ async function connect(server, token) {
   saveConn(server, token);
   $('#connect').hidden = true;
   $('#app').hidden = false;
-  await Promise.all([loadFacets(), refresh(true)]);
+  await loadFacets();
+  // Normalise a bare URL so the first history entry is addressable too.
+  if (location.hash !== routeToHash(parseHash(location.hash))) {
+    history.replaceState(null, '', routeToHash(parseHash(location.hash)));
+  }
+  await applyRoute();
   listenForChanges();
 }
 
@@ -91,6 +99,94 @@ $('#disconnect').addEventListener('click', () => {
   localStorage.removeItem('tagmgr.token');
   location.reload();
 });
+
+// --- routing ----------------------------------------------------------
+//
+// What is on screen is four values — view, query, facet, sort — so the URL is
+// those four values. Every navigation writes the hash and nothing else; a
+// single hashchange listener reads it back and applies it. Going back, going
+// forward and loading the page cold therefore all take the same path, and
+// there is no second copy of "make the screen match" to keep in step.
+
+function routeToHash(r) {
+  const p = new URLSearchParams();
+  if (r.query) p.set('q', r.query);
+  if (r.facet) p.set('facet', r.facet);
+  if (r.sort && r.sort !== DEFAULT_SORT) p.set('sort', r.sort);
+  const qs = p.toString();
+  return `#/${r.view}${qs ? `?${qs}` : ''}`;
+}
+
+function parseHash(hash) {
+  const m = /^#\/?([^?]*)(?:\?(.*))?$/.exec(hash || '');
+  const p = new URLSearchParams(m?.[2] || '');
+  return {
+    view: m?.[1] === 'albums' ? 'albums' : 'songs',
+    query: p.get('q') || '',
+    facet: p.get('facet') || '',
+    sort: p.get('sort') || DEFAULT_SORT,
+  };
+}
+
+const currentRoute = () => ({
+  view: state.view, query: state.query, facet: state.facet, sort: state.sort,
+});
+
+// applied is the route on screen, or null before the first one lands.
+let applied = null;
+
+// navigate records where we are going. Assigning to location.hash pushes a
+// history entry and fires hashchange, which does the actual work; when the URL
+// would not change there is no event, so the route is applied directly.
+function navigate(patch) {
+  const next = routeToHash({ ...currentRoute(), ...patch });
+  if (location.hash === next) {
+    if (!applied) applyRoute();
+    return;
+  }
+  location.hash = next;
+}
+
+// Where each URL was scrolled to, so going back to a list returns to the place
+// in it you left. Recorded as you scroll rather than as you leave, since the
+// back button gives no warning.
+const scrollMemory = new Map();
+
+async function applyRoute() {
+  const r = parseHash(location.hash);
+  const was = applied;
+  applied = r;
+  Object.assign(state, r);
+  // Read before anything can scroll: refresh() resets the pane to the top.
+  const restore = scrollMemory.get(location.hash) || 0;
+
+  $('#search').value = r.query;
+  document.querySelectorAll('.nav').forEach(b =>
+    b.setAttribute('aria-current', String(b.dataset.view === r.view)));
+  $('#songs-view').hidden = r.view !== 'songs';
+  $('#albums-view').hidden = r.view !== 'albums';
+  paintFacets();
+  renderHead();
+
+  // A selection belongs to a result set. Re-sorting keeps the same tracks, so
+  // it keeps the selection; changing what is listed does not.
+  if (!was || was.query !== r.query || was.facet !== r.facet || was.view !== r.view) {
+    state.selected.clear();
+    state.selectAll = false;
+    state.cursor = -1;
+    state.anchor = -1;
+  }
+  if ($('#info').open) $('#info').close();
+
+  await refresh(true);
+  if (restore) {
+    $('#scroller').scrollTop = restore;
+    render();
+    ensurePages();
+  }
+}
+
+window.addEventListener('hashchange', applyRoute);
 
 // --- fetching ---------------------------------------------------------
 
@@ -169,11 +265,8 @@ function renderHead() {
       b.dataset.active = '1';
       b.textContent = `${c.label} ${desc ? '\u25be' : '\u25b4'}`;
     }
-    b.addEventListener('click', () => {
-      state.sort = (field === c.sort && !desc) ? `-${c.sort}` : c.sort;
-      renderHead();
-      refresh(true);
-    });
+    b.addEventListener('click', () =>
+      navigate({ sort: (field === c.sort && !desc) ? `-${c.sort}` : c.sort }));
     return b;
   }));
 }
@@ -280,6 +373,7 @@ function onScroll() {
   frameQueued = true;
   requestAnimationFrame(() => {
     frameQueued = false;
+    scrollMemory.set(location.hash, $('#scroller').scrollTop);
     render();
     ensurePages();
   });
@@ -430,50 +524,47 @@ $('#search').addEventListener('keydown', e => {
 });
 
 function runSearch(value) {
-  if (value === state.query) return;
-  state.query = value;
-  state.selectAll = false;
-  state.selected.clear();
-  refresh(true);
+  navigate({ query: value });
 }
 
 async function loadFacets() {
-  const render = (host, values, field) => {
-    host.replaceChildren(...values.map(v => {
-      const b = el('button', 'facet');
-      b.append(el('span', 'name', v.value), el('span', 'n', v.count.toLocaleString()));
-      const term = `${field}:"${v.value.replace(/"/g, '')}"`;
-      b.setAttribute('aria-pressed', String(state.facet === term));
-      b.addEventListener('click', () => {
-        state.facet = state.facet === term ? '' : term;
-        state.selected.clear();
-        loadFacets();
-        refresh(true);
-      });
-      return b;
-    }));
-  };
   const [genres, artists] = await Promise.all([
     state.api.values('genre', '', 20),
     state.api.values('artist', '', 40),
   ]);
-  render($('#genres'), genres, 'genre');
-  render($('#artists'), artists, 'artist');
+  state.facetValues = { genre: genres, artist: artists };
+  paintFacets();
 
   const s = await state.api.stats();
   $('#library-stats').textContent =
     `${s.tracks.toLocaleString()} songs · ${s.albums.toLocaleString()} albums`;
 }
 
+// facetTerm is the query a sidebar entry stands for, and the value held in the
+// URL — so a link to a facet survives a reload.
+const facetTerm = (field, value) => `${field}:"${value.replace(/"/g, '')}"`;
+
+// paintFacets redraws the sidebar from the values already fetched. A route
+// change only moves which button is pressed, and that is not worth a request.
+function paintFacets() {
+  if (!state.facetValues) return;
+  for (const [field, host] of [['genre', '#genres'], ['artist', '#artists']]) {
+    $(host).replaceChildren(...state.facetValues[field].map(v => {
+      const b = el('button', 'facet');
+      b.append(el('span', 'name', v.value), el('span', 'n', v.count.toLocaleString()));
+      const term = facetTerm(field, v.value);
+      b.setAttribute('aria-pressed', String(state.facet === term));
+      b.addEventListener('click', () =>
+        navigate({ facet: state.facet === term ? '' : term }));
+      return b;
+    }));
+  }
+}
+
 // --- views ------------------------------------------------------------
 
-document.querySelectorAll('.nav').forEach(b => b.addEventListener('click', () => {
-  document.querySelectorAll('.nav').forEach(x => x.setAttribute('aria-current', String(x === b)));
-  state.view = b.dataset.view;
-  $('#songs-view').hidden = state.view !== 'songs';
-  $('#albums-view').hidden = state.view !== 'albums';
-  refresh(true);
-}));
+document.querySelectorAll('.nav').forEach(b =>
+  b.addEventListener('click', () => navigate({ view: b.dataset.view })));
 
 async function renderAlbums() {
   const grid = $('#album-grid');
@@ -487,16 +578,9 @@ async function renderAlbums() {
     img.alt = '';
     b.append(img, el('div', 't', a.album || 'Unknown album'),
              el('div', 'a', a.albumArtist || ''));
-    b.addEventListener('click', () => {
-      // Each album carries a query that reselects exactly it.
-      $('#search').value = a.query;
-      state.query = a.query;
-      state.view = 'songs';
-      document.querySelectorAll('.nav').forEach(x => x.setAttribute('aria-current', String(x.dataset.view === 'songs')));
-      $('#songs-view').hidden = false;
-      $('#albums-view').hidden = true;
-      refresh(true);
-    });
+    // Each album carries a query that reselects exactly it. Going there is a
+    // navigation, so the back button returns to the grid.
+    b.addEventListener('click', () => navigate({ view: 'songs', query: a.query }));
     // Covers load lazily; each is a separate authenticated fetch.
     observer.observe(img);
     img.dataset.albumQuery = a.query;
@@ -527,7 +611,7 @@ const observer = new IntersectionObserver(async entries => {
 
 // The fields worth completing: ones whose values repeat across a library.
 // A title is unique to a track and completing it would only get in the way.
-const COMPLETES = new Set(['artist', 'albumartist', 'genre']);
+const COMPLETES = new Set(['artist', 'album', 'albumartist', 'genre']);
 
 const suggest = {
   box: null,        // the floating list
@@ -659,6 +743,7 @@ function wireSuggest(input, field) {
 async function openInfo() {
   const ids = [...state.selected];
   if (!ids.length) return;
+  state.editIndex = state.cursor;
   // Only the first few are fetched: the sheet needs to know whether values
   // agree, not to hold every track.
   const sample = await Promise.all(ids.slice(0, 50).map(id => state.api.getTrack(id).catch(() => null)));
@@ -678,9 +763,38 @@ async function openInfo() {
   buildDetails(multi);
   buildFile(first, multi);
   loadInfoArt(first);
+  paintStepper();
   showTab('details');
-  $('#info').showModal();
+  // showModal on an already-open dialog throws; stepping reuses this one.
+  if (!$('#info').open) $('#info').showModal();
 }
+
+// --- stepping through the results -------------------------------------
+//
+// The sheet walks whatever is currently listed, in the order it is listed, so
+// the buttons follow the search and the sort rather than a copy of them.
+
+function paintStepper() {
+  const single = state.selected.size === 1 && state.editIndex >= 0;
+  $('#info-prev').disabled = !single || state.editIndex <= 0;
+  $('#info-next').disabled = !single || state.editIndex >= state.total - 1;
+}
+
+// stepInfo commits whatever was typed before moving, which is what the Get
+// Info window in Apple Music does: moving on is not a way to lose an edit.
+async function stepInfo(delta) {
+  await saveInfo({ keepOpen: true });
+  const to = state.editIndex + delta;
+  if (to < 0 || to >= state.total) { $('#info').close(); return; }
+
+  setCursor(to, false);
+  await ensurePages();
+  if (!trackAt(to)) return;          // the page never arrived; stay put
+  await openInfo();
+}
+
+$('#info-prev').addEventListener('click', () => stepInfo(-1));
+$('#info-next').addEventListener('click', () => stepInfo(1));
 
 // common returns the shared value of a field, and whether the tracks differ.
 function common(field) {
@@ -774,14 +888,19 @@ function shellQuote(path) {
 }
 
 // copyPath puts the location on the clipboard, quoted when it needs to be.
+//
+// The path itself stays put. Replacing it with the word "Copied" moves the eye
+// away from the thing just copied and hides it while you are still reading it,
+// so the confirmation is a brief tint plus the status bar.
 async function copyPath(path, cell) {
   const text = shellQuote(path);
-  const ok = await writeClipboard(text);
-  const before = cell.textContent;
-  cell.textContent = ok ? 'Copied' : 'Could not copy — select it instead';
-  cell.classList.toggle('copied', ok);
-  setTimeout(() => { cell.textContent = before; cell.classList.remove('copied'); }, 1200);
-  if (ok) status(`Copied ${text}`, 'ok');
+  if (!await writeClipboard(text)) {
+    status('Could not copy — select the path and copy it yourself', 'err');
+    return;
+  }
+  cell.classList.add('copied');
+  setTimeout(() => cell.classList.remove('copied'), 600);
+  status(`Copied ${text}`, 'ok');
 }
 
 // writeClipboard uses the async API where it is available and falls back
@@ -791,6 +910,12 @@ async function copyPath(path, cell) {
 // http://nas.local is not one — which is exactly how this is meant to be used.
 // The old execCommand path is deprecated and still the only thing that works
 // there.
+//
+// The scratch element has to go inside the open dialog. A modal dialog makes
+// the rest of the document inert, so a textarea appended to the body cannot be
+// focused or selected, and execCommand then copies an empty selection and
+// reports failure — the same top-layer trap that put the suggestion list
+// behind the backdrop.
 async function writeClipboard(text) {
   if (navigator.clipboard?.writeText) {
     try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
@@ -798,9 +923,12 @@ async function writeClipboard(text) {
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.setAttribute('readonly', '');
-  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
-  document.body.append(ta);
-  ta.select();
+  ta.style.cssText =
+    'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;' +
+    'opacity:0;user-select:text;-webkit-user-select:text';
+  (document.querySelector('dialog[open]') || document.body).append(ta);
+  ta.focus({ preventScroll: true });
+  ta.setSelectionRange(0, ta.value.length);
   let ok = false;
   try { ok = document.execCommand('copy'); } catch { ok = false; }
   ta.remove();
@@ -834,6 +962,15 @@ function showTab(name) {
 
 $('#info-cancel').addEventListener('click', () => $('#info').close());
 
+// Holding shift while saving means "and on to the next one", for working
+// down a list of songs without reaching for the mouse between each. The submit
+// event carries no modifier state, so it is taken from whatever caused it.
+let saveStep = 0;
+$('#info-ok').addEventListener('click', e => { saveStep = e.shiftKey ? 1 : 0; });
+$('#info-form').addEventListener('keydown', e => {
+  if (e.key === 'Enter') saveStep = e.shiftKey ? 1 : 0;
+});
+
 // Enter saves, from anywhere in the sheet.
 //
 // The form previously used method="dialog", which meant enter in a text field
@@ -841,7 +978,10 @@ $('#info-cancel').addEventListener('click', () => $('#info').close());
 // intercepted so that the keyboard and the OK button do the same thing.
 $('#info-form').addEventListener('submit', e => {
   e.preventDefault();
-  saveInfo();
+  const step = saveStep;
+  saveStep = 0;
+  if (step) stepInfo(step);
+  else saveInfo();
 });
 
 // Escape closes without saving, which is what a dialog's own cancel means.
@@ -857,7 +997,7 @@ $('#info').addEventListener('close', () => {
 // One track goes through PATCH with its version, so an edit made elsewhere
 // since is refused rather than overwritten. Several go through the batch
 // endpoint, which takes a selector rather than a list of values per track.
-async function saveInfo() {
+async function saveInfo({ keepOpen = false } = {}) {
   const changes = {};
   for (const input of $('#details-grid').querySelectorAll('input')) {
     const field = input.dataset.field;
@@ -868,8 +1008,11 @@ async function saveInfo() {
     changes[field] = typed === '' ? null : typed;
   }
 
-  if (!Object.keys(changes).length) { $('#info').close(); return; }
-  $('#info').close();
+  if (!Object.keys(changes).length) {
+    if (!keepOpen) $('#info').close();
+    return;
+  }
+  if (!keepOpen) $('#info').close();
 
   try {
     if (state.selected.size === 1 && state.editing.length === 1) {

@@ -43,6 +43,10 @@ answers.
   thousand tracks is around thirty DOM rows, reused as you scroll.
 - **Albums** — a grid of covers, lazily fetched. Clicking one searches for
   exactly that album, using the `query` each album carries.
+- **URLs** — the view, search, facet and sort live in the hash, so back and
+  forward work, a view can be bookmarked, and a reload lands where you were.
+  `#/albums`, `#/songs?q=artist%3Aelvis&sort=-year`. Going back to a list
+  returns to the place in it you left.
 - **Search** — the full query language: `artist:elvis`, `year:>1980`,
   `-genre:live`, `album:"sun sessions"`. Runs on ⏎, not as you type: a request
   per keystroke against a large library is not free, and a half-typed `year:>`
@@ -53,12 +57,18 @@ answers.
   or clears the selection, ⌘A selects everything matching.
 - **Get Info** — modelled on the dialog in Apple Music, restricted to the
   fields this API can write. ⏎ saves from anywhere in the sheet, Escape
-  discards. Click a row and press ⏎ or ⌘I, or double-click.
-- **Autocomplete** on artist, album artist and genre, from
+  discards. Click a row and press ⏎ or ⌘I, or double-click. The ‹ › buttons
+  step through whatever is currently listed without closing the sheet, and
+  ⇧-clicking OK (or ⇧⏎) saves and moves to the next one. Stepping commits what
+  you typed, as the Apple Music window does: moving on is never a way to lose
+  an edit.
+- **Autocomplete** on artist, album, album artist and genre, from
   `GET /v1/values/{field}` — prefix matches first, ranked by how many tracks
   use each value, with the count shown. Arrows to choose, ⏎ or Tab to accept.
 - **Click the location** in the File tab to copy it, shell-quoted when it
-  contains anything a shell would treat specially.
+  contains anything a shell would treat specially. The path stays put and the
+  row tints briefly, rather than the text being swapped for the word "Copied" —
+  which hid the thing you were still reading.
 - **Multi-select** — shift-click and ⌘-click, or ⌘A for everything matching.
   Fields that differ show *Mixed* and are left alone unless typed into, which
   is what Apple Music does.
