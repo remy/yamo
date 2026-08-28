@@ -261,14 +261,10 @@ func notifyContext() (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
-type stringList []string
-
-func (s *stringList) String() string     { return strings.Join(*s, ",") }
-func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
-
-// catalogFlag registers the one flag every command shares.
+// catalogFlag registers the catalogue path, which only the server uses now:
+// it alone opens the catalogue and the music files.
 func catalogFlag(fs *flag.FlagSet) *string {
-	return fs.String("catalog", defaultCatalogPath(), "catalogue file path")
+	return fs.String("catalog", defaultCatalogPath(), "catalogue file path (server only)")
 }
 
 // formatCount renders a large number with thousands separators.

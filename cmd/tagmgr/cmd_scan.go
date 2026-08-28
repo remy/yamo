@@ -1,32 +1,36 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/remy/tag-manager/internal/catalog"
-	"github.com/remy/tag-manager/internal/scan"
+	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/tag-manager/internal/library"
 	"github.com/remy/tag-manager/internal/ui"
 )
 
-const scanSummary = `tagmgr scan - build or refresh the catalogue
+const scanSummary = `tagmgr scan - bring the library up to date
 
 Usage:
   tagmgr scan [flags] <dir>...
 
-Walks each directory, extracts tags, and writes the catalogue. Files whose
-size and modification time are unchanged since the last scan are reused
-without being opened, so a refresh costs a stat per file rather than a read;
-pass -full to ignore that and re-read everything.
+Asks the server to walk each directory and extract tags. Files whose size
+and modification time are unchanged since the last scan are reused without
+being opened, so a refresh costs a stat per file rather than a read; pass
+-full to ignore that and re-read everything.
 
-Deleted files drop out of the catalogue on the next scan. Directories that
-never hold music (@eaDir, #recycle, lost+found, dot-directories) and
-AppleDouble "._" sidecars are skipped.
+Deleted files drop out on the next scan. Directories that never hold music
+(@eaDir, #recycle, lost+found, dot-directories) and AppleDouble "._"
+sidecars are skipped.
 
-With no directories given, refreshes whatever the catalogue already covers.
+With no directories given, refreshes whatever the library already covers.
+
+The paths are resolved by the server, not by this command, so they must
+make sense on the machine running it.
 
 Examples:
   tagmgr scan /volume1/music
@@ -37,84 +41,69 @@ Examples:
 
 func cmdScan(args []string) error {
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
-	catalogPath := catalogFlag(fs)
-	workers := fs.Int("workers", 0, "tag reader concurrency (0 = auto)")
+	server, token := serverFlags(fs)
 	full := fs.Bool("full", false, "re-read every file")
 	hidden := fs.Bool("hidden", false, "include dot-directories")
 	follow := fs.Bool("follow", false, "follow directory symlinks")
 	quiet := fs.Bool("quiet", false, "suppress progress output")
+	workers := fs.Int("workers", 0, "tag reader concurrency (0 = auto)")
 	var exclude stringList
 	fs.Var(&exclude, "exclude", "skip paths matching a glob (repeatable)")
 	if err := parseFlags(fs, args, scanSummary, ""); err != nil {
 		return err
 	}
 
-	roots := fs.Args()
-	if len(roots) == 0 {
-		// With no roots given, refresh whatever the catalogue already covers.
-		if prev, err := catalog.Load(*catalogPath); err == nil && len(prev.Roots) > 0 {
-			roots = prev.Roots
-			fmt.Fprintf(os.Stderr, "refreshing %s\n", strings.Join(roots, ", "))
-		} else {
-			return fmt.Errorf("no directories given and no catalogue at %s", *catalogPath)
-		}
+	c, err := connect(*server, *token)
+	if err != nil {
+		return err
 	}
-
-	opts := scan.Options{
-		Roots:          roots,
-		Workers:        *workers,
-		Exclude:        exclude,
-		IncludeHidden:  *hidden,
-		FollowSymlinks: *follow,
-	}
-	if !*full {
-		if prev, err := catalog.Load(*catalogPath); err == nil {
-			opts.Previous = prev
-		}
-	}
-
 	ctx, cancel := notifyContext()
 	defer cancel()
 
-	var report func(scan.Stats)
-	if !*quiet {
-		report = progressPrinter()
+	req := library.ScanRequest{
+		Roots:          fs.Args(),
+		Full:           *full,
+		Exclude:        exclude,
+		IncludeHidden:  *hidden,
+		FollowSymlinks: *follow,
+		Workers:        *workers,
+	}
+	job, err := c.Scan(ctx, req)
+	if err != nil {
+		return err
 	}
 
 	start := time.Now()
-	c, err := scan.Scan(ctx, opts, report)
-	if err != nil && c == nil {
+	done, err := waitForJobQuiet(ctx, c, job, "read", *quiet)
+	if err != nil {
 		return err
 	}
-	if err := catalog.Save(*catalogPath, c); err != nil {
-		return fmt.Errorf("saving catalogue: %w", err)
-	}
 
-	fmt.Fprintf(os.Stderr, "\n%d tracks catalogued in %s -> %s\n",
-		c.Len(), ui.FormatDuration(time.Since(start)), *catalogPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "scan interrupted; partial catalogue saved")
+	var res library.ScanResult
+	if err := client.DecodeResult(done, &res); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "  %s tracks in %s: %s read, %s unchanged, %s errors\n",
+		ui.FormatCount(res.Tracks), ui.FormatDuration(time.Since(start)),
+		ui.FormatCount(int(res.Parsed)), ui.FormatCount(int(res.Reused)), ui.FormatCount(int(res.Errors)))
+	if res.Removed > 0 {
+		fmt.Fprintf(os.Stderr, "  %s tracks no longer exist and were dropped\n", ui.FormatCount(res.Removed))
+	}
+	if done.State == library.JobCancelled {
+		fmt.Fprintln(os.Stderr, "  the scan was cancelled; what it found was kept")
 	}
 	return nil
 }
 
-// progressPrinter returns a callback that redraws a single status line.
-func progressPrinter() func(scan.Stats) {
-	var lastLen int
-	return func(st scan.Stats) {
-		rate := float64(0)
-		if secs := st.Elapsed.Seconds(); secs > 0 {
-			rate = float64(st.Parsed+st.Reused) / secs
-		}
-		line := fmt.Sprintf("  %s  %d dirs  %d files  %d read  %d unchanged  %d errors  %.0f/s",
-			ui.FormatDuration(st.Elapsed), st.Dirs, st.Found, st.Parsed, st.Reused, st.Errors, rate)
-		if pad := lastLen - len(line); pad > 0 {
-			line += strings.Repeat(" ", pad)
-		}
-		lastLen = len(line)
-		fmt.Fprintf(os.Stderr, "\r%s", line)
-		if st.Finished {
-			fmt.Fprintln(os.Stderr)
-		}
+// waitForJobQuiet follows a job, optionally without progress output.
+func waitForJobQuiet(ctx context.Context, c *client.Client, job *library.Job, verb string, quiet bool) (*library.Job, error) {
+	if quiet {
+		return c.WaitJob(ctx, job.ID, nil)
 	}
+	return waitForJob(ctx, c, job, verb)
 }
+
+type stringList []string
+
+func (s *stringList) String() string     { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
