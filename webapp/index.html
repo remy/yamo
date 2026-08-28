@@ -58,7 +58,7 @@
 
     <div id="songs-view" class="view">
       <div class="thead" id="thead"></div>
-      <div class="scroller" id="scroller">
+      <div class="scroller" id="scroller" tabindex="0">
         <div class="sizer" id="sizer"><div class="rows" id="rows"></div></div>
       </div>
     </div>
@@ -74,7 +74,7 @@
 <!-- The Get Info dialog. Modelled on the one in Apple Music, restricted to
      the fields this API can actually write. -->
 <dialog id="info" class="info">
-  <form method="dialog" id="info-form">
+  <form id="info-form">
     <header class="info-head">
       <img id="info-art" alt="" class="info-art">
       <div class="info-titles">
@@ -109,9 +109,15 @@
       <span id="info-note" class="muted small"></span>
       <span class="spacer"></span>
       <button type="button" id="info-cancel">Cancel</button>
-      <button type="button" id="info-ok" class="primary">OK</button>
+      <button type="submit" id="info-ok" class="primary">OK</button>
     </footer>
   </form>
+
+  <!-- Suggestions live inside the dialog, not beside it. A modal dialog is
+       drawn in the browser's top layer, so anything outside it renders behind
+       the backdrop however high its z-index. Position is fixed rather than
+       absolute so the scrolling panel above cannot clip it. -->
+  <div id="suggest" class="suggest" hidden role="listbox"></div>
 </dialog>
 
 <script type="module" src="app.js"></script>

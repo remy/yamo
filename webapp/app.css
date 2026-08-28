@@ -20,6 +20,11 @@
   }
 }
 * { box-sizing: border-box }
+/* Shift-clicking a row to extend a selection also drags a text selection
+   across the rows, which looks broken and fights the highlight. Text is
+   selectable only where selecting it is the point. */
+body { user-select: none; -webkit-user-select: none }
+input, textarea, .val, code, pre { user-select: text; -webkit-user-select: text }
 /* A display rule on a class beats the hidden attribute's display:none from the
    user-agent sheet, so hiding a flex or grid container silently does nothing.
    Every layout rule below would have to remember to guard for it otherwise. */
@@ -138,6 +143,12 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .row.alt { background: color-mix(in srgb, var(--hover) 55%, transparent) }
 .row:hover { background: var(--hover) }
 .row[aria-selected="true"] { background: var(--sel); color: var(--sel-ink) }
+/* The keyboard cursor. Distinct from selection, so it stays visible while
+   extending a selection with shift and arrow keys. */
+.row.cursor { outline: 2px solid var(--sel); outline-offset: -2px }
+.row.cursor[aria-selected="true"] { outline-color: color-mix(in srgb, var(--sel-ink) 70%, transparent) }
+.scroller:focus { outline: none }
+.scroller:focus-visible { outline: 2px solid var(--sel); outline-offset: -2px }
 .row[aria-selected="true"] .dim { color: rgba(255,255,255,.8) }
 .row > span {
   padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -199,6 +210,23 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .grid .pair { display: flex; align-items: center; gap: 6px }
 .grid .pair input { width: 64px }
 .grid .val { color: var(--ink); overflow-wrap: anywhere }
+.grid .val.copyable { cursor: pointer; border-radius: 4px; margin: -2px -4px; padding: 2px 4px }
+.grid .val.copyable:hover { background: var(--hover) }
+.grid .val.copied { color: #34c759 }
+.suggest {
+  position: fixed; z-index: 10; background: var(--bg-raise); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0,0,0,.22); max-height: 232px; overflow-y: auto;
+}
+.suggest-item {
+  display: flex; justify-content: space-between; gap: 12px; align-items: baseline;
+  padding: 5px 9px; cursor: pointer;
+}
+.suggest-item .n { color: var(--ink-dim); font-size: 11px; font-variant-numeric: tabular-nums }
+.suggest-item:hover { background: var(--hover) }
+.suggest-item[aria-selected="true"] { background: var(--accent); color: #fff }
+.suggest-item[aria-selected="true"] .n { color: rgba(255,255,255,.75) }
+
 .artwork-panel { display: flex; flex-direction: column; align-items: center; gap: 10px }
 .artwork-large { max-width: 320px; max-height: 320px; border-radius: 8px; background: var(--hover) }
 .info-foot {

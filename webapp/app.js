@@ -48,7 +48,9 @@ const state = {
   loading: new Set(),
   gen: 0,           // bumped when the query changes; stale replies are dropped
   selected: new Set(),
-  lastIndex: -1,
+  cursor: -1,        // the focused row, moved by the arrow keys
+  anchor: -1,        // where a shift-extended selection started
+  selectAll: false,
   editing: [],      // tracks currently in the Get Info sheet
   eventsAbort: null,
 };
@@ -232,12 +234,14 @@ function paintRow(row, i) {
   const t = trackAt(i);
   const id = t ? t.id : '';
   const selected = t ? state.selected.has(t.id) : false;
-  const key = `${i}|${id}|${selected ? 1 : 0}`;
+  const cursor = i === state.cursor;
+  const key = `${i}|${id}|${selected ? 1 : 0}|${cursor ? 1 : 0}`;
   if (row.shown === key) return;           // nothing about this row has changed
   row.shown = key;
 
   row.dataset.index = i;
   row.classList.toggle('alt', i % 2 === 1);
+  row.classList.toggle('cursor', cursor);
   row.classList.toggle('pending', !t);
   if (t) {
     row.dataset.id = t.id;
@@ -291,20 +295,19 @@ $('#rows').addEventListener('click', e => {
   const i = Number(row.dataset.index);
   const id = row.dataset.id;
 
-  if (e.shiftKey && state.lastIndex >= 0) {
-    const [a, b] = [state.lastIndex, i].sort((x, y) => x - y);
-    for (let k = a; k <= b; k++) {
-      const t = trackAt(k);
-      if (t) state.selected.add(t.id);
-    }
+  state.cursor = i;
+  if (e.shiftKey && state.anchor >= 0) {
+    selectRange(state.anchor, i);
   } else if (e.metaKey || e.ctrlKey) {
     state.selected.has(id) ? state.selected.delete(id) : state.selected.add(id);
-    state.lastIndex = i;
+    state.anchor = i;
   } else {
     state.selected.clear();
+    state.selectAll = false;
     state.selected.add(id);
-    state.lastIndex = i;
+    state.anchor = i;
   }
+  $('#scroller').focus({ preventScroll: true });
   render();
 });
 
@@ -314,12 +317,86 @@ $('#rows').addEventListener('dblclick', e => {
 
 document.addEventListener('keydown', e => {
   if ($('#info').open) return;
-  if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); openInfo(); }
-  if ((e.metaKey || e.ctrlKey) && e.key === 'a' && state.view === 'songs') {
+  // Typing in a field means the keys belong to the field.
+  const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+
+  if ((e.metaKey || e.ctrlKey) && e.key === 'i') { e.preventDefault(); openInfo(); return; }
+  if ((e.metaKey || e.ctrlKey) && e.key === 'a' && state.view === 'songs' && !inField) {
     e.preventDefault();
     selectAllMatching();
+    return;
+  }
+  if (inField || state.view !== 'songs') return;
+
+  const page = Math.max(1, Math.floor($('#scroller').clientHeight / ROW_H) - 1);
+  switch (e.key) {
+    case 'ArrowDown':  e.preventDefault(); moveCursor(1, e.shiftKey); break;
+    case 'ArrowUp':    e.preventDefault(); moveCursor(-1, e.shiftKey); break;
+    case 'PageDown':   e.preventDefault(); moveCursor(page, e.shiftKey); break;
+    case 'PageUp':     e.preventDefault(); moveCursor(-page, e.shiftKey); break;
+    case 'Home':       e.preventDefault(); setCursor(0, e.shiftKey); break;
+    case 'End':        e.preventDefault(); setCursor(state.total - 1, e.shiftKey); break;
+    case 'Enter':      e.preventDefault(); openInfo(); break;
+    case 'Escape':     state.selected.clear(); state.selectAll = false; render(); break;
   }
 });
+
+// moveCursor shifts the focused row, extending the selection when shift is
+// held and replacing it otherwise — the behaviour of every list on the system.
+function moveCursor(delta, extend) {
+  const from = state.cursor < 0 ? 0 : state.cursor;
+  setCursor(Math.min(Math.max(from + delta, 0), state.total - 1), extend);
+}
+
+function setCursor(index, extend) {
+  if (state.total === 0) return;
+  index = Math.min(Math.max(index, 0), state.total - 1);
+  state.cursor = index;
+
+  if (extend) {
+    if (state.anchor < 0) state.anchor = index;
+    selectRange(state.anchor, index);
+  } else {
+    state.anchor = index;
+    state.selected.clear();
+    state.selectAll = false;
+    const t = trackAt(index);
+    if (t) state.selected.add(t.id);
+  }
+  scrollCursorIntoView();
+  render();
+  ensurePages().then(() => {
+    // A row selected before its page arrived has no id yet; claim it once it does.
+    if (!extend) {
+      const t = trackAt(state.cursor);
+      if (t && !state.selected.has(t.id)) {
+        state.selected.clear();
+        state.selected.add(t.id);
+        render();
+      }
+    }
+  });
+}
+
+function selectRange(a, b) {
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  state.selected.clear();
+  state.selectAll = false;
+  for (let i = lo; i <= hi; i++) {
+    const t = trackAt(i);
+    if (t) state.selected.add(t.id);
+  }
+}
+
+// scrollCursorIntoView nudges the pane by the least amount that reveals the
+// focused row, so held arrow keys creep rather than jump.
+function scrollCursorIntoView() {
+  const sc = $('#scroller');
+  const top = state.cursor * ROW_H;
+  const bottom = top + ROW_H;
+  if (top < sc.scrollTop) sc.scrollTop = top;
+  else if (bottom > sc.scrollTop + sc.clientHeight) sc.scrollTop = bottom - sc.clientHeight;
+}
 
 // selectAllMatching marks everything the query matches. Only the loaded ids
 // are held; the edit itself is sent as a query selector, so this costs the
@@ -343,6 +420,8 @@ $('#search').addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     e.preventDefault();
     runSearch(e.target.value);
+    // Give the keyboard back to the list, so the arrows work straight away.
+    $('#scroller').focus({ preventScroll: true });
   } else if (e.key === 'Escape' && e.target.value !== '') {
     e.preventDefault();
     e.target.value = '';
@@ -444,6 +523,137 @@ const observer = new IntersectionObserver(async entries => {
   }
 }, { rootMargin: '200px' });
 
+// --- autocomplete -----------------------------------------------------
+
+// The fields worth completing: ones whose values repeat across a library.
+// A title is unique to a track and completing it would only get in the way.
+const COMPLETES = new Set(['artist', 'albumartist', 'genre']);
+
+const suggest = {
+  box: null,        // the floating list
+  input: null,      // the field it belongs to
+  items: [],
+  index: -1,
+  timer: null,
+  seq: 0,           // replies for a prefix already typed past are discarded
+};
+
+function suggestBox() {
+  suggest.box ||= $('#suggest');
+  return suggest.box;
+}
+
+function closeSuggest() {
+  const box = suggestBox();
+  box.hidden = true;
+  // Empty it as well as hiding it, so nothing stale can flash on reopen.
+  box.replaceChildren();
+  suggest.input = null;
+  suggest.items = [];
+  suggest.index = -1;
+  clearTimeout(suggest.timer);
+}
+
+function openSuggest(input, items) {
+  const box = suggestBox();
+  if (!items.length) { closeSuggest(); return; }
+  suggest.input = input;
+  suggest.items = items;
+  suggest.index = -1;
+
+  box.replaceChildren(...items.map((v, i) => {
+    const row = el('div', 'suggest-item');
+    row.setAttribute('role', 'option');
+    row.append(el('span', '', v.value), el('span', 'n', v.count.toLocaleString()));
+    // mousedown, not click: the field must not lose focus before the value
+    // is taken, or the blur handler closes the list first.
+    row.addEventListener('mousedown', e => { e.preventDefault(); acceptSuggest(i); });
+    box.append(row);
+    return row;
+  }));
+
+  const r = input.getBoundingClientRect();
+  box.style.left = `${r.left}px`;
+  box.style.top = `${r.bottom + 2}px`;
+  box.style.width = `${r.width}px`;
+  box.hidden = false;
+}
+
+// highlightSuggest cycles through the items and back to nothing selected, so
+// arrowing past the end returns to what was typed rather than sticking.
+//
+// The wheel has n+1 positions: -1 for "nothing", then 0..n-1. Shifting by one
+// makes it a plain modulus, and the second modulus keeps a negative step
+// positive, since JavaScript's % takes the sign of the left operand.
+function highlightSuggest(delta) {
+  if (!suggest.items.length) return;
+  const n = suggest.items.length;
+  suggest.index = (((suggest.index + 1 + delta) % (n + 1)) + (n + 1)) % (n + 1) - 1;
+  [...suggestBox().children].forEach((row, i) =>
+    row.setAttribute('aria-selected', String(i === suggest.index)));
+  if (suggest.index >= 0) suggestBox().children[suggest.index]?.scrollIntoView({ block: 'nearest' });
+}
+
+function acceptSuggest(i = suggest.index) {
+  if (!suggest.input || i < 0 || i >= suggest.items.length) return false;
+  suggest.input.value = suggest.items[i].value;
+  closeSuggest();
+  return true;
+}
+
+// wireSuggest attaches completion to one field.
+function wireSuggest(input, field) {
+  input.setAttribute('autocomplete', 'off');
+  // Focusing a different field must not leave the previous field's list up.
+  input.addEventListener('focus', () => { if (suggest.input !== input) closeSuggest(); });
+  input.addEventListener('input', () => {
+    clearTimeout(suggest.timer);
+    const prefix = input.value.trim();
+    if (!prefix) { closeSuggest(); return; }
+    // Claim the box now, so a reply for the field just left cannot land here.
+    suggest.input = input;
+    // A short debounce only: this is a local index lookup, not a search over
+    // the library, and it is measured in a fraction of a millisecond.
+    suggest.timer = setTimeout(async () => {
+      const seq = ++suggest.seq;
+      try {
+        const items = await state.api.values(field, prefix, 8);
+        // A reply is only usable if it is still the newest, still for this
+        // field, and the field is still where the keyboard is. Sequence alone
+        // is not enough: moving between fields leaves an older reply able to
+        // land in the box a different field has since opened.
+        if (seq !== suggest.seq || suggest.input !== input) return;
+        if (document.activeElement !== input) return;
+        if (input.value.trim() !== prefix) return;   // typed on while waiting
+        // Offering exactly what is already typed is noise.
+        openSuggest(input, items.filter(v => v.value !== input.value));
+      } catch { closeSuggest(); }
+    }, 120);
+  });
+  // Closing on blur has to be deferred, or clicking a suggestion would lose
+  // the field before the value is taken. But by the time it runs the keyboard
+  // may be in another field that has already scheduled its own lookup — and
+  // closing clears the pending timer, which silently cancelled it. Only close
+  // if the list still belongs to this input.
+  input.addEventListener('blur', () => setTimeout(() => {
+    if (suggest.input === input) closeSuggest();
+  }, 120));
+  input.addEventListener('keydown', e => {
+    if (suggestBox().hidden) return;
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); highlightSuggest(1); break;
+      case 'ArrowUp':   e.preventDefault(); highlightSuggest(-1); break;
+      case 'Escape':    e.preventDefault(); e.stopPropagation(); closeSuggest(); break;
+      case 'Tab':       if (acceptSuggest()) e.preventDefault(); break;
+      case 'Enter':
+        // Taking a suggestion must not also submit the sheet.
+        if (suggest.index >= 0) { e.preventDefault(); e.stopPropagation(); acceptSuggest(); }
+        else closeSuggest();
+        break;
+    }
+  });
+}
+
 // --- get info ---------------------------------------------------------
 
 async function openInfo() {
@@ -464,6 +674,7 @@ async function openInfo() {
     ? 'Fields left blank are not changed.'
     : (first.writable ? '' : `${first.format} files cannot be written`);
 
+  closeSuggest();
   buildDetails(multi);
   buildFile(first, multi);
   loadInfoArt(first);
@@ -502,6 +713,8 @@ function buildDetails(multi) {
     input.disabled = !writable;
     if (mixed) { input.placeholder = 'Mixed'; input.classList.add('mixed'); }
 
+    if (COMPLETES.has(f.field)) wireSuggest(input, f.field);
+
     if (f.pair) {
       const [pv, pm] = common(f.pair);
       const pair = el('div', 'pair');
@@ -539,8 +752,59 @@ function buildFile(t, multi) {
         ['location', t.path],
       ];
   for (const [k, v] of rows) {
-    grid.append(el('label', '', k), el('div', 'val', v));
+    const cell = el('div', 'val', v);
+    if (k === 'location') {
+      cell.classList.add('copyable');
+      cell.title = 'Click to copy';
+      cell.addEventListener('click', () => copyPath(v, cell));
+    }
+    grid.append(el('label', '', k), cell);
   }
+}
+
+// shellQuote wraps a path so it can be pasted into a shell.
+//
+// Single quotes rather than double: inside single quotes a shell expands
+// nothing, so a path containing $, backticks or a backslash survives intact.
+// The only character that needs care is the single quote itself, which is
+// closed, escaped and reopened.
+function shellQuote(path) {
+  if (/^[A-Za-z0-9_@%+=:,.\/-]+$/.test(path)) return path;   // nothing to quote
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+// copyPath puts the location on the clipboard, quoted when it needs to be.
+async function copyPath(path, cell) {
+  const text = shellQuote(path);
+  const ok = await writeClipboard(text);
+  const before = cell.textContent;
+  cell.textContent = ok ? 'Copied' : 'Could not copy — select it instead';
+  cell.classList.toggle('copied', ok);
+  setTimeout(() => { cell.textContent = before; cell.classList.remove('copied'); }, 1200);
+  if (ok) status(`Copied ${text}`, 'ok');
+}
+
+// writeClipboard uses the async API where it is available and falls back
+// otherwise.
+//
+// navigator.clipboard only exists in a secure context, and a server reached at
+// http://nas.local is not one — which is exactly how this is meant to be used.
+// The old execCommand path is deprecated and still the only thing that works
+// there.
+async function writeClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return true; } catch { /* fall through */ }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { ok = false; }
+  ta.remove();
+  return ok;
 }
 
 async function loadInfoArt(t) {
@@ -569,7 +833,24 @@ function showTab(name) {
 }
 
 $('#info-cancel').addEventListener('click', () => $('#info').close());
-$('#info-ok').addEventListener('click', saveInfo);
+
+// Enter saves, from anywhere in the sheet.
+//
+// The form previously used method="dialog", which meant enter in a text field
+// closed the sheet and threw the edit away without a word. Submitting is now
+// intercepted so that the keyboard and the OK button do the same thing.
+$('#info-form').addEventListener('submit', e => {
+  e.preventDefault();
+  saveInfo();
+});
+
+// Escape closes without saving, which is what a dialog's own cancel means.
+$('#info').addEventListener('cancel', () => { /* default close is right */ });
+
+// Restore the keyboard to the list once the sheet is gone.
+$('#info').addEventListener('close', () => {
+  if (state.view === 'songs') $('#scroller').focus({ preventScroll: true });
+});
 
 // saveInfo writes the changed fields.
 //

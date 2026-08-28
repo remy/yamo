@@ -48,8 +48,17 @@ answers.
   per keystroke against a large library is not free, and a half-typed `year:>`
   is never sent. Escape clears it.
 - **Genre and artist facets** in the sidebar, from `/v1/values/{field}`.
+- **Keyboard** — arrows move the focused row, shift-arrow extends the
+  selection, Home/End/PageUp/PageDown jump, ⏎ opens Get Info, Escape closes it
+  or clears the selection, ⌘A selects everything matching.
 - **Get Info** — modelled on the dialog in Apple Music, restricted to the
-  fields this API can write. Click a row and press ⌘I, or double-click.
+  fields this API can write. ⏎ saves from anywhere in the sheet, Escape
+  discards. Click a row and press ⏎ or ⌘I, or double-click.
+- **Autocomplete** on artist, album artist and genre, from
+  `GET /v1/values/{field}` — prefix matches first, ranked by how many tracks
+  use each value, with the count shown. Arrows to choose, ⏎ or Tab to accept.
+- **Click the location** in the File tab to copy it, shell-quoted when it
+  contains anything a shell would treat specially.
 - **Multi-select** — shift-click and ⌘-click, or ⌘A for everything matching.
   Fields that differ show *Mixed* and are left alone unless typed into, which
   is what Apple Music does.
@@ -77,6 +86,12 @@ defaults to `min-height: auto` and refuses to shrink below its content, so
 without `min-height: 0` on both `.main` and `.scroller` the pane sizes itself
 to the full list, `overflow` never engages, and the window scrolls instead. The
 symptom is every row in the DOM and a `scrollTop` stuck at zero.
+
+**Two browser layout traps are worth knowing about.** A modal `<dialog>` draws
+in the top layer, so the suggestion list has to live *inside* it — anywhere
+else and it renders behind the backdrop however high its `z-index`. And a
+`<form method="dialog">` closes on ⏎ *without submitting*, so pressing enter in
+a field silently discarded the edit; the form is submitted explicitly instead.
 
 **Selecting everything does not send every id.** ⌘A sets a flag; the save then
 sends the *query* as the selector, so editing ten tracks and editing a hundred
