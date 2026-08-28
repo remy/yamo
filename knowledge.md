@@ -65,9 +65,27 @@ stuck, because SMB mounts do not always honour it and a binary that arrives
 without it fails on the NAS as "permission denied", which looks like something
 worse than it is.
 
+`make release` writes a temporary name and renames over the target, because
+overwriting a binary that is currently running fails outright. Renaming swaps
+the directory entry, so a running server keeps the file it started from and
+the next start picks up the new one — deploying does not require stopping the
+server, but restarting it does apply the new build.
+
 Paths differ between the two machines: the Mac sees `/Volumes/Media/music`,
-the NAS sees its own local path. Scans run on the server, so the roots given
-to `tagmgr scan` must be the **NAS's** paths.
+the NAS sees `/volume1/Media/music`. Scans run on the server, so the roots
+given to `tagmgr scan` must be the **NAS's** paths.
+
+### Where the catalogue lives
+
+`$TAGMGR_CATALOG`, else `-catalog`, else the user cache directory
+(`~/.cache/tagmgr/catalog.db` on Linux). The server prints the resolved
+absolute path at startup.
+
+With neither `HOME` nor `XDG_CACHE_HOME` — the normal case under systemd — the
+server **refuses to start** and asks for `-catalog`. It used to fall back to a
+relative `tagmgr-catalog.db`, which put the catalogue in whatever the working
+directory happened to be, or failed to write and quietly rescanned on every
+restart.
 
 ---
 

@@ -240,19 +240,23 @@ func writeUsage(w io.Writer, fs *flag.FlagSet, summary, footer string) {
 
 // defaultCatalogPath puts the catalogue in the user cache directory, which is
 // the right place for something wholly derived from files elsewhere.
+//
+// It returns empty when there is nowhere obvious — a daemon started without
+// HOME or XDG_CACHE_HOME, which is the normal case under systemd. Falling back
+// to a relative path would put the catalogue in whatever the working directory
+// happened to be, or fail to write and quietly rescan on every restart. The
+// server refuses instead and asks for -catalog.
 func defaultCatalogPath() string {
 	if p := os.Getenv("TAGMGR_CATALOG"); p != "" {
 		return p
 	}
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, ".cache")
-		} else {
-			return "tagmgr-catalog.db"
-		}
+	if dir, err := os.UserCacheDir(); err == nil {
+		return filepath.Join(dir, "tagmgr", "catalog.db")
 	}
-	return filepath.Join(dir, "tagmgr", "catalog.db")
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".cache", "tagmgr", "catalog.db")
+	}
+	return ""
 }
 
 // notifyContext returns a context cancelled by SIGINT or SIGTERM, so a long

@@ -34,6 +34,11 @@ client can be generated rather than written:
 
 and browsed at /docs, which works with no outbound network access.
 
+The catalogue is a single file the server rebuilds from a scan. It goes in
+the user cache directory by default, since it is wholly derived from the
+music; -catalog or TAGMGR_CATALOG puts it elsewhere. Under systemd there is
+often no HOME, and then -catalog is required rather than guessed at.
+
 Access:
   It binds to loopback by default, where no token is needed. Binding to
   anything else requires one: it is generated on first run, printed once,
@@ -62,6 +67,17 @@ func cmdServe(args []string) error {
 	saveEvery := fs.Duration("save-every", 5*time.Second, "how often to write the catalogue snapshot")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
 		return err
+	}
+
+	if *catalogPath == "" {
+		return errors.New("could not work out where to keep the catalogue: " +
+			"neither HOME nor XDG_CACHE_HOME is set, which is usual under systemd\n" +
+			"       pass -catalog /path/to/catalog.db, or set TAGMGR_CATALOG")
+	}
+	// An absolute path so the startup line means something regardless of the
+	// working directory the service was started from.
+	if abs, err := filepath.Abs(*catalogPath); err == nil {
+		*catalogPath = abs
 	}
 
 	svc, err := library.Open(library.Options{
@@ -114,6 +130,7 @@ func cmdServe(args []string) error {
 	} else {
 		shown = "http://" + addr
 	}
+	fmt.Fprintf(os.Stderr, "  catalogue: %s\n", *catalogPath)
 	fmt.Fprintf(os.Stderr, "  tagmgr serving %s tracks on %s\n  docs: %s/docs\n",
 		formatCount(svc.Count("")), shown, shown)
 

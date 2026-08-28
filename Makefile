@@ -26,13 +26,22 @@ nas:
 
 # release copies the amd64 build onto the NAS share.
 #
-# chmod over SMB only works if the mount honours it; the check afterwards is
-# there because a binary that arrives without the execute bit fails with
-# "permission denied" on the NAS and looks like something worse.
+# It writes a temporary name and renames over the target, because overwriting
+# a binary that is currently running fails outright. A rename swaps the
+# directory entry instead, so a running server keeps the file it started from
+# and the next start picks up the new one — no need to stop the server to
+# deploy.
+#
+# chmod over SMB only works if the mount honours it, so the execute bit is
+# checked rather than assumed: a binary that arrives without it fails on the
+# NAS as "permission denied", which looks like something far worse.
 release: nas
-	cp $(DIST)/$(BIN)-linux-amd64 $(RELEASE)
-	chmod +x $(RELEASE)
-	@test -x $(RELEASE) && echo "released $$(ls -l $(RELEASE) | awk '{print $$5}') bytes to $(RELEASE)" \
+	cp $(DIST)/$(BIN)-linux-amd64 $(RELEASE).new
+	chmod +x $(RELEASE).new
+	mv -f $(RELEASE).new $(RELEASE)
+	@test -x $(RELEASE) \
+		&& echo "released $$(ls -l $(RELEASE) | awk '{print $$5}') bytes to $(RELEASE)" \
+		&& echo "the running server keeps the old binary; restart it to pick this up" \
 		|| echo "WARNING: $(RELEASE) is not executable; chmod it on the NAS itself"
 
 install:
