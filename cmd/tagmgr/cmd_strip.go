@@ -41,7 +41,7 @@ Examples:
   tagmgr strip                          what would be removed from everything
   tagmgr strip artist:elvis             ...from one artist
   tagmgr strip -list                    print the keep list and exit
-  tagmgr strip -also gapless,musicbrainz -apply
+  tagmgr strip -also musicbrainz -apply
   tagmgr strip -backup -apply
   tagmgr strip -normalize -backup -apply    tidy where values are stored too
   tagmgr restore -backup ID -apply
@@ -188,6 +188,12 @@ func printKeepList(keepFlag, alsoFlag string) error {
 			ui.Truncate(nativeKeys(t, tags.FormatMP3), 20),
 			ui.Truncate(nativeKeys(t, tags.FormatFLAC), 34),
 			nativeKeys(t, tags.FormatMP4))
+	}
+	// A dash means "no frame id of its own", not "not present in this format".
+	// iTunes hides these in a comment, so they are found by description.
+	if keep[tags.TagGapless] || keep[tags.TagSoundCheck] {
+		fmt.Println("\ngapless and soundcheck have no frame of their own in ID3: iTunes writes")
+		fmt.Println("them as COMM:iTunSMPB and COMM:iTunNORM, and they are matched by description.")
 	}
 	fmt.Printf("\n%d tags kept; everything else is removed.\n", len(keep))
 	fmt.Println("add tags with -also, or replace the list with -keep. available:")

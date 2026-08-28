@@ -281,7 +281,7 @@ kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 | `track` | TRCK | TRACKNUMBER, TOTALTRACKS | trkn |
 | `disc` | TPOS | DISCNUMBER, TOTALDISCS | disk |
 | `genre` | TCON | GENRE | ©gen, gnre |
-| `date` | TDRC, TYER | DATE, YEAR | ©day |
+| `date` | TDRC, TYER, TDRL | DATE, YEAR | ©day |
 | `compilation` | TCMP | COMPILATION | cpil |
 | `composer` | TCOM | COMPOSER | ©wrt |
 | `titlesort` | TSOT | TITLESORT | sonm |
@@ -289,25 +289,42 @@ kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 | `albumsort` | TSOA | ALBUMSORT | soal |
 | `albumartistsort` | TSO2 | ALBUMARTISTSORT | soaa |
 | `artwork` | APIC | METADATA_BLOCK_PICTURE | covr |
+| `gapless` | COMM:iTunSMPB | — | pgap, iTunSMPB |
 
 `compilation` is the flag that stops a Various Artists album fragmenting into
 one album per track. The sort tags are what put "The Beatles" under B.
+`gapless` is iTunes' own, and kept because nothing can reconstruct it: it is
+the only record of where the encoder padding starts.
+
+The date is written to `TDRL` as well as the year frame. ID3 separates when a
+recording was made from when it was released and MP4 does not, so an MP3
+carrying only a year frame reports no release date at all while an M4A of the
+same song reports one. Writing both makes the two formats agree.
 
 Change the list with `-keep`, extend it with `-also`. Names may be canonical
 (`albumartist`) or native to any format (`TPE2`, `ALBUMARTIST`, `aART`) — you
 should not have to translate a list you already have. `tagmgr strip -list`
 prints the full vocabulary.
 
+#### Putting values where they belong
+
+`-normalize` additionally moves kept fields a file holds under an older name
+into the one this tool writes: an ID3v2.2 frame, a genre stored as `(19)`, an
+MP4 `gnre` atom, a Vorbis `PERFORMER`, a year with no `TDRL` beside it. The
+values do not change, only where they are kept — which is what decides whether
+the next tool along finds them. A dry run counts them without writing.
+
 #### What goes, and what that costs
 
 Everything else: encoder signatures, comments, private blobs, URLs, ratings,
 and external identifiers. Two consequences are worth knowing beforehand:
 
-- **Comments are not one thing.** iTunes hides private data among them —
-  `iTunSMPB` is gapless-playback information, and losing it breaks gapless on
-  live albums and DJ mixes. The tags are resolved by description rather than by
-  container key, so `-also gapless` keeps exactly that and still drops ordinary
-  comments.
+- **Comments are not one thing.** iTunes hides private data among them, so
+  comments are resolved by description rather than by container key: the
+  gapless data in `COMM:iTunSMPB` is kept while an ordinary comment beside it,
+  under the same frame id, goes. Volume normalisation (`iTunNORM`) is dropped —
+  ReplayGain has superseded it and it can be recomputed. Keep it with
+  `-also soundcheck`.
 - **MusicBrainz and AcoustID identifiers are not regenerable** from the audio.
   `-also musicbrainz,acoustid` keeps them.
 

@@ -80,7 +80,7 @@ var tagSpecs = [numTags]tagSpec{
 	TagTrack:           {Name: "track", Desc: "track number", ID3: []string{"TRCK"}, Vorbis: []string{"TRACKNUMBER", "TRACKTOTAL", "TOTALTRACKS"}, MP4: []string{"trkn"}},
 	TagDisc:            {Name: "disc", Desc: "disc number", ID3: []string{"TPOS"}, Vorbis: []string{"DISCNUMBER", "DISCTOTAL", "TOTALDISCS"}, MP4: []string{"disk"}},
 	TagGenre:           {Name: "genre", Desc: "genre", ID3: []string{"TCON"}, Vorbis: []string{"GENRE"}, MP4: []string{"\xa9gen", "gnre"}},
-	TagDate:            {Name: "date", Desc: "release year or date", ID3: []string{"TDRC", "TYER", "TDAT", "TRDA"}, Vorbis: []string{"DATE", "YEAR"}, MP4: []string{"\xa9day"}},
+	TagDate:            {Name: "date", Desc: "release year or date", ID3: []string{"TDRC", "TYER", "TDRL", "TDAT", "TRDA"}, Vorbis: []string{"DATE", "YEAR"}, MP4: []string{"\xa9day"}},
 	TagCompilation:     {Name: "compilation", Desc: "compilation flag; stops Various Artists albums splitting", ID3: []string{"TCMP"}, Vorbis: []string{"COMPILATION"}, MP4: []string{"cpil"}},
 	TagComposer:        {Name: "composer", Desc: "composer", ID3: []string{"TCOM"}, Vorbis: []string{"COMPOSER"}, MP4: []string{"\xa9wrt"}},
 	TagTitleSort:       {Name: "titlesort", Desc: "title sort order", ID3: []string{"TSOT"}, Vorbis: []string{"TITLESORT"}, MP4: []string{"sonm"}},

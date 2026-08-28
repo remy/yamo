@@ -303,6 +303,35 @@ small login endpoint (works natively with both). **Neither is implemented.**
 Unwritable formats are counted and reported, never silently skipped. The editor
 warns before you type rather than failing at save time.
 
+### The ID3 date is written twice, on purpose
+
+`writeID3v2` writes the year to `TYER` (or `TDRC` in a v2.4 tag) **and** to
+`TDRL`. ID3 separates when a recording was made from when it was released; MP4
+has one atom, `©day`, and readers take it as both. A library that keeps the two
+apart therefore reports no release date at all for an MP3 while reporting one
+for an M4A of the same song — Navidrome maps `releasedate` from
+`[tdrl, releasedate, ©day, wm/year, year]`, and an MP3 with only a year frame
+matches none of them.
+
+`TDRL` is defined by ID3v2.4 and this library writes v2.3, which sounds wrong
+and is not: it is a plain text frame, which v2.3 parsers handle by rule rather
+than by table. Verified against TagLib itself, the reader Navidrome uses — a
+v2.3 tag carrying `TDRL` comes back as `RELEASEDATE`. `pytaglib` in the
+project's `.venv` is there for exactly that check. The alternative, moving the
+whole library to v2.4, costs more compatibility than it buys.
+
+`stripID3` reports a file holding a year frame without `TDRL` as non-canonical,
+so a clean-up retrofits one.
+
+### Gapless data is kept
+
+`TagGapless` is on the default keep list. It is iTunes' own — `iTunSMPB` in a
+`COMM` frame or an MP4 freeform atom, plus the `pgap` flag — but it is the only
+record of where the encoder padding starts, players including Navidrome read
+it, and nothing can reconstruct it once it is gone. Volume normalisation
+(`iTunNORM`, `TagSoundCheck`) is not kept: ReplayGain has superseded it and it
+is derivable.
+
 A strip can also **normalise**: `StripRequest.Normalize` re-asserts the kept
 fields through the ordinary writer, which moves a value found under an older
 name — an ID3v2.2 frame, a genre held as `(19)`, an MP4 `gnre` atom, a Vorbis

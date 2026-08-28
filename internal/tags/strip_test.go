@@ -102,13 +102,15 @@ func kitchenSink(t *testing.T, dir string) string {
 		v23Text("TSO2", "Various Artists"),
 		v23Text("TCOM", "Leiber/Stoller"),
 		buildV23Frame("APIC", pic),
+		// Gapless data hides in a COMM frame, and is a keeper; the comment
+		// beside it, under the same frame id, is not.
+		v23Comment("iTunSMPB", "00000000 00000210"),
 		// Not on the keep list.
 		v23Text("TENC", "iTunes v4.9"),
 		v23Text("TSSE", "LAME 3.99"),
 		v23Text("TPUB", "RCA Victor"),
 		v23Text("TSRC", "USRC17607839"),
 		v23Comment("", "a real comment"),
-		v23Comment("iTunSMPB", "00000000 00000210"),
 		buildV23Frame("TXXX", txxx),
 		buildV23Frame("PRIV", append([]byte("WM/Provider"), 0, 1, 2, 3)),
 	)
@@ -162,19 +164,30 @@ func TestStripKeepsOnlyTheKeepList(t *testing.T) {
 	got := frameIDs(t, path)
 	for _, want := range []string{
 		"TIT2", "TPE1", "TALB", "TPE2", "TRCK", "TPOS", "TCON", "TYER",
-		"TCMP", "TSOP", "TSOA", "TSOT", "TSO2", "TCOM", "APIC",
+		"TCMP", "TSOP", "TSOA", "TSOT", "TSO2", "TCOM", "APIC", "COMM",
 	} {
 		if !has(got, want) {
 			t.Errorf("%s was removed but is on the keep list", want)
 		}
 	}
-	for _, unwanted := range []string{"TENC", "TSSE", "TPUB", "TSRC", "COMM", "TXXX", "PRIV"} {
+	for _, unwanted := range []string{"TENC", "TSSE", "TPUB", "TSRC", "TXXX", "PRIV"} {
 		if has(got, unwanted) {
 			t.Errorf("%s survived the strip", unwanted)
 		}
 	}
-	if len(got) != 15 {
-		t.Errorf("kept %d frames (%v), want 15", len(got), got)
+	if len(got) != 16 {
+		t.Errorf("kept %d frames (%v), want 16", len(got), got)
+	}
+	// Both comments are COMM, so the frame id alone cannot say which survived.
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(raw, []byte("iTunSMPB")) {
+		t.Error("the gapless data was removed; nothing can reconstruct it")
+	}
+	if bytes.Contains(raw, []byte("a real comment")) {
+		t.Error("the comment survived, though comment is not on the keep list")
 	}
 
 	// The metadata that matters must read back unchanged.

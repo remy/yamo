@@ -18,6 +18,11 @@ var DefaultKeepTags = []Tag{
 
 	TagCompilation, TagComposer, TagArtwork,
 	TagTitleSort, TagArtistSort, TagAlbumSort, TagAlbumArtistSort,
+
+	// Gapless playback data is iTunes' own, but it is the only record of where
+	// the encoder padding starts, and players — Navidrome among them — read it.
+	// Nothing can reconstruct it once it is gone.
+	TagGapless,
 }
 
 // KeepSet is the set of canonical tags to preserve.
@@ -94,9 +99,11 @@ type StripReport struct {
 	Unsupported bool // this build cannot write the file's format
 	Changed     bool // metadata was removed, or would be in a dry run
 
-	// NonCanonical lists kept tags the file holds somewhere other than where
-	// this library writes them: readers find them, but only because they know
-	// the older spelling. Rewriting the field moves it.
+	// NonCanonical lists kept tags the file does not hold the way this library
+	// writes them — under an older name, in a numeric form, or missing one of
+	// the frames a write would produce. Readers still find them; they just
+	// find them somewhere the next tool along may not look. Rewriting the
+	// field puts it right.
 	NonCanonical []Tag
 }
 
@@ -196,6 +203,14 @@ func stripID3(path string, keep KeepSet, apply bool, rep *StripReport) error {
 			Bytes:  len(fr.payload) + 10, Raw: clone(fr.payload),
 		})
 	}
+	// A date with no TDRL beside it. ID3 separates the recording year from the
+	// release date and MP4 does not, so an MP3 carrying only a year frame
+	// reports no release date at all while an M4A of the same song reports
+	// one; see the date block in write_id3.go.
+	if keep[TagDate] && hasFrameID(kept, "TYER", "TDRC") && !hasFrameID(kept, "TDRL") {
+		rep.noteNonCanonical(TagDate)
+	}
+
 	tag.frames = kept
 	rep.Kept = len(kept)
 
@@ -210,6 +225,18 @@ func stripID3(path string, keep KeepSet, apply bool, rep *StripReport) error {
 	}
 	rep.Upgraded = wasV22
 	return nil
+}
+
+// hasFrameID reports whether any of the named frames is present.
+func hasFrameID(frames []id3Frame, ids ...string) bool {
+	for _, f := range frames {
+		for _, id := range ids {
+			if f.id == id {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // tagMeaning prefers the canonical description, so a report reads the same

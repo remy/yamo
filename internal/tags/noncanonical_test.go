@@ -1,6 +1,7 @@
 package tags
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -31,20 +32,28 @@ func TestNonCanonicalID3v22(t *testing.T) {
 	}
 }
 
-// A file ffmpeg wrote is already where this library would put things, so the
-// same walk must report nothing — otherwise a clean-up would rewrite the whole
-// library for no reason.
+// A file ffmpeg wrote is otherwise already where this library would put
+// things, so nothing else may be reported — a clean-up that rewrote every file
+// for no reason would be worse than none.
+//
+// The one exception is the ID3 date: ffmpeg writes a year frame and no TDRL,
+// which is why an MP3 and an M4A of the same song disagree about the release
+// year. Writing the field adds one.
 func TestNonCanonicalCleanFile(t *testing.T) {
 	dir := t.TempDir()
-	for _, name := range []string{"clean.mp3", "clean.flac", "clean.m4a"} {
-		t.Run(name, func(t *testing.T) {
-			path := genFile(t, dir, name)
+	for _, tc := range []struct{ name, want string }{
+		{"clean.mp3", "date"},
+		{"clean.flac", ""},
+		{"clean.m4a", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := genFile(t, dir, tc.name)
 			rep, err := StripFile(path, NewKeepSet(DefaultKeepTags), false)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n := nonCanonicalNames(rep); n != "" {
-				t.Fatalf("reported %q as non-canonical in an encoder-written file", n)
+			if n := nonCanonicalNames(rep); n != tc.want {
+				t.Fatalf("non-canonical = %q, want %q", n, tc.want)
 			}
 		})
 	}
@@ -78,4 +87,51 @@ func TestNonCanonicalNativeKeys(t *testing.T) {
 	if len(vc.fields) != 3 {
 		t.Errorf("an older spelling was removed rather than kept: %+v", vc.fields)
 	}
+}
+
+// TestDateIsWrittenForBothMeanings pins the frame pair that makes an MP3 and
+// an M4A of the same song agree about the year.
+//
+// ID3 separates when a recording was made from when it was released; MP4 has
+// one atom, ©day, and readers take it as both. A library that keeps the two
+// apart — Navidrome maps releasedate from tdrl and ©day alike — therefore sees
+// no release date at all on an MP3 carrying only a year frame.
+func TestDateIsWrittenForBothMeanings(t *testing.T) {
+	dir := t.TempDir()
+	path := genFile(t, dir, "dated.mp3", "-c:a", "libmp3lame")
+
+	e := &Edit{}
+	e.SetInt("year", 1989)
+	if err := Write(path, e); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := map[string]string{}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	head := make([]byte, 1<<16)
+	n, _ := f.ReadAt(head, 0)
+	tag, err := parseID3v2(head[:n])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fr := range tag.frames {
+		ids[fr.id] = frameText(fr.payload)
+	}
+	if ids["TDRL"] != "1989" {
+		t.Errorf("TDRL = %q, want 1989 — a reader that separates release from recording will see no year", ids["TDRL"])
+	}
+	if ids["TYER"] != "1989" && ids["TDRC"] != "1989" {
+		t.Errorf("no recording-year frame: TYER=%q TDRC=%q", ids["TYER"], ids["TDRC"])
+	}
+
+	// And it still reads back as one year, not two.
+	md, err := NewReader().ReadFile(path)
+	if err != nil || md.Year != 1989 {
+		t.Fatalf("read back year=%d err=%v", md.Year, err)
+	}
+	decodes(t, path)
 }

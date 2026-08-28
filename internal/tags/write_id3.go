@@ -155,15 +155,27 @@ func applyEditToFrames(tag *id3Tag, e *Edit, cur *Metadata) {
 		if *e.Year > 0 {
 			year = itoa(int64(*e.Year))
 		}
-		// The year frame differs between versions, so clear both and write the
-		// one this tag version defines.
-		removeFrames(tag, "TYER", "TDRC", "TDAT", "TRDA")
+		// The year frame differs between versions, so clear every spelling and
+		// write the one this tag version defines.
+		removeFrames(tag, "TYER", "TDRC", "TDAT", "TRDA", "TDRL")
 		if year != "" {
 			if tag.major >= 4 {
 				setTextFrame(tag, "TDRC", year)
 			} else {
 				setTextFrame(tag, "TYER", year)
 			}
+			// TDRL as well, so a library that separates "recorded" from
+			// "released" sees the same year for an MP3 as for an M4A.
+			// MP4 has one date atom, ©day, and readers take it as both; ID3
+			// splits them, so an MP3 carrying only a year frame comes out with
+			// no release date at all and the two formats disagree about a file
+			// that says 1989 either way.
+			//
+			// TDRL is defined by ID3v2.4 and written into v2.3 tags too. It is
+			// a plain text frame, which every v2.3 parser handles by rule
+			// rather than by table, and the alternative — moving the whole
+			// library to v2.4 — costs more compatibility than it buys.
+			setTextFrame(tag, "TDRL", year)
 		}
 	}
 	if e.Comment != nil {
