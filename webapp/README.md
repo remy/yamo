@@ -70,6 +70,13 @@ answers.
   path itself stays plain selectable text, and the button ticks for a moment
   rather than the text being swapped for the word "Copied" — which hid the
   thing you were still reading.
+- **Clean up** in the Get Info footer — removes every tag outside the standard
+  set (iTunes gapless data, volume normalisation, purchase identifiers, your
+  Apple ID) and moves kept values held under an older name into the field they
+  belong in: an ID3v2.2 frame, a genre stored as `(19)`, an MP4 `gnre` atom.
+  Two calls to `POST /v1/strip` — a dry run to show what will go, then the real
+  one — and a backup is always taken, so `tagmgr restore -backup ID -apply`
+  undoes it.
 - **Multi-select** — shift-click and ⌘-click, or ⌘A for everything matching.
   Fields that differ show *Mixed* and are left alone unless typed into, which
   is what Apple Music does.

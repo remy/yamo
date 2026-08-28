@@ -101,6 +101,13 @@ export class Api {
     return this.request('POST', '/v1/tracks/batch', { body: { selector, set } });
   }
 
+  // strip removes every tag outside the keep list, and with normalize moves
+  // kept values held under an older name into the standard one. dryRun reports
+  // what would go without touching anything.
+  strip(selector, { dryRun = true, normalize = true, backup = true } = {}) {
+    return this.request('POST', '/v1/strip', { body: { selector, dryRun, normalize, backup } });
+  }
+
   job(id) { return this.request('GET', `/v1/jobs/${encodeURIComponent(id)}`); }
 
   // waitJob polls until a job finishes.

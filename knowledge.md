@@ -303,6 +303,19 @@ small login endpoint (works natively with both). **Neither is implemented.**
 Unwritable formats are counted and reported, never silently skipped. The editor
 warns before you type rather than failing at save time.
 
+A strip can also **normalise**: `StripRequest.Normalize` re-asserts the kept
+fields through the ordinary writer, which moves a value found under an older
+name — an ID3v2.2 frame, a genre held as `(19)`, an MP4 `gnre` atom, a Vorbis
+`PERFORMER` — into the one this library writes. It is off by default and has to
+be asked for, because rewriting a field nobody named is exactly what field-level
+`Edit` values exist to prevent; as an explicit request it is the opposite.
+`StripReport.NonCanonical` is filled during the walk that already visits every
+native key, so a dry run can answer "is there anything here to tidy" without
+writing. The detection is a closed list of known older spellings rather than
+"anything but the first alias in `tagSpecs`", because several later aliases are
+separate fields sharing a canonical tag — `TRACKTOTAL` is not another way of
+saying `TRACKNUMBER`.
+
 The container is decided by content, not by the extension — `sniff` in
 `internal/tags/read.go` — and only falls back to the extension when the leading
 bytes match nothing. A library assembled over decades contains files whose

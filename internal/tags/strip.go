@@ -93,6 +93,21 @@ type StripReport struct {
 	NoTag       bool // the file carries no metadata container at all
 	Unsupported bool // this build cannot write the file's format
 	Changed     bool // metadata was removed, or would be in a dry run
+
+	// NonCanonical lists kept tags the file holds somewhere other than where
+	// this library writes them: readers find them, but only because they know
+	// the older spelling. Rewriting the field moves it.
+	NonCanonical []Tag
+}
+
+// noteNonCanonical records a tag once.
+func (r *StripReport) noteNonCanonical(t Tag) {
+	for _, have := range r.NonCanonical {
+		if have == t {
+			return
+		}
+	}
+	r.NonCanonical = append(r.NonCanonical, t)
 }
 
 // BytesRemoved totals the on-disk cost of what was removed.
@@ -164,6 +179,14 @@ func stripID3(path string, keep KeepSet, apply bool, rep *StripReport) error {
 		t := tagForID3Frame(fr.id, fr.payload)
 		if keep[t] {
 			kept = append(kept, fr)
+			if wasV22 {
+				// Every frame in a v2.2 tag is under its three-character name.
+				rep.noteNonCanonical(t)
+			} else if t == TagGenre {
+				if v := frameText(fr.payload); normaliseGenre(v) != v {
+					rep.noteNonCanonical(t) // "(19)" rather than "Industrial"
+				}
+			}
 			continue
 		}
 		rep.Removed = append(rep.Removed, RemovedTag{
@@ -216,6 +239,17 @@ func id3Label(id string, payload []byte) string {
 	return id
 }
 
+// vorbisAliases are the field names this library reads but never writes, so a
+// file holding one of them keeps its value somewhere the next tool along may
+// not look. It is a list rather than "anything but the first spelling in
+// tagSpecs", because several of those later entries are separate fields sharing
+// a canonical tag — TRACKTOTAL is not another way of saying TRACKNUMBER.
+var vorbisAliases = map[string]bool{
+	"PERFORMER": true, "ALBUM ARTIST": true, "ENSEMBLE": true,
+	"YEAR": true, "DESCRIPTION": true, "ENCODED-BY": true, "ORGANIZATION": true,
+	"UNSYNCEDLYRICS": true, "MIXARTIST": true, "CONTENTGROUP": true,
+}
+
 // stripVorbisFields filters a Vorbis comment in place and records what went.
 func stripVorbisFields(vc *vorbisComment, keep KeepSet, format Format, rep *StripReport) {
 	out := vc.fields[:0]
@@ -223,6 +257,9 @@ func stripVorbisFields(vc *vorbisComment, keep KeepSet, format Format, rep *Stri
 		t := tagForVorbisField(f.key)
 		if keep[t] {
 			out = append(out, f)
+			if vorbisAliases[strings.ToUpper(f.key)] {
+				rep.noteNonCanonical(t)
+			}
 			continue
 		}
 		rep.Removed = append(rep.Removed, RemovedTag{
@@ -304,6 +341,9 @@ func filterMP4Items(items []mp4Item, keep KeepSet, rep *StripReport) []mp4Item {
 		t := tagForMP4Atom(it.Name, it.Body)
 		if keep[t] {
 			out = append(out, it)
+			if it.Name == atomGenreID {
+				rep.noteNonCanonical(t) // gnre holds an ID3v1 genre number
+			}
 			continue
 		}
 		rep.Removed = append(rep.Removed, RemovedTag{

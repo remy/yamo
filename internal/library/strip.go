@@ -33,6 +33,13 @@ type StripRequest struct {
 
 	// Backup records what was removed so it can be restored.
 	Backup bool `json:"backup,omitempty"`
+
+	// Normalize rewrites kept fields that the file holds under an older name
+	// into the one this library writes: an ID3v2.2 frame, a genre stored as
+	// "(19)", an MP4 gnre atom, a Vorbis PERFORMER. Off by default, because
+	// rewriting a field nobody asked to change is the thing field-level edits
+	// exist to avoid — it has to be asked for.
+	Normalize bool `json:"normalize,omitempty"`
 }
 
 // StripResult reports what a strip did or would do.
@@ -44,6 +51,13 @@ type StripResult struct {
 	Upgraded int            `json:"upgradedFromV22,omitempty"`
 	Bytes    int64          `json:"bytesRemoved"`
 	Keep     []string       `json:"keep"`
+
+	// Normalized counts tracks holding a kept field under an older name, and
+	// NormalizeFields names those fields. Both are reported by a dry run,
+	// which is what makes it worth offering: the count is the answer to "is
+	// there anything to tidy here".
+	Normalized      int      `json:"normalized,omitempty"`
+	NormalizeFields []string `json:"normalizeFields,omitempty"`
 }
 
 // StripGroup counts one kind of removed metadata.
@@ -118,6 +132,7 @@ func (s *Service) Strip(req StripRequest) (*Job, error) {
 
 		type key struct{ format, name, meaning string }
 		groups := map[key]*StripGroup{}
+		fields := map[string]bool{}
 		var touched []string
 
 		for n, id := range ids {
@@ -130,16 +145,37 @@ func (s *Service) Strip(req StripRequest) (*Job, error) {
 				continue
 			}
 			rep, err := tags.StripFile(path, keep, !req.DryRun)
+			if err == nil && req.Normalize && len(rep.NonCanonical) > 0 {
+				// Counted whether or not it is applied, so a dry run answers
+				// "is there anything here to tidy".
+				res.Normalized++
+				for _, t := range rep.NonCanonical {
+					fields[t.Name()] = true
+				}
+				if !req.DryRun {
+					if nerr := s.normalize(path, rep.NonCanonical); nerr != nil {
+						err = nerr
+					} else if !contains(touched, id) {
+						touched = append(touched, id)
+						res.Changed++
+					}
+				}
+			}
 			switch {
 			case err != nil:
 				res.fail(id, path, err)
 			case rep.Unsupported:
 				res.Skipped[formatName(path)]++
 			case !rep.Changed:
-				res.BatchResult.Skipped++
+				// A normalise on its own is still a change worth reporting.
+				if !contains(touched, id) {
+					res.BatchResult.Skipped++
+				}
 			default:
-				res.Changed++
-				touched = append(touched, id)
+				if !contains(touched, id) {
+					res.Changed++
+					touched = append(touched, id)
+				}
 				if rep.Upgraded {
 					res.Upgraded++
 				}
@@ -170,6 +206,10 @@ func (s *Service) Strip(req StripRequest) (*Job, error) {
 			res.Removed = append(res.Removed, *g)
 		}
 		sort.Slice(res.Removed, func(i, k int) bool { return res.Removed[i].Tracks > res.Removed[k].Tracks })
+		for f := range fields {
+			res.NormalizeFields = append(res.NormalizeFields, f)
+		}
+		sort.Strings(res.NormalizeFields)
 
 		if len(touched) > 0 {
 			s.refreshTracks(touched)
@@ -404,4 +444,82 @@ func (s *Service) readBackup(id string) ([]backupRecord, error) {
 		out = append(out, r)
 	}
 	return out, sc.Err()
+}
+
+// contains reports membership in a small slice, used to keep the touched list
+// free of duplicates when a track is both stripped and normalised.
+func contains(list []string, v string) bool {
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
+}
+
+// normalize rewrites the named fields with the values the file already reads
+// as, which moves each one to the name this library writes: an ID3v2.2 frame
+// becomes v2.3, a genre of "(19)" becomes "Industrial", an MP4 gnre atom
+// becomes ©gen.
+//
+// The values come from a fresh read rather than from the catalogue, so a file
+// changed since the last scan is normalised to what it actually holds now.
+func (s *Service) normalize(path string, fields []tags.Tag) error {
+	var r tags.Reader
+	md, err := r.ReadFile(path)
+	if err != nil && err != tags.ErrNoTags {
+		return err
+	}
+	edit := normalizeEdit(&md, fields)
+	if edit.Empty() {
+		return nil
+	}
+	return s.locks.withPath(path, func() error { return tags.Write(path, edit) })
+}
+
+// normalizeEdit re-asserts fields from what the file currently reads as.
+//
+// Only non-empty values are set: an edit that set an empty string would delete
+// the field, and a field with nothing in it has nothing to relocate. Fields an
+// Edit cannot express — the sort tags, the compilation flag — are left where
+// they are rather than dropped.
+func normalizeEdit(md *tags.Metadata, fields []tags.Tag) *tags.Edit {
+	e := &tags.Edit{}
+	setStr := func(name, v string) {
+		if v != "" {
+			e.SetString(name, v)
+		}
+	}
+	setInt := func(name string, v int32) {
+		if v > 0 {
+			e.SetInt(name, v)
+		}
+	}
+	for _, t := range fields {
+		switch t {
+		case tags.TagTitle:
+			setStr("title", md.Title)
+		case tags.TagArtist:
+			setStr("artist", md.Artist)
+		case tags.TagAlbumArtist:
+			setStr("albumartist", md.AlbumArtist)
+		case tags.TagAlbum:
+			setStr("album", md.Album)
+		case tags.TagGenre:
+			setStr("genre", md.Genre)
+		case tags.TagComposer:
+			setStr("composer", md.Composer)
+		case tags.TagComment:
+			setStr("comment", md.Comment)
+		case tags.TagDate:
+			setInt("year", md.Year)
+		case tags.TagTrack:
+			setInt("track", md.Track)
+			setInt("tracktotal", md.TrackTotal)
+		case tags.TagDisc:
+			setInt("disc", md.Disc)
+			setInt("disctotal", md.DiscTotal)
+		}
+	}
+	return e
 }

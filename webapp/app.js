@@ -796,6 +796,64 @@ async function stepInfo(delta) {
 $('#info-prev').addEventListener('click', () => stepInfo(-1));
 $('#info-next').addEventListener('click', () => stepInfo(1));
 
+// --- clean up ---------------------------------------------------------
+//
+// Two calls to /v1/strip: the first is a dry run, so what is about to go can
+// be read before it goes, and the second applies it. A backup is always taken,
+// so a surprise is recoverable with `tagmgr restore -backup ID -apply`.
+
+// infoSelector is the selection as the batch endpoints want it: a query when
+// everything matching is selected, a list of ids otherwise.
+function infoSelector() {
+  return state.selectAll
+    ? { query: fullQuery() || undefined, all: !fullQuery() }
+    : { ids: [...state.selected] };
+}
+
+async function runStrip(dryRun) {
+  const job = await state.api.strip(infoSelector(), { dryRun });
+  const done = await state.api.waitJob(job.id, j =>
+    status(`${dryRun ? 'Examining' : 'Cleaning'} ${j.progress.done} of ${j.progress.total}…`));
+  if (done.state !== 'succeeded') throw new Error(done.error || 'the job failed');
+  return done.result || {};
+}
+
+async function cleanUp() {
+  const btn = $('#info-clean');
+  btn.disabled = true;
+  try {
+    const plan = await runStrip(true);
+    const lines = (plan.removed || [])
+      .map(g => `  ${g.key}${g.meaning ? ` — ${g.meaning}` : ''}  (${g.tracks} ${g.tracks === 1 ? 'track' : 'tracks'})`);
+    if (plan.normalized) {
+      lines.push(`  ${plan.normalizeFields.join(', ')} — stored under an older name, will be moved` +
+                 ` (${plan.normalized} ${plan.normalized === 1 ? 'track' : 'tracks'})`);
+    }
+    if (!lines.length) {
+      status('Nothing to clean up — these tags are already the standard set', 'ok');
+      return;
+    }
+    const n = plan.matched === 1 ? 'this song' : `${plan.matched} songs`;
+    if (!confirm(`Clean up ${n}?\n\n${lines.join('\n')}\n\nA backup is kept, so this can be undone.`)) return;
+
+    const res = await runStrip(false);
+    const removed = res.bytesRemoved ? `, ${formatBytes(res.bytesRemoved)} removed` : '';
+    status(`Cleaned ${res.changed} of ${res.matched}${removed} · backup ${res.backupId}`, 'ok');
+    for (const id of state.selected) state.api.forgetArtwork(id);
+    await refresh(false);
+    if ($('#info').open) await openInfo();     // show the tidied values
+  } catch (e) {
+    status(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+const formatBytes = n =>
+  n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} kB` : `${(n / 1048576).toFixed(1)} MB`;
+
+$('#info-clean').addEventListener('click', cleanUp);
+
 // common returns the shared value of a field, and whether the tracks differ.
 function common(field) {
   const vals = new Set(state.editing.map(t => String(valueOf(t, field) ?? '')));
@@ -1043,10 +1101,7 @@ async function saveInfo({ keepOpen = false } = {}) {
       await state.api.patchTrack(t.id, changes, t.version);
       status('Saved', 'ok');
     } else {
-      const selector = state.selectAll
-        ? { query: fullQuery() || undefined, all: !fullQuery() }
-        : { ids: [...state.selected] };
-      const job = await state.api.batchEdit(selector, changes);
+      const job = await state.api.batchEdit(infoSelector(), changes);
       const done = await state.api.waitJob(job.id, j =>
         status(`Saving ${j.progress.done} of ${j.progress.total}…`));
       const r = done.result || {};

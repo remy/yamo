@@ -757,6 +757,71 @@ func TestStripAndRestoreThroughService(t *testing.T) {
 	}
 }
 
+// TestNormalizeMovesValuesIntoStandardFields covers the clean-up the web app's
+// button runs. A genre of "(19)" reads as Industrial through the resolver, so
+// nothing downstream looks wrong; the value is simply not where the next tool
+// along will write it. The dry run must find it and leave the file alone.
+func TestNormalizeMovesValuesIntoStandardFields(t *testing.T) {
+	ff := ffmpegOrSkip(t)
+	root := t.TempDir()
+	music := filepath.Join(root, "music")
+	if err := os.MkdirAll(music, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(music, "01 numeric genre.mp3")
+	cmd := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "libmp3lame",
+		"-metadata", "title=Down In It", "-metadata", "artist=Nine Inch Nails",
+		"-metadata", "genre=(19)", path)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, b)
+	}
+
+	s, err := Open(Options{CatalogPath: filepath.Join(root, "catalog.db"), SaveInterval: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	scan, err := s.Scan(ScanRequest{Roots: []string{music}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJob(t, s, scan.ID)
+
+	// The resolver hides the problem, which is exactly why it needs finding.
+	r := tags.NewReader()
+	if md, _ := r.ReadFile(path); md.Genre != "Industrial" {
+		t.Fatalf("genre read as %q, want Industrial", md.Genre)
+	}
+
+	strip := func(dry bool) StripResult {
+		t.Helper()
+		j, err := s.Strip(StripRequest{Selector: Selector{All: true}, DryRun: dry, Normalize: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return waitJob(t, s, j.ID).Result.(StripResult)
+	}
+
+	dry := strip(true)
+	if dry.Normalized != 1 || len(dry.NormalizeFields) != 1 || dry.NormalizeFields[0] != "genre" {
+		t.Fatalf("dry run reported normalized=%d fields=%v", dry.Normalized, dry.NormalizeFields)
+	}
+	if again := strip(true); again.Normalized != 1 {
+		t.Fatal("the dry run wrote to the file")
+	}
+
+	if got := strip(false); got.Normalized != 1 {
+		t.Fatalf("apply reported normalized=%d", got.Normalized)
+	}
+	if after := strip(true); after.Normalized != 0 {
+		t.Fatalf("still non-canonical after normalising: %v", after.NormalizeFields)
+	}
+	if md, _ := r.ReadFile(path); md.Genre != "Industrial" || md.Title != "Down In It" {
+		t.Fatalf("normalising changed the values: %+v", md)
+	}
+}
+
 func TestEventsArePublished(t *testing.T) {
 	s, _ := realService(t, 2)
 	ch, cancel := s.Events().Subscribe()

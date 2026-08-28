@@ -30,6 +30,11 @@ accepted as aliases.
 This is a dry run unless -apply is given. The dry run reports exactly what
 would go, grouped by format and key, so the damage can be read beforehand.
 
+-normalize additionally moves kept fields that a file holds under an older
+name into the one this library writes: an ID3v2.2 frame, a genre stored as
+"(19)", an MP4 gnre atom, a Vorbis PERFORMER. The value does not change,
+only where it is kept. A dry run counts them without writing.
+
 WMA, WAV and AIFF are read but not written, so they are counted and skipped.
 
 Examples:
@@ -38,6 +43,7 @@ Examples:
   tagmgr strip -list                    print the keep list and exit
   tagmgr strip -also gapless,musicbrainz -apply
   tagmgr strip -backup -apply
+  tagmgr strip -normalize -backup -apply    tidy where values are stored too
   tagmgr restore -backup ID -apply
 `
 
@@ -63,6 +69,7 @@ func cmdStrip(args []string) error {
 	keepFlag := fs.String("keep", "", "replace the keep list with this comma-separated set")
 	alsoFlag := fs.String("also", "", "add these tags to the keep list, comma-separated")
 	backup := fs.Bool("backup", false, "record removed tags on the server so restore can undo them")
+	normalize := fs.Bool("normalize", false, "also move kept fields stored under an older name into the standard one")
 	if err := parseFlags(fs, args, stripSummary, queryHelp); err != nil {
 		return err
 	}
@@ -88,11 +95,12 @@ func cmdStrip(args []string) error {
 	}
 
 	job, err := c.Strip(ctx, library.StripRequest{
-		Selector: sel,
-		Keep:     splitList(*keepFlag),
-		Also:     splitList(*alsoFlag),
-		DryRun:   !*apply,
-		Backup:   *backup,
+		Selector:  sel,
+		Keep:      splitList(*keepFlag),
+		Also:      splitList(*alsoFlag),
+		DryRun:    !*apply,
+		Backup:    *backup,
+		Normalize: *normalize,
 	})
 	if err != nil {
 		return err
@@ -129,6 +137,14 @@ func printStripResult(res library.StripResult, apply bool) {
 		ui.FormatCount(res.Changed), ui.FormatCount(res.Matched))
 	if res.Upgraded > 0 {
 		fmt.Printf("%s files rewritten from ID3v2.2 to ID3v2.3\n", ui.FormatCount(res.Upgraded))
+	}
+	if res.Normalized > 0 {
+		verb := "hold"
+		if apply {
+			verb = "held"
+		}
+		fmt.Printf("%s tracks %s %s under an older name\n", ui.FormatCount(res.Normalized),
+			verb, strings.Join(res.NormalizeFields, ", "))
 	}
 	if len(res.Skipped) > 0 {
 		fmt.Printf("skipped (this build cannot write them): %s\n", countsLine(res.Skipped))

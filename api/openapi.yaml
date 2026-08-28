@@ -847,6 +847,14 @@ components:
           description: Added to the default keep list.
         dryRun: { type: boolean, default: true }
         backup: { type: boolean, default: false, description: Record what was removed so it can be restored. }
+        normalize:
+          type: boolean
+          default: false
+          description: >-
+            Rewrite kept fields the file holds under an older name into the one
+            this library writes: an ID3v2.2 frame, a genre stored as "(19)", an
+            MP4 `gnre` atom, a Vorbis `PERFORMER`. Reported by a dry run as
+            `normalized` and `normalizeFields` without writing anything.
 
     RestoreRequest:
       type: object
@@ -918,6 +926,16 @@ components:
             backupId: { type: string }
             bytesRemoved: { type: integer, format: int64 }
             upgradedFromV22: { type: integer, description: Files rewritten from ID3v2.2 to v2.3. }
+            normalized:
+              type: integer
+              description: >-
+                Tracks holding a kept field under an older name. Counted whether
+                or not `normalize` was applied, so a dry run answers "is there
+                anything here to tidy".
+            normalizeFields:
+              type: array
+              items: { type: string }
+              description: The canonical fields those values belong to.
             keep: { type: array, items: { type: string } }
             skippedFormats:
               type: object
