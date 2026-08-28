@@ -52,6 +52,23 @@ Tests need `ffmpeg` on the path; they skip without it rather than failing. Real
 encoder output is used deliberately — hand-built fixtures would only prove the
 code agrees with itself.
 
+### Releasing
+
+```sh
+make release        # builds and copies to /Volumes/Media/tagmgr
+```
+
+The NAS is **x86-64**, so `tagmgr-linux-amd64` is the build that ships. The
+share is mounted on the Mac over SMB, so the binary is copied rather than
+scp'd; `make release` chmods it and then checks the execute bit actually
+stuck, because SMB mounts do not always honour it and a binary that arrives
+without it fails on the NAS as "permission denied", which looks like something
+worse than it is.
+
+Paths differ between the two machines: the Mac sees `/Volumes/Media/music`,
+the NAS sees its own local path. Scans run on the server, so the roots given
+to `tagmgr scan` must be the **NAS's** paths.
+
 ---
 
 ## 3. The split, and why it is this way
