@@ -212,6 +212,18 @@ and persisted beside the catalogue if not supplied.
 a loopback server with permissive headers could be driven by any web page the
 user visits, and this API rewrites music files.
 
+### `/albums` filters tracks, then groups
+
+`?q=cat` returns albums containing *tracks* that match, so an album can come
+back whose own title has nothing to do with the term — a composer called "Jamie
+Catto" is enough. This is the useful semantic (find the album with that one song
+on it) but it surprises people. Scope the term with `album:` to search titles.
+
+Grouping happens over every matching track on each request: about 39 ms for an
+unfiltered `/albums` on 100,000 tracks, versus 2–6 ms for `/tracks`. Filtered
+queries are fast. If an album-first client pages through the unfiltered list,
+memoising the grouping per catalogue generation would be the fix.
+
 ### Known limitation for browser-only clients
 
 `<img src>` and `EventSource` **cannot send an `Authorization` header**, so both
@@ -315,6 +327,10 @@ Recorded because several were invisible to the obvious test:
    removed, so affected tracks are re-read.
 9. **`Service.Close` did not wait** for the save loop or running jobs, so a
    write could land after shutdown.
+10. **iTunes internals shown as the comment.** The reader took the first `COMM`
+    frame whatever its description said, so `iTunSMPB` gapless data appeared as
+    the comment on 12 of 35 tracks in the owner's real library. `COMM` must be
+    resolved by description — `tagForID3Frame` already did this for stripping.
 
 ---
 

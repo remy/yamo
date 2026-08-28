@@ -195,10 +195,21 @@ paths:
       tags: [browse]
       summary: List albums
       description: |
-        Groups matching tracks by album artist and album. This is the natural
-        entry point for a browsing interface, where the unit of work is usually
-        a record rather than a track. Each album carries a `query` that
-        reselects exactly it.
+        Returns the albums **containing tracks that match the query** — the
+        query filters tracks, and the matching tracks are then grouped.
+
+        That is deliberate, and worth reading twice: `?q=cat` returns an album
+        whose composer is "Jamie Catto", because a bare term substring-matches
+        every text field of every track. It is how you find the album with that
+        one song on it, but the album's own name need not contain the term. To
+        search album titles alone, scope the term: `?q=album:cat`.
+
+        `tracks` counts only the matching tracks, not the whole album. Each
+        album carries a `query` that reselects exactly it, so a client can go
+        from a search result to the full record in one more call.
+
+        This is the natural entry point for a browsing interface, where the
+        unit of work is usually a record rather than a track.
       operationId: listAlbums
       parameters:
         - $ref: '#/components/parameters/Query'

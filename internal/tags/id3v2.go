@@ -258,7 +258,12 @@ func (t *id3Tag) applyTo(md *Metadata) {
 				md.Year = parseYear(frameText(f.payload))
 			}
 		case "COMM", "COM":
-			if md.Comment == "" {
+			// A comment frame's description is what separates a listener's
+			// comment from an application's private data. iTunes stores
+			// gapless playback information and volume normalisation in this
+			// very frame, and taking the first one regardless puts a line of
+			// hex where the comment should be.
+			if md.Comment == "" && tagForID3Frame(f.id, f.payload) == TagComment {
 				md.Comment = commentText(f.payload)
 			}
 		case "APIC", "PIC":

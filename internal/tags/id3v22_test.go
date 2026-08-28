@@ -192,3 +192,75 @@ func TestWriteUpgradesID3v22(t *testing.T) {
 		t.Error("the image data did not survive the PIC to APIC conversion")
 	}
 }
+
+// TestCommentIgnoresApplicationData is a regression from a real library: two
+// fifths of it had iTunes gapless data showing as the comment, because the
+// first COMM frame was taken whatever its description said.
+func TestCommentIgnoresApplicationData(t *testing.T) {
+	dir := t.TempDir()
+
+	comm := func(desc, text string) []byte {
+		p := []byte{encISO8859}
+		p = append(p, "eng"...)
+		p = append(p, desc...)
+		p = append(p, 0)
+		p = append(p, text...)
+		return buildV23Frame("COMM", p)
+	}
+
+	// iTunes writes its private frames first, which is what made this bite.
+	tag := buildV23Tag(
+		comm("iTunSMPB", " 00000000 00000210 0000027C 00000000009FC474"),
+		comm("iTunNORM", " 00000957 00000141 0000E092"),
+		v23Text("TIT2", "Don't Leave"),
+		comm("", "the actual comment"),
+	)
+	path := filepath.Join(dir, "a.mp3")
+	if err := os.WriteFile(path, append(tag, bareAudio(t)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	md, err := NewReader().ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md.Comment != "the actual comment" {
+		t.Errorf("comment = %q, want the real one rather than iTunes internals", md.Comment)
+	}
+
+	// With no real comment at all, the field must be empty rather than hex.
+	only := buildV23Tag(
+		comm("iTunSMPB", " 00000000 00000210 0000027C"),
+		v23Text("TIT2", "Deeper River"),
+	)
+	path2 := filepath.Join(dir, "b.mp3")
+	if err := os.WriteFile(path2, append(only, bareAudio(t)...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	md2, err := NewReader().ReadFile(path2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md2.Comment != "" {
+		t.Errorf("comment = %q, want empty when the only COMM is application data", md2.Comment)
+	}
+	// The gapless frame itself must survive; it is only being ignored as a
+	// comment, not removed.
+	raw, err := os.ReadFile(path2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseID3v2(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, fr := range parsed.frames {
+		if fr.id == "COMM" && id3CommentDescription(fr.payload) == "iTunSMPB" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the gapless frame was lost")
+	}
+}
