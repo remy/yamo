@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>tagmgr</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="app.css">
+
+<!-- Connection. Shown until a server answers; the details are kept in
+     localStorage so this is a first-run screen rather than a login. -->
+<div id="connect" class="connect">
+  <form class="card" id="connect-form">
+    <h1>tagmgr</h1>
+    <p class="muted">Connect to a running server.</p>
+    <label>Server
+      <input id="server" type="url" placeholder="http://nas.local:8467" required spellcheck="false">
+    </label>
+    <label>Token
+      <input id="token" type="password" placeholder="required unless the server is on loopback" spellcheck="false">
+    </label>
+    <button type="submit" class="primary">Connect</button>
+    <p id="connect-error" class="error" hidden></p>
+    <p class="muted small">
+      The server must have been started with <code>-token</code>: cross-origin
+      requests are only permitted when one is set.
+    </p>
+  </form>
+</div>
+
+<div id="app" class="app" hidden>
+  <aside class="sidebar">
+    <div class="brand">tagmgr</div>
+    <nav>
+      <button class="nav" data-view="songs" aria-current="true">Songs</button>
+      <button class="nav" data-view="albums">Albums</button>
+    </nav>
+    <div class="facets">
+      <div class="facet-title">Genres</div>
+      <div id="genres" class="facet-list"></div>
+      <div class="facet-title">Artists</div>
+      <div id="artists" class="facet-list"></div>
+    </div>
+    <div class="sidebar-foot">
+      <div id="library-stats" class="muted small"></div>
+      <button id="disconnect" class="link small">Disconnect</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search — or artist:elvis, year:&gt;1980, -genre:live" spellcheck="false">
+      </div>
+      <div class="topbar-right">
+        <span id="count" class="muted small"></span>
+        <button id="edit-btn" class="primary small" disabled>Get Info</button>
+      </div>
+    </header>
+
+    <div id="songs-view" class="view">
+      <div class="thead" id="thead"></div>
+      <div class="scroller" id="scroller">
+        <div class="sizer" id="sizer"><div class="rows" id="rows"></div></div>
+      </div>
+    </div>
+
+    <div id="albums-view" class="view" hidden>
+      <div class="album-grid" id="album-grid"></div>
+    </div>
+
+    <div id="status" class="statusbar"></div>
+  </main>
+</div>
+
+<!-- The Get Info dialog. Modelled on the one in Apple Music, restricted to
+     the fields this API can actually write. -->
+<dialog id="info" class="info">
+  <form method="dialog" id="info-form">
+    <header class="info-head">
+      <img id="info-art" alt="" class="info-art">
+      <div class="info-titles">
+        <h2 id="info-title">—</h2>
+        <div id="info-artist" class="muted"></div>
+        <div id="info-album" class="muted"></div>
+      </div>
+    </header>
+
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab" data-tab="details" aria-selected="true">Details</button>
+      <button type="button" class="tab" data-tab="artwork">Artwork</button>
+      <button type="button" class="tab" data-tab="file">File</button>
+    </div>
+
+    <section class="panel" data-panel="details">
+      <div class="grid" id="details-grid"></div>
+    </section>
+
+    <section class="panel" data-panel="artwork" hidden>
+      <div class="artwork-panel">
+        <img id="artwork-large" alt="" class="artwork-large">
+        <div id="artwork-meta" class="muted small"></div>
+      </div>
+    </section>
+
+    <section class="panel" data-panel="file" hidden>
+      <div class="grid" id="file-grid"></div>
+    </section>
+
+    <footer class="info-foot">
+      <span id="info-note" class="muted small"></span>
+      <span class="spacer"></span>
+      <button type="button" id="info-cancel">Cancel</button>
+      <button type="button" id="info-ok" class="primary">OK</button>
+    </footer>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>

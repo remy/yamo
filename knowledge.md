@@ -134,6 +134,7 @@ debouncing to stay responsive. There is deliberately **no auto-spawn**.
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
 | `cmd/tagmgr/` | 1,431 | `serve` plus the client commands. |
 | `tools/genlib/` | 173 | Synthetic library generator, for benchmarking. |
+| `webapp/` | ~900 | Browser front end. A sample: vanilla ES modules, no build. |
 | `tools/tuidrive/` | — | Python: drives the terminal in a pty. Not shipped. |
 
 Direct dependencies are only `bubbletea`, `lipgloss`, `go-runewidth` and
@@ -394,8 +395,8 @@ Recorded because several were invisible to the obvious test:
 - **Cover art normalising.** No resize or re-encode. Measured on a real
   library, **85% of embedded artwork is duplicate bytes** — the same cover once
   per track — so dedup or resizing is where the space is, not tag stripping.
-- **A TypeScript client.** Explicitly dropped; the owner intends to build a
-  browser client directly against the schema.
+- **A TypeScript client.** Explicitly dropped. `webapp/` is a working browser
+  client written directly against the schema instead.
 - **`internal/artclip` and `cmd/tagmgr` have no tests of their own.** They are
   covered indirectly through the API and client suites.
 
