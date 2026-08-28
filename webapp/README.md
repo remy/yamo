@@ -6,30 +6,35 @@ playback.
 It is a sample: **no build step, no dependencies, no backend of its own.** Four
 files of vanilla ES modules.
 
-```sh
-cd webapp
-tagmgr serve            # serves this directory and the API on one port
-# then http://localhost:8467
-```
-
-`tagmgr serve` serves the front end whenever the directory it is run from
-contains an `index.html`. That is worth doing rather than reaching for a static
-file server, because it puts the app on the **same origin as the API** — so the
-browser needs no CORS, the server needs no token, and the page connects without
-being asked anything.
-
-Serving it from somewhere else works too, but then it is cross-origin, and the
-server must have been started with a token:
+Serve the directory however you like — `serve`, `python3 -m http.server`,
+anything — and point it at a running API:
 
 ```sh
-tagmgr serve -listen 0.0.0.0:8467 -token something-real
+cd webapp && serve                                  # the app, on :8000 say
+tagmgr serve -listen 127.0.0.1:8467 -token secret   # the API, elsewhere
 ```
 
-Cross-origin requests are only permitted when a token is set — a server on
-loopback with permissive CORS could be driven by any page you happened to
-visit, and this API rewrites music files. The page tries the origin it was
-served from first, then anything remembered in `localStorage`, and only shows
-the connection form if neither answers.
+The app and the API are then on different origins, so the **server must have
+been started with a token**. Cross-origin requests are only permitted when one
+is set: a server with permissive CORS and no token could be driven by any page
+you happened to visit, and this API rewrites music files.
+
+### Or let the API serve it
+
+```sh
+cd webapp && tagmgr serve
+# then http://localhost:8467 — nothing else to run, nothing to type
+```
+
+`tagmgr serve` serves the front end when the directory it is run from contains
+an `index.html`. Same origin means no CORS is involved at all, so this works
+with no token and the page connects without asking. Useful on a NAS, where a
+static file server may be one more thing to install. `-web DIR` points
+elsewhere; `-web ""` turns it off.
+
+On startup the page tries the origin it was served from, then anything
+remembered in `localStorage`, and only shows the connection form if neither
+answers.
 
 ## What it does
 

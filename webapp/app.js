@@ -604,6 +604,11 @@ async function boot() {
       return;
     } catch { /* try the next, then fall through to the form */ }
   }
-  $('#server').value = savedServer || sameOrigin || 'http://localhost:8467';
+  // Neither answered. Guess the API rather than the origin this page came
+  // from: if the same origin had been the server, we would already be in.
+  // Serving the app from a static file server on another port is the normal
+  // reason to be here, so the same host on the default port is the better bet.
+  $('#server').value = savedServer ||
+    (sameOrigin ? `${location.protocol}//${location.hostname}:8467` : 'http://localhost:8467');
   $('#token').value = savedToken || '';
 }
