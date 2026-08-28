@@ -303,6 +303,13 @@ small login endpoint (works natively with both). **Neither is implemented.**
 Unwritable formats are counted and reported, never silently skipped. The editor
 warns before you type rather than failing at save time.
 
+The container is decided by content, not by the extension — `sniff` in
+`internal/tags/read.go` — and only falls back to the extension when the leading
+bytes match nothing. A library assembled over decades contains files whose
+names lie, and getting this wrong is silent: the file simply reads as untagged.
+A file that is not shaped like its container returns `tags.ErrMalformed`, which
+the API maps to `422 unwritable` rather than a 500.
+
 Duration and bitrate come from the stream header, including Xing/VBRI frame
 counts for VBR MP3s. Verified to match `afinfo` and `ffprobe` exactly.
 
@@ -381,6 +388,14 @@ Recorded because several were invisible to the obvious test:
     frame whatever its description said, so `iTunSMPB` gapless data appeared as
     the comment on 12 of 35 tracks in the owner's real library. `COMM` must be
     resolved by description — `tagForID3Frame` already did this for stripping.
+11. **The extension was trusted when sniffing found nothing.** An MP3 saved as
+    `.m4a` went to the MP4 reader, which walked its ID3v2 tag as though it were
+    an atom chain, found no `moov` and reported the file as having no tags at
+    all. Editing it then failed with `no moov atom to write into`. `sniff` now
+    recognises an ID3v2 header and a bare MPEG frame, both of which rule out
+    every other container, since they all announce themselves at offset 0.
+    Two files in a 9,000-track library, and neither was visible until one was
+    edited: a mislabelled file reads as merely untagged.
 
 ---
 

@@ -60,6 +60,12 @@ var ErrUnsupported = errors.New("tags: unsupported format")
 // ErrNoTags means the file parsed cleanly but carried no metadata container.
 var ErrNoTags = errors.New("tags: no metadata found")
 
+// ErrMalformed means the file is not shaped like the container it claims to
+// be. It is separate from ErrUnsupported so callers can tell "this library
+// cannot write that format" from "this particular file is broken", and from a
+// genuine IO fault: no retry will make a malformed file writable.
+var ErrMalformed = errors.New("tags: malformed file")
+
 // Metadata is the normalised, format-independent view of one file's tags.
 // Zero values mean "absent" throughout; there is no separate presence flag.
 type Metadata struct {

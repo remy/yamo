@@ -109,8 +109,11 @@ func (r *Reader) readHead(f *os.File, size int64, n int) ([]byte, error) {
 	return nil, err
 }
 
-// sniff identifies a container from its leading bytes. An ID3v2 tag is not
-// conclusive on its own, since it can front several formats.
+// sniff identifies a container from its leading bytes.
+//
+// Every container below announces itself at offset 0, so anything that starts
+// with an ID3v2 tag or an MPEG frame is an MPEG stream whatever its extension
+// claims — and files misnamed .m4a do turn up in real libraries.
 func sniff(head []byte) Format {
 	switch {
 	case len(head) >= 4 && string(head[0:4]) == "fLaC":
@@ -126,6 +129,14 @@ func sniff(head []byte) Format {
 		return FormatMP4
 	case len(head) >= 16 && head[0] == 0x30 && head[1] == 0x26 && head[2] == 0xB2 && head[3] == 0x75:
 		return FormatWMA
+	case id3v2Size(head) > 0:
+		return FormatMP3
+	}
+	// A bare frame header, for a stripped file with no tag at all. The full
+	// header is decoded rather than matching the sync word alone, since eleven
+	// set bits are not rare in arbitrary binary.
+	if _, ok := parseMPEGHeader(head); ok {
+		return FormatMP3
 	}
 	return FormatUnknown
 }

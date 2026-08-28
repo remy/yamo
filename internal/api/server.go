@@ -223,7 +223,10 @@ func fail(w http.ResponseWriter, err error) {
 		// Asking for artwork a track does not have is a missing resource, not
 		// a server fault.
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
-	case errors.Is(err, tags.ErrUnsupported):
+	case errors.Is(err, tags.ErrUnsupported), errors.Is(err, tags.ErrMalformed):
+		// A file this library cannot write, or one that is not shaped like the
+		// container it claims to be. Both are properties of the resource, so
+		// neither is a 500: retrying will not help.
 		writeError(w, http.StatusUnprocessableEntity, "unwritable", err.Error())
 	case errors.Is(err, library.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())

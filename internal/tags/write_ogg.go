@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"errors"
+	"fmt"
 	"io"
 	"os"
 )
@@ -80,7 +80,7 @@ func updateOgg(path string, mutate oggMutator) error {
 		return err
 	}
 	if first.headerType&0x02 == 0 {
-		return errors.New("tags: Ogg stream does not start with a BOS page")
+		return fmt.Errorf("%w: Ogg stream does not start with a BOS page", ErrMalformed)
 	}
 	serial := first.serial
 
@@ -123,7 +123,7 @@ func updateOgg(path string, mutate oggMutator) error {
 			return err
 		}
 		if p.serial != serial {
-			return errors.New("tags: multiplexed Ogg streams are not supported")
+			return fmt.Errorf("%w: multiplexed Ogg streams are not supported", ErrUnsupported)
 		}
 		raw := p.raw
 		seq := binary.LittleEndian.Uint32(raw[18:22])
@@ -158,7 +158,7 @@ func (pr *pageReader) next() (*rawPage, error) {
 		return nil, err
 	}
 	if string(pr.hdr[0:4]) != "OggS" || pr.hdr[4] != 0 {
-		return nil, errors.New("tags: corrupt Ogg page")
+		return nil, fmt.Errorf("%w: corrupt Ogg page", ErrMalformed)
 	}
 	nseg := int(pr.hdr[26])
 	raw := make([]byte, 27+nseg)
@@ -192,7 +192,7 @@ func headerPacketCount(payload, segments []byte) (int, error) {
 	case bytes.HasPrefix(payload, magicOpusHead):
 		return 2, nil
 	}
-	return 0, errors.New("tags: unrecognised Ogg codec")
+	return 0, fmt.Errorf("%w: unrecognised Ogg codec", ErrUnsupported)
 }
 
 // collectHeaderPackets reads pages until the header packets are complete.
@@ -201,7 +201,7 @@ func collectHeaderPackets(pr *pageReader, first *rawPage, serial uint32, want in
 	var cur []byte
 	for {
 		if page.serial != serial {
-			return nil, 0, errors.New("tags: multiplexed Ogg streams are not supported")
+			return nil, 0, fmt.Errorf("%w: multiplexed Ogg streams are not supported", ErrUnsupported)
 		}
 		pages++
 		off := 0
@@ -216,13 +216,13 @@ func collectHeaderPackets(pr *pageReader, first *rawPage, serial uint32, want in
 		}
 		if len(packets) >= want {
 			if off != len(page.payload) || cur != nil {
-				return nil, 0, errors.New("tags: audio data shares a page with the headers")
+				return nil, 0, fmt.Errorf("%w: audio data shares a page with the headers", ErrMalformed)
 			}
 			return packets[:want], pages, nil
 		}
 		page, err = pr.next()
 		if err != nil {
-			return nil, 0, errors.New("tags: Ogg headers are truncated")
+			return nil, 0, fmt.Errorf("%w: Ogg headers are truncated", ErrMalformed)
 		}
 	}
 }
@@ -240,7 +240,7 @@ func rewriteCommentPacket(pkt []byte, mutate oggMutator) ([]byte, bool, error) {
 	case bytes.HasPrefix(pkt, magicOpusTags):
 		prefix, body = pkt[:8], pkt[8:]
 	default:
-		return nil, false, errors.New("tags: second Ogg packet is not a comment header")
+		return nil, false, fmt.Errorf("%w: second Ogg packet is not a comment header", ErrMalformed)
 	}
 
 	vc, ok := parseVorbisComment(body)

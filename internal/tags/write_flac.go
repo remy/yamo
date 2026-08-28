@@ -1,7 +1,7 @@
 package tags
 
 import (
-	"errors"
+	"fmt"
 	"io"
 	"os"
 )
@@ -172,16 +172,16 @@ func readFLACMetadata(f *os.File, size int64) (blocks []flacBlock, audioStart in
 		}
 		bs, start, truncated, ok := flacBlocks(buf)
 		if !ok {
-			return nil, 0, errors.New("tags: not a FLAC file")
+			return nil, 0, fmt.Errorf("%w: not a FLAC file", ErrMalformed)
 		}
 		if !truncated {
 			return bs, int64(start), nil
 		}
 		if n >= size {
-			return nil, 0, errors.New("tags: truncated FLAC metadata")
+			return nil, 0, fmt.Errorf("%w: truncated FLAC metadata", ErrMalformed)
 		}
 		if n > maxHeadSize {
-			return nil, 0, errors.New("tags: FLAC metadata too large")
+			return nil, 0, fmt.Errorf("%w: FLAC metadata too large", ErrMalformed)
 		}
 		n *= 4
 	}

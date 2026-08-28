@@ -2,7 +2,7 @@ package tags
 
 import (
 	"encoding/binary"
-	"errors"
+	"fmt"
 	"io"
 	"os"
 )
@@ -53,11 +53,11 @@ func updateMP4(path string, mutate mp4Mutator) error {
 	}
 	moovIdx := indexOfAtom(atoms, "moov")
 	if moovIdx < 0 {
-		return errors.New("tags: no moov atom to write into")
+		return fmt.Errorf("%w: no moov atom to write into", ErrMalformed)
 	}
 	moov := atoms[moovIdx]
 	if moov.size > maxMoovSize {
-		return errors.New("tags: moov atom too large to rewrite")
+		return fmt.Errorf("%w: moov atom too large to rewrite", ErrMalformed)
 	}
 
 	old := make([]byte, moov.size)
@@ -118,7 +118,7 @@ func topLevelAtoms(r io.ReaderAt, fileSize int64) ([]topAtom, error) {
 		}
 		a := parseAtomHeader(hdr[:n])
 		if a.invalid {
-			return nil, errors.New("tags: malformed MP4 atom")
+			return nil, fmt.Errorf("%w: malformed MP4 atom", ErrMalformed)
 		}
 		if a.toEnd {
 			a.size = fileSize - pos
@@ -130,7 +130,7 @@ func topLevelAtoms(r io.ReaderAt, fileSize int64) ([]topAtom, error) {
 		pos += a.size
 	}
 	if len(out) == 0 {
-		return nil, errors.New("tags: not an MP4 file")
+		return nil, fmt.Errorf("%w: not an MP4 file", ErrMalformed)
 	}
 	return out, nil
 }
@@ -176,7 +176,7 @@ func atom(typ string, body ...[]byte) []byte {
 // creating the udta/meta/ilst chain if the file has none.
 func rebuildMoov(moov []byte, mutate mp4Mutator) ([]byte, error) {
 	if len(moov) < 8 || string(moov[4:8]) != "moov" {
-		return nil, errors.New("tags: expected a moov atom")
+		return nil, fmt.Errorf("%w: expected a moov atom", ErrMalformed)
 	}
 	body := moov[8:]
 
