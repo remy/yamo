@@ -125,9 +125,26 @@
           <button type="button" id="art-copy" title="Put this cover on the server clipboard, so the terminal or a phone can paste it">Copy</button>
           <button type="button" id="art-paste" title="Apply whatever is on the server clipboard">Paste</button>
           <button type="button" id="art-folder" title="Embed the cover.jpg or folder.jpg sitting beside each track">Folder image</button>
+          <button type="button" id="art-discogs" title="Search Discogs for this album's cover">Discogs…</button>
           <button type="button" id="art-remove" class="danger">Remove</button>
         </div>
         <div id="artwork-note" class="muted small"></div>
+
+        <!-- The Discogs picker. Hidden until asked for, because it reaches
+             outside the machine and nothing else in this sheet does. -->
+        <section class="discogs" id="discogs" hidden aria-label="Discogs cover search">
+          <div class="discogs-bar">
+            <input type="search" id="dc-q" placeholder="Artist and album" aria-label="Discogs search">
+            <button type="button" id="dc-go">Search</button>
+            <button type="button" id="dc-close" aria-label="Close the Discogs search">Close</button>
+          </div>
+          <p id="dc-status" class="muted small"></p>
+          <div class="discogs-grid" id="dc-grid" role="listbox" aria-label="Covers found"></div>
+          <div class="discogs-foot">
+            <span id="dc-rate" class="muted small"></span>
+            <button type="button" id="dc-apply" disabled>Use this cover</button>
+          </div>
+        </section>
       </div>
     </section>
 

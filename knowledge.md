@@ -393,6 +393,48 @@ In the web app they get a Sorting tab rather than five more rows on Details,
 which is where Apple Music puts them too. The TUI cannot edit them, for the
 same fixed-grid reason it cannot edit the compilation flag.
 
+### The Discogs lookup is three constraints in a trenchcoat
+
+Every design decision in `internal/discogs` follows from something the public
+API does, and none of them are guessable from the documentation.
+
+**Search returns no images.** `/database/search` has `thumb` and `cover_image`
+fields and they are empty strings for an unauthenticated request. So finding a
+cover is two round trips: search for masters, then fetch each master by id to
+see what pictures it has. Everything expensive about the feature comes from
+this. Do not "optimise" the second fetch away — it is not redundant.
+
+**25 requests a minute, per IP.** With the above, one search of eight
+candidates costs nine. Hence the candidate cap, the ten-minute master cache,
+and `rateRemaining` in the response: the user is the one who has to pace
+themselves, and a counter is kinder than a refusal a minute later. Per IP also
+means the local count is optimistic — anything else on the machine spends from
+the same allowance — so the limiter believes `X-Discogs-Ratelimit-Remaining`
+over its own tally whenever the server's figure is lower.
+
+**The image host sends no CORS header.** `i.discogs.com` serves covers happily
+to an `<img>` and refuses to let a page read the bytes. That single fact is why
+the server proxies at all, and it is load-bearing: a browser-only version of
+this feature cannot be written.
+
+Two things fall out of that proxying. The URL comes from the client, so
+`FetchImage` allowlists Discogs' image hosts by hostname — without it the
+endpoint is a request-forgery hole pointed at anything the server can reach,
+including cloud metadata. And the download lands on the existing artwork
+clipboard rather than going into files directly, which is what lets `Paste`
+apply it to one track or ten thousand with its job, its progress and its
+skipping of identical bytes already written.
+
+A fourth, smaller: Discogs answers 403 to a request with no User-Agent, so one
+is always sent. `masters` are searched rather than `releases` because a master
+is the album and a release search returns the same sleeve once per pressing.
+
+The counter-intuitive test result worth remembering: applying a cover to the
+Plan B album this was built for reported `changed: 0`, and that was correct.
+The file's iTunes artwork was byte-identical to what Discogs serves, and
+`setArtwork` deliberately refuses to rewrite a file for identical bytes. When
+testing this, pick an image that actually differs — a back cover will do.
+
 ### The ID3 date is written twice, on purpose
 
 `writeID3v2` writes the year to `TYER` (or `TDRC` in a v2.4 tag) **and** to

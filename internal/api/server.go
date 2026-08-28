@@ -106,6 +106,11 @@ func (s *Server) routes() {
 	s.handle("PUT /v1/clipboard/artwork", s.putClipboard)
 	s.handle("DELETE /v1/clipboard/artwork", s.deleteClipboard)
 	s.handle("PUT /v1/clipboard/artwork/from-track/{id}", s.copyArtworkFromTrack)
+	s.handle("PUT /v1/clipboard/artwork/from-url", s.copyArtworkFromURL)
+
+	// Discogs cover lookup.
+	s.handle("GET /v1/discogs/search", s.discogsSearch)
+	s.handle("GET /v1/discogs/masters/{id}", s.discogsMaster)
 
 	// Batch and maintenance.
 	s.handle("POST /v1/tracks/batch", s.batchEditTracks)

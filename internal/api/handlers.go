@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/base64"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
 
+	"github.com/remy/tag-manager/internal/discogs"
 	"github.com/remy/tag-manager/internal/library"
 	"github.com/remy/tag-manager/internal/tags"
 )
@@ -354,5 +356,79 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 	default:
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	}
+}
+
+// --- discogs ------------------------------------------------------------
+//
+// The server makes these calls rather than the browser for three reasons, and
+// the third is the one that forces it. Discogs wants a User-Agent it can
+// attribute. The per-minute budget is per IP, so it can only be paced in one
+// place. And the image host sends no CORS header, so a browser can display a
+// cover but cannot read its bytes to upload them — the download has to happen
+// here or not at all.
+
+func (s *Server) discogsSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	res, err := s.svc.DiscogsSearch(r.Context(), q, limit)
+	if err != nil {
+		failDiscogs(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) discogsMaster(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "bad_request", "the master id must be a number")
+		return
+	}
+	m, err := s.svc.DiscogsMaster(r.Context(), id)
+	if err != nil {
+		failDiscogs(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, m)
+}
+
+// copyArtworkFromURL puts a Discogs cover on the clipboard, from where the
+// existing paste applies it to one track or to a whole album.
+func (s *Server) copyArtworkFromURL(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		URL string `json:"url"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	pic, err := s.svc.CopyArtworkFromURL(r.Context(), body.URL)
+	if err != nil {
+		failDiscogs(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, describePicture(pic, "discogs"))
+}
+
+// failDiscogs maps the lookup's own failures before deferring to fail.
+//
+// A rate limit is 429 with a Retry-After, because the client's right response
+// is to wait a stated number of seconds rather than to treat it as an outage.
+// A URL off the allowlist is the caller's mistake, not a server fault.
+func failDiscogs(w http.ResponseWriter, err error) {
+	var limited *discogs.RateLimitError
+	switch {
+	case errors.Is(err, library.ErrNoDiscogs):
+		writeError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
+	case errors.As(err, &limited):
+		w.Header().Set("Retry-After", strconv.Itoa(int(limited.RetryAfter.Seconds()+0.999)))
+		writeError(w, http.StatusTooManyRequests, "rate_limited", limited.Error())
+	case errors.Is(err, discogs.ErrNotAllowed):
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+	case errors.Is(err, discogs.ErrNotFound):
+		writeError(w, http.StatusNotFound, "not_found", err.Error())
+	default:
+		fail(w, err)
 	}
 }

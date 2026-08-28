@@ -9,6 +9,7 @@ import (
 
 	"github.com/remy/tag-manager/internal/artclip"
 	"github.com/remy/tag-manager/internal/catalog"
+	"github.com/remy/tag-manager/internal/discogs"
 )
 
 // Options configures a Service.
@@ -29,6 +30,16 @@ type Options struct {
 	// SaveInterval bounds how often the catalogue snapshot is rewritten.
 	// Zero picks a sensible default.
 	SaveInterval time.Duration
+
+	// DiscogsToken authenticates cover lookups. Empty is the normal case and
+	// still works: search needs no token. A token only buys a higher rate
+	// limit and images in the search response itself, which together make a
+	// search cost one request instead of nine.
+	DiscogsToken string
+
+	// NoDiscogs turns the cover lookup off entirely, for a server that should
+	// make no outbound requests at all.
+	NoDiscogs bool
 }
 
 // Service owns the catalogue and performs every operation on it.
@@ -42,9 +53,10 @@ type Service struct {
 	cat  *catalog.Catalog
 	byID map[string]int32
 
-	opts  Options
-	locks pathLocks
-	clip  *artclip.Store
+	opts    Options
+	locks   pathLocks
+	clip    *artclip.Store
+	discogs *discogs.Client
 
 	events *eventBus
 	jobs   *Jobs
@@ -99,6 +111,11 @@ func Open(opts Options) (*Service, error) {
 		events:   newEventBus(),
 		done:     make(chan struct{}),
 		saveDone: make(chan struct{}),
+	}
+	// The lookup is on unless it is turned off: it needs no credentials and
+	// makes no request until someone searches.
+	if !opts.NoDiscogs {
+		s.discogs = discogs.New(opts.DiscogsToken)
 	}
 	s.jobs = newJobs(s)
 	s.reindexLocked()

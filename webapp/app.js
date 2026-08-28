@@ -978,6 +978,7 @@ async function openInfo() {
   // second-guessing what you were doing.
   if (!$('#info').open) {
     showTab('details');
+    closeDiscogs();
     $('#info').showModal();
   }
 }
@@ -1003,6 +1004,7 @@ async function stepInfo(delta) {
   setCursor(to, false);
   await ensurePages();
   if (!trackAt(to)) return;          // the page never arrived; stay put
+  closeDiscogs();                    // the covers belong to the album we left
   await openInfo();
 }
 
@@ -1305,7 +1307,7 @@ function paintArtActions() {
   if (!state.editing.length) return;
   const writable = state.editing.every(t => t.writable);
   const has = state.editing.some(t => t.hasArt);
-  for (const id of ['#art-copy', '#art-paste', '#art-folder', '#art-remove']) {
+  for (const id of ['#art-copy', '#art-paste', '#art-folder', '#art-remove', '#art-discogs']) {
     $(id).disabled = !writable;
   }
   // Copy reads rather than writes, and needs exactly one track to read from.
@@ -1430,6 +1432,215 @@ $('#art-remove').addEventListener('click', () => {
     }
     await waitArtJob(await state.api.batchArtwork(infoSelector(), 'remove'));
   });
+});
+
+
+// --- discogs cover picker ---------------------------------------------
+//
+// Two round trips deep, and the reason is worth stating because it drives the
+// whole design: an unauthenticated Discogs search returns empty image fields,
+// so the server has to fetch each candidate master by id to find out what its
+// cover is. That costs one request per candidate out of 25 a minute, which is
+// why the count is capped, why the budget is shown, and why the tiles are not
+// fetched lazily on scroll — a scroll would spend the allowance invisibly.
+
+const dc = {
+  items: [],        // what the grid currently shows
+  chosen: null,     // the image the user picked
+  master: null,     // set while looking inside one release
+  busy: false,
+};
+
+function openDiscogs() {
+  const t = state.editing[0];
+  if (!t) return;
+  $('#discogs').hidden = false;
+  // Prefilled from the tags, since that is what the album is called; the
+  // album artist first because a compilation's tracks disagree about artist.
+  const who = t.albumArtist || t.artist || '';
+  $('#dc-q').value = [who, t.album].filter(Boolean).join(' ').trim();
+  $('#dc-q').focus();
+  $('#dc-q').select();
+  $('#discogs').scrollIntoView({ block: 'nearest' });
+  if (!dc.items.length) runDiscogsSearch();
+}
+
+function closeDiscogs() {
+  $('#discogs').hidden = true;
+  dc.items = [];
+  dc.chosen = null;
+  dc.master = null;
+  $('#dc-grid').replaceChildren();
+  $('#dc-status').textContent = '';
+  $('#dc-rate').textContent = '';
+  $('#dc-apply').disabled = true;
+}
+
+function dcBusy(on, msg) {
+  dc.busy = on;
+  $('#dc-go').disabled = on;
+  if (msg) $('#dc-status').textContent = msg;
+}
+
+async function runDiscogsSearch() {
+  const q = $('#dc-q').value.trim();
+  if (!q || dc.busy) return;
+  dcBusy(true, 'Searching Discogs…');
+  dc.master = null;
+  dc.chosen = null;
+  $('#dc-apply').disabled = true;
+  try {
+    const res = await state.api.discogsSearch(q);
+    dc.items = res.items || [];
+    renderDiscogsGrid();
+    // The covers and the button that applies them are the point of the panel;
+    // leaving them below the fold of a scrolling tab hides both.
+    $('#discogs').scrollIntoView({ block: 'nearest' });
+    $('#dc-status').textContent = dc.items.length
+      ? (res.partial
+          ? 'Some covers were skipped — the Discogs rate limit ran out mid-search.'
+          : '')
+      : 'Nothing on Discogs matched, or the matches have no artwork.';
+    paintDiscogsRate(res);
+  } catch (e) {
+    dcFailed(e);
+  } finally {
+    dcBusy(false);
+  }
+}
+
+// paintDiscogsRate shows what is left of the per-minute budget. It is not
+// decoration: a search costs one request plus one per candidate, so the
+// allowance goes far faster than anyone expects, and a silent refusal is worse
+// than a visible counter.
+function paintDiscogsRate(res) {
+  if (typeof res.rateRemaining !== 'number') return;
+  const extra = res.tokened ? '' : ' · no token, so each cover costs a request';
+  $('#dc-rate').textContent = `${res.rateRemaining} of ${res.rateLimit} Discogs requests left this minute${extra}`;
+}
+
+function dcFailed(e) {
+  if (e instanceof ApiError && e.status === 429) {
+    $('#dc-status').textContent = e.message ||
+      'Discogs is rate limiting; wait a moment and search again.';
+    return;
+  }
+  if (e instanceof ApiError && e.status === 503) {
+    $('#dc-status').textContent = 'The Discogs lookup is turned off on this server.';
+    return;
+  }
+  $('#dc-status').textContent = e.message;
+}
+
+function renderDiscogsGrid() {
+  const grid = $('#dc-grid');
+  grid.replaceChildren(...dc.items.map((it, i) => {
+    const tile = el('button', 'dc-tile');
+    tile.type = 'button';
+    tile.setAttribute('role', 'option');
+    tile.setAttribute('aria-selected', 'false');
+
+    const img = el('img');
+    // Straight at Discogs: displaying a cross-origin image needs no CORS, and
+    // routing every thumbnail through this server would double the traffic
+    // for no gain. Reading the bytes is the part that has to be server-side.
+    img.src = it.thumb || it.cover;
+    img.alt = it.title || 'Cover';
+    img.loading = 'lazy';
+
+    const meta = el('div', 'm');
+    meta.append(el('b', '', dcLabel(it)));
+    meta.append(document.createTextNode(
+      [it.year, it.country, (it.formats || []).slice(0, 2).join(' ')]
+        .filter(Boolean).join(' · ')));
+    tile.append(img, meta);
+    tile.addEventListener('click', () => chooseDiscogs(i));
+
+    // Only offer to look inside a release that has more than the front cover.
+    if (!dc.master && it.imageCount > 1) {
+      const more = el('button', 'dc-more', `${it.imageCount} images ▸`);
+      more.type = 'button';
+      more.addEventListener('click', e => { e.stopPropagation(); expandDiscogs(it); });
+      meta.append(more);
+    }
+    return tile;
+  }));
+}
+
+// dcLabel trims the "Artist - Album" Discogs returns down to something that
+// fits a 104px tile, and the disambiguating "(4)" Discogs appends to a
+// duplicated artist name with it.
+function dcLabel(it) {
+  if (dc.master) return it.title;
+  const t = (it.title || '').replace(/\s\(\d+\)\s-\s/, ' - ');
+  const dash = t.indexOf(' - ');
+  return dash > 0 ? t.slice(dash + 3) : t;
+}
+
+// expandDiscogs swaps the grid for every image on one master — the back cover,
+// the inner sleeve, the disc — which is the only way to reach anything but the
+// front. The master is usually already cached server-side, so this is free.
+async function expandDiscogs(it) {
+  if (dc.busy) return;
+  dcBusy(true, 'Loading the other images…');
+  try {
+    const m = await state.api.discogsMaster(it.masterId);
+    dc.master = m;
+    dc.chosen = null;
+    $('#dc-apply').disabled = true;
+    dc.items = (m.images || []).map((im, n) => ({
+      masterId: m.masterId,
+      title: im.type === 'primary' ? 'Front cover' : `Image ${n + 1}`,
+      cover: im.uri,
+      thumb: im.thumb || im.uri,
+      formats: [],
+      year: im.width && im.height ? `${im.width}×${im.height}` : '',
+      imageCount: 1,
+    }));
+    renderDiscogsGrid();
+    $('#dc-status').textContent = `${m.title} — ${dc.items.length} images. Search again to go back.`;
+  } catch (e) {
+    dcFailed(e);
+  } finally {
+    dcBusy(false);
+  }
+}
+
+function chooseDiscogs(i) {
+  dc.chosen = dc.items[i] || null;
+  [...$('#dc-grid').children].forEach((tile, n) =>
+    tile.setAttribute('aria-selected', String(n === i)));
+  $('#dc-apply').disabled = !dc.chosen;
+}
+
+// applyDiscogs embeds the chosen cover.
+//
+// Two calls, and the split is deliberate: the server downloads the image onto
+// its own artwork clipboard, then the ordinary paste applies it. That reuses
+// the batch job, its progress reporting, and its skipping of tracks whose art
+// already matches, instead of growing a second path that does all three again.
+function applyDiscogs() {
+  if (!dc.chosen) return;
+  const n = state.selected.size;
+  if (n > 1 && !confirm(`Set this Discogs cover on ${n.toLocaleString()} songs?\n\n` +
+      'Each file is rewritten, since a cover does not fit in the space a tag reserves.')) {
+    return;
+  }
+  return artApply(n > 1 ? `Cover set on ${n.toLocaleString()} songs` : 'Cover updated', async () => {
+    await state.api.copyArtworkFromURL(dc.chosen.cover);
+    await waitArtJob(await state.api.batchArtwork(infoSelector(), 'clipboard'));
+  });
+}
+
+$('#art-discogs').addEventListener('click', openDiscogs);
+$('#dc-close').addEventListener('click', closeDiscogs);
+$('#dc-go').addEventListener('click', runDiscogsSearch);
+$('#dc-apply').addEventListener('click', applyDiscogs);
+$('#dc-q').addEventListener('keydown', e => {
+  // Enter in the search box searches. Without this it would reach the sheet
+  // and save the whole form, which is not what typing a query then pressing
+  // return is asking for.
+  if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); runDiscogsSearch(); }
 });
 
 document.querySelectorAll('.tab').forEach(b =>

@@ -175,6 +175,29 @@ export class Api {
     return this.request('PUT', `/v1/clipboard/artwork/from-track/${encodeURIComponent(id)}`);
   }
 
+  // --- discogs ---------------------------------------------------------
+  //
+  // The server does the talking. Discogs wants an identifiable User-Agent, the
+  // rate limit is per IP so it can only be paced in one place, and the image
+  // host sends no CORS header — so the browser can show a cover in an <img>
+  // but cannot read its bytes, and the download has to happen server-side.
+
+  discogsSearch(q, limit) {
+    const p = new URLSearchParams({ q });
+    if (limit) p.set('limit', String(limit));
+    return this.request('GET', `/v1/discogs/search?${p}`);
+  }
+
+  discogsMaster(masterId) {
+    return this.request('GET', `/v1/discogs/masters/${encodeURIComponent(masterId)}`);
+  }
+
+  // Puts a Discogs cover on the server clipboard, from where the ordinary
+  // paste applies it to one track or to a whole album.
+  copyArtworkFromURL(url) {
+    return this.request('PUT', '/v1/clipboard/artwork/from-url', { body: { url } });
+  }
+
   async clipboardArtwork() {
     try {
       const res = await fetch(`${this.base}/v1/clipboard/artwork`, { headers: this.headers });

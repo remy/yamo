@@ -246,6 +246,38 @@ Two things to know:
   library normally stores art, and the usual reason none of it appears on a
   phone. The directory is scanned once per album, not once per track.
 
+#### Finding covers on Discogs
+
+When a library has no art to move around, the browser's Artwork tab can search
+Discogs for it. It searches **masters** — a master is the album, one entry
+covering every pressing and reissue, so a release search would offer the same
+sleeve twenty times. Picking a cover embeds it in whatever is selected, and a
+release with more than one picture can be opened to reach the back cover, the
+inner sleeve and the disc.
+
+No account is needed. Three facts about the public API shape the whole thing,
+and they are worth knowing before changing any of it:
+
+- **Search returns no images.** The `thumb` and `cover_image` fields come back
+  as empty strings unless the request is authenticated, so each candidate has
+  to be fetched by id to discover its cover. A search is one request plus one
+  per candidate.
+- **The rate limit is 25 a minute, per IP.** With the point above, one search
+  spends nine of them. That is why candidates are capped, why masters are
+  cached, and why the panel shows what is left rather than failing silently a
+  minute later. `-discogs-token` raises it to 60 and puts covers in the search
+  response itself, making a search cost one request.
+- **The image host sends no CORS header.** A browser can display one of those
+  URLs in an `<img>` but cannot read its bytes, so the download happens on the
+  server. It only fetches from Discogs' own image hosts — the URL comes from
+  the client, and without that allowlist the endpoint would fetch anything the
+  server can reach.
+
+The download lands on the same artwork clipboard as everything else, so
+applying it to one track or to an album reuses the paste that already exists.
+`-no-discogs` turns the lookup off, leaving the server making no outbound
+requests at all.
+
 ### Stripping
 
 `tagmgr strip` removes every tag that is not on a keep list, leaving a uniform

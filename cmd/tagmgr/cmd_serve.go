@@ -55,6 +55,19 @@ Access:
   server on loopback with no token and permissive headers could be driven
   by any web page you happened to visit, and this API rewrites music files.
 
+Album art from Discogs:
+  The browser's Get Info sheet can search Discogs for cover art. It needs no
+  credentials: searching is open, and the server does the fetching because
+  Discogs' image host sends no CORS header, so a page can display a cover but
+  cannot read its bytes.
+
+  The catch is the rate limit — 25 requests a minute per IP address, and a
+  search costs one request plus one per candidate, because an unauthenticated
+  search returns no images. Set -discogs-token or TAGMGR_DISCOGS_TOKEN and it
+  becomes 60 a minute with covers in the search itself, one request a search.
+  -no-discogs turns the lookup off, leaving the server making no outbound
+  requests at all.
+
 Examples:
   tagmgr serve                                just this machine
   cd webapp && tagmgr serve                   ...and serve the front end too
@@ -73,6 +86,8 @@ func cmdServe(args []string) error {
 	noAuth := fs.Bool("no-auth", false, "serve without a token even when not on loopback")
 	saveEvery := fs.Duration("save-every", 5*time.Second, "how often to write the catalogue snapshot")
 	web := fs.String("web", ".", "directory of a web front end to serve at / (ignored if it has no index.html)")
+	discogsToken := fs.String("discogs-token", os.Getenv("TAGMGR_DISCOGS_TOKEN"), "optional Discogs token; raises the cover-lookup rate limit")
+	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup, so the server makes no outbound requests")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
 		return err
 	}
@@ -91,6 +106,8 @@ func cmdServe(args []string) error {
 	svc, err := library.Open(library.Options{
 		CatalogPath:  *catalogPath,
 		SaveInterval: *saveEvery,
+		DiscogsToken: *discogsToken,
+		NoDiscogs:    *noDiscogs,
 	})
 	if err != nil {
 		return err

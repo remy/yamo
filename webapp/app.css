@@ -277,6 +277,41 @@ nav { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 1px }
 .artwork-actions button.danger:hover:not(:disabled) { border-color: #d70015; color: #d70015 }
 #artwork-note { text-align: center; max-width: 320px }
 
+/* --- discogs picker --------------------------------------------------- */
+.discogs {
+  width: 100%; border-top: 1px solid var(--line); padding-top: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.discogs-bar { display: flex; gap: 6px }
+.discogs-bar input { flex: 1; min-width: 0 }
+.discogs-bar button, .discogs-foot button {
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  border-radius: 6px; padding: .35rem .8rem; font-size: 12px; white-space: nowrap;
+}
+.discogs-bar button:hover:not(:disabled), .discogs-foot button:hover:not(:disabled) { background: var(--hover) }
+.discogs-foot button:disabled { opacity: .4; cursor: default }
+.discogs-grid {
+  display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  max-height: 300px; overflow-y: auto; align-content: start;
+}
+.dc-tile { border: 0; background: none; padding: 0; text-align: left; color: inherit; cursor: pointer }
+.dc-tile img {
+  width: 100%; aspect-ratio: 1; border-radius: 6px; background: var(--hover);
+  object-fit: cover; display: block; border: 2px solid transparent;
+}
+/* The selected cover is ringed rather than merely tinted: at this size the
+   tiles are mostly artwork, and a background change is invisible behind one. */
+.dc-tile[aria-selected="true"] img { border-color: var(--accent) }
+.dc-tile .m { font-size: 11px; color: var(--ink-dim); margin-top: 4px; line-height: 1.35 }
+.dc-tile .m b { color: var(--ink); font-weight: 500; display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.dc-more {
+  display: block; border: 0; background: none; color: var(--accent);
+  font-size: 11px; padding: 2px 0 0; cursor: pointer;
+}
+.discogs-foot { display: flex; align-items: center; gap: 8px }
+.discogs-foot span { flex: 1 }
+
 .info-foot {
   display: flex; align-items: center; gap: 8px; padding: 12px 20px;
   border-top: 1px solid var(--line);

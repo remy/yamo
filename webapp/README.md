@@ -70,6 +70,16 @@ answers.
   the names they order, so a sort name is not a rename; leaving one empty means
   the name itself is used. On an iTunes compilation the sort album artist is
   often the only field that says Various Artists at all.
+- **Discogs** — a cover search in the Artwork tab, prefilled from the album
+  artist and album. Pick a cover and it is embedded in whatever is selected,
+  one song or a whole album. A release with more than one picture offers
+  `N images ▸`, which opens its back cover, inner sleeve and disc.
+
+  It needs no account. The cost is the rate limit, which the panel shows for a
+  reason: Discogs will not return images to an unauthenticated search, so the
+  server has to fetch each candidate release separately and one search spends
+  nine of the 25 requests a minute. A server started with `-discogs-token`
+  gets 60 a minute and covers straight from the search.
 - **Get Info** — modelled on the dialog in Apple Music, restricted to the
   fields this API can write. ⏎ saves from anywhere in the sheet, Escape
   discards. Click a row and press ⏎ or ⌘I, or double-click. The ‹ › buttons
@@ -156,8 +166,8 @@ is a sample, and the guard belongs where a mistake is expensive.
 ## What it deliberately does not do
 
 - No playback.
-- No artwork editing. The API supports it (`PUT /v1/tracks/{id}/artwork` and
-  the clipboard); the sheet only displays.
+- No artwork editing beyond covers: no cropping, resizing or re-encoding. What
+  is chosen is what is embedded.
 - No scanning. Run `tagmgr scan` from a terminal.
 - `grouping`, `rating`, `bpm` and `play count` appear in Apple's dialog but
   have no equivalent in this API, so they are absent rather than shown and
@@ -172,4 +182,4 @@ is a sample, and the guard belongs where a mistake is expensive.
 | `index.html` | structure, including the Get Info sheet |
 | `app.css` | an Apple Music-ish shell; adapts to light and dark |
 | `api.js` | the API client — blob artwork, streamed events, typed errors |
-| `app.js` | state, virtual scrolling, the sheet |
+| `app.js` | state, virtual scrolling, the sheet, the Discogs picker |

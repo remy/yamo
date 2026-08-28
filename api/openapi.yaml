@@ -90,6 +90,11 @@ tags:
     description: Operations across many tracks at once.
   - name: artwork
     description: Cover art, including the copy and paste clipboard.
+  - name: discogs
+    description: |
+      Finding album art on Discogs. The only part of this API that reaches
+      outside the machine, and the only part with a rate limit that is not
+      this server's own.
   - name: jobs
     description: Long-running operations and their progress.
   - name: scan
@@ -399,6 +404,113 @@ paths:
               schema: { $ref: '#/components/schemas/Picture' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /clipboard/artwork/from-url:
+    put:
+      tags: [artwork, discogs]
+      summary: Copy a Discogs cover to the clipboard
+      description: |
+        Downloads a cover from Discogs and holds it, from where the ordinary
+        paste (`source: clipboard` on `/artwork/batch`) applies it to one track
+        or to a whole album.
+
+        The download happens here rather than in the browser because Discogs'
+        image host sends no `Access-Control-Allow-Origin`: a page can display
+        one of those URLs in an `<img>` but cannot read its bytes.
+
+        The URL must be on a Discogs image host. Anything else is refused, so
+        this cannot be used to make the server fetch an arbitrary address.
+      operationId: copyArtworkFromURL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  description: An image URL from a Discogs lookup.
+                  examples: ["https://i.discogs.com/xxxx/rs:fit/g:sm/q:90/h:600/w:600/abc.jpeg"]
+      responses:
+        '200':
+          description: What is now held.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Picture' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/LookupUnavailable' }
+
+  /discogs/search:
+    get:
+      tags: [discogs]
+      summary: Find album covers on Discogs
+      description: |
+        Searches Discogs for **master** releases — a master is the album, with
+        one entry covering every pressing and reissue, so a release search
+        would return the same sleeve twenty times over.
+
+        Costs more than one request. An unauthenticated Discogs search returns
+        empty `thumb` and `cover_image` fields, so each candidate has to be
+        fetched by id to discover its cover: a search is one request plus one
+        per candidate, against a budget of 25 a minute. Candidates are capped
+        for that reason, results are cached, and `rateRemaining` reports what
+        is left so a client can pace itself. Configure a token on the server to
+        raise the budget to 60 and get covers from the search itself.
+
+        Hits that turn out to have no image at all are omitted, since they are
+        no use as album art.
+      operationId: discogsSearch
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Free text, such as an artist and album name.
+          schema: { type: string }
+        - name: limit
+          in: query
+          description: |
+            How many candidates to fetch covers for. Capped by the server to
+            protect the rate limit; the response is authoritative.
+          schema: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        '200':
+          description: Candidate covers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscogsSearchResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/LookupUnavailable' }
+
+  /discogs/masters/{id}:
+    get:
+      tags: [discogs]
+      summary: Every image on a Discogs master
+      description: |
+        The front cover is what a search offers, but a master often holds ten
+        or more pictures — back cover, inner sleeve, the disc itself. This
+        returns all of them, primary first. Served from cache when the master
+        was fetched recently, in which case it costs no request.
+      operationId: discogsMaster
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: A Discogs master id, as returned by the search.
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: The master and its images.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscogsMaster' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/LookupUnavailable' }
+
   /artwork/summary:
     get:
       tags: [artwork]
@@ -692,6 +804,21 @@ components:
       description: The job was started.
       content:
         application/json: { schema: { $ref: '#/components/schemas/Job' } }
+    RateLimited:
+      description: |
+        The Discogs per-minute budget is spent. `Retry-After` says how many
+        seconds until it refills. The limit is counted per IP address, so it is
+        shared with anything else on this machine talking to Discogs.
+      headers:
+        Retry-After:
+          description: Seconds to wait before trying again.
+          schema: { type: integer }
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    LookupUnavailable:
+      description: The Discogs lookup is turned off on this server.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
 
   schemas:
     Error:
@@ -1086,6 +1213,88 @@ components:
         kind: { type: string, examples: ["front cover"] }
         summary: { type: string, description: A one-line description for display. }
         source: { type: string, description: Where the clipboard image came from. }
+
+    DiscogsCandidate:
+      type: object
+      description: One album cover offered for selection.
+      required: [masterId, title, imageCount]
+      properties:
+        masterId:
+          type: integer
+          format: int64
+          description: Pass to `/discogs/masters/{id}` for the other images.
+        title: { type: string, examples: ["Plan B (4) - The Defamation Of Strickland Banks"] }
+        year: { type: string }
+        country: { type: string }
+        formats:
+          type: array
+          items: { type: string }
+          examples: [["CD", "Album", "Stereo"]]
+        label: { type: string }
+        cover:
+          type: string
+          description: >-
+            The full-size image URL. Send it to
+            `/clipboard/artwork/from-url` to apply it; a browser can show it in
+            an `<img>` but cannot fetch its bytes.
+        thumb: { type: string, description: A smaller form, for laying out a grid. }
+        width: { type: integer }
+        height: { type: integer }
+        imageCount:
+          type: integer
+          description: >-
+            Pictures on this master. More than one means expanding it offers
+            the back cover and the disc as well as the front.
+
+    DiscogsSearchResult:
+      type: object
+      required: [items, rateLimit, rateRemaining, tokened]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DiscogsCandidate' }
+        rateLimit:
+          type: integer
+          description: Requests a minute allowed — 25 without a token, 60 with one.
+        rateRemaining:
+          type: integer
+          description: >-
+            How much of the budget is left. Worth showing: a search costs one
+            request plus one per candidate, so it is spent faster than people
+            expect.
+        tokened:
+          type: boolean
+          description: >-
+            Whether the server has a Discogs token. Without one a search cannot
+            return covers by itself and each candidate costs an extra request.
+        partial:
+          type: boolean
+          description: >-
+            Some candidates have no cover because the budget ran out mid-search
+            rather than because Discogs holds no image.
+
+    DiscogsImage:
+      type: object
+      required: [uri]
+      properties:
+        uri: { type: string, description: The full-size image. }
+        thumb: { type: string }
+        type: { type: string, enum: [primary, secondary] }
+        width: { type: integer }
+        height: { type: integer }
+
+    DiscogsMaster:
+      type: object
+      required: [masterId, title, images]
+      properties:
+        masterId: { type: integer, format: int64 }
+        title: { type: string }
+        year: { type: integer }
+        artists: { type: string }
+        images:
+          type: array
+          description: Every picture on the master, front cover first.
+          items: { $ref: '#/components/schemas/DiscogsImage' }
 
     ArtworkReport:
       type: object
