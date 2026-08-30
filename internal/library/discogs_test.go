@@ -26,6 +26,13 @@ func fakeDiscogs(t *testing.T, masters int) (*discogs.Client, *atomic.Int32, str
 	mux := http.NewServeMux()
 	mux.HandleFunc("/database/search", func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
+		// A thin Discogs entry: no year and no genre, which is the only case
+		// where reading the master afterwards buys anything.
+		if strings.Contains(r.URL.Query().Get("q"), "sparse") {
+			fmt.Fprint(w, `{"results":[{"id":7,"master_id":7,"title":"Artist - Sparse",
+			  "year":"","country":"","format":[],"label":[],"thumb":"","cover_image":""}]}`)
+			return
+		}
 		var hits []string
 		for i := 1; i <= masters; i++ {
 			// Empty thumb and cover_image, exactly as an unauthenticated
@@ -33,7 +40,9 @@ func fakeDiscogs(t *testing.T, masters int) (*discogs.Client, *atomic.Int32, str
 			// around, so the fake must reproduce it.
 			hits = append(hits, fmt.Sprintf(
 				`{"id":%d,"master_id":%d,"title":"Artist - Album %d","year":"200%d",
-				  "country":"UK","format":["CD"],"label":["Label"],"thumb":"","cover_image":""}`,
+				  "country":"UK","format":["CD"],"label":["Label"],
+				  "genre":["Rock"],"style":["Pop Rock","New Wave"],
+				  "thumb":"","cover_image":""}`,
 				i, i, i, i%10))
 		}
 		fmt.Fprintf(w, `{"results":[%s]}`, strings.Join(hits, ","))
@@ -44,6 +53,11 @@ func fakeDiscogs(t *testing.T, masters int) (*discogs.Client, *atomic.Int32, str
 		// Master 2 has no images at all, which Discogs entries often do not.
 		if id == "2" {
 			fmt.Fprintf(w, `{"id":2,"title":"Album 2","images":[]}`)
+			return
+		}
+		if id == "7" {
+			fmt.Fprint(w, `{"id":7,"title":"Sparse","year":1999,
+			  "artists":[{"name":"Artist"}],"genres":["Jazz"],"styles":["Bebop"],"images":[]}`)
 			return
 		}
 		fmt.Fprintf(w, `{"id":%s,"title":"Album %s","year":2001,
@@ -156,8 +170,74 @@ func TestDiscogsDisabled(t *testing.T) {
 	if _, err := s.DiscogsMaster(context.Background(), 1); !errors.Is(err, ErrNoDiscogs) {
 		t.Errorf("master error = %v, want ErrNoDiscogs", err)
 	}
+	if _, err := s.DiscogsAlbum(context.Background(), "x", "y"); !errors.Is(err, ErrNoDiscogs) {
+		t.Errorf("album error = %v, want ErrNoDiscogs", err)
+	}
 	if _, err := s.CopyArtworkFromURL(context.Background(), "https://i.discogs.com/x.jpg"); !errors.Is(err, ErrNoDiscogs) {
 		t.Errorf("copy error = %v, want ErrNoDiscogs", err)
+	}
+}
+
+// Looking an album up for its year and genre costs one request, not nine: the
+// search response already carries both, with or without a token. That is the
+// whole reason this is a separate call from the cover search.
+func TestDiscogsAlbumCostsOneRequest(t *testing.T) {
+	s, _ := realService(t, 1)
+	client, calls, _ := fakeDiscogs(t, 4)
+	s.discogs = client
+
+	info, err := s.DiscogsAlbum(context.Background(), "Artist", "Album 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("made %d requests, want 1 — the search alone", n)
+	}
+	if info.Year != "2001" {
+		t.Errorf("Year = %q, want 2001", info.Year)
+	}
+	// One genre goes in the tag, and it is the first: Discogs allows several
+	// and the field holds one.
+	if info.Genre != "Rock" {
+		t.Errorf("Genre = %q, want Rock", info.Genre)
+	}
+	if len(info.Styles) != 2 {
+		t.Errorf("Styles = %v, want both kept for a client that prefers them", info.Styles)
+	}
+	if info.Limit != 25 || info.Remaining != 24 {
+		t.Errorf("budget = %d of %d, want 24 of 25", info.Remaining, info.Limit)
+	}
+}
+
+// A hit with neither year nor genre is worth a second request, since without
+// one the lookup has nothing to say.
+func TestDiscogsAlbumFallsBackToTheMaster(t *testing.T) {
+	s, _ := realService(t, 1)
+	client, calls, _ := fakeDiscogs(t, 1)
+	s.discogs = client
+
+	info, err := s.DiscogsAlbum(context.Background(), "Artist", "sparse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("made %d requests, want 2 — the search and the master", n)
+	}
+	if info.Year != "1999" || info.Genre != "Jazz" {
+		t.Errorf("year/genre = %q/%q, want 1999/Jazz from the master", info.Year, info.Genre)
+	}
+}
+
+func TestDiscogsAlbumNeedsAnAlbum(t *testing.T) {
+	s, _ := realService(t, 1)
+	client, calls, _ := fakeDiscogs(t, 1)
+	s.discogs = client
+
+	if _, err := s.DiscogsAlbum(context.Background(), "Artist", "  "); err == nil {
+		t.Error("a lookup with no album name was accepted")
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("made %d requests for a lookup that cannot work", n)
 	}
 }
 

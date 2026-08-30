@@ -88,6 +88,10 @@ changes, so several interfaces stay in step without polling.
 Edits write through: a `PATCH` writes the tag to the file and returns. There is
 no pending state to commit, and therefore none for a background scan to lose.
 
+`GET /v1/tracks/{id}/audio` serves the file itself, ranges and all, so a client
+can play a track to check it is the one its tags describe rather than only read
+about it.
+
 ### Access
 
 Loopback by default, where no token is needed. Binding anywhere else requires
@@ -203,6 +207,32 @@ FLAC writes a few kilobytes rather than 40 MB. When the tag has to grow beyond
 its padding the file is rebuilt alongside the original and renamed over it, so
 an interrupted write cannot leave a damaged track.
 
+#### Pulling the artist out of a title
+
+A compilation says Various Artists in the artist tag, because that is what the
+album is, and then has nowhere to put the performer except the title:
+`Michael Jackson - Beat It`. Every player shows the artist twice over and none
+of them can group by it.
+
+`POST /v1/tracks/split` takes a selector and a template describing the shape
+the title is in — `$artist - $title` — and writes each half into the field it
+names. There is no rule for finding an artist in a title, which is why it is
+described rather than guessed: `" - "` separates the two on one compilation and
+`" / "` on the next, and plenty of titles contain a dash of their own.
+
+The separator is matched literally and every capture but the last stops at the
+first one that fits, so `Jay-Z - 99 Problems` splits after the surname and
+`Faithless - Insomnia - Monster Mix` keeps its remix in the title. A title the
+template does not fit is counted as `unmatched` and left alone.
+
+Run it with `dryRun` first. The result carries worked examples and the count
+that did not fit, which together say whether the template is right — and unlike
+a strip, an edit takes no backup.
+
+In the browser this is the **Split** button beside the title, which appears
+only when the artist reads Various Artists. For one song it fills the fields in
+and waits for you to save; for a selection it runs as a job.
+
 ### Cover art
 
 Art is moved around with a clipboard: copy one image, then paste it onto as
@@ -277,6 +307,14 @@ The download lands on the same artwork clipboard as everything else, so
 applying it to one track or to an album reuses the paste that already exists.
 `-no-discogs` turns the lookup off, leaving the server making no outbound
 requests at all.
+
+The Details tab asks Discogs a cheaper question. **Populate from Discogs**, the
+button beside the year field, is enabled once a song has both an album and an
+artist, and fills in the genre and
+the year from the leading match. Only images are missing from an unauthenticated
+search, so this costs one request rather than nine, and it reads the master for
+a second only when the hit came back with neither field. It fills the fields in
+rather than writing them: nothing is saved until OK.
 
 ### Stripping
 
@@ -362,11 +400,19 @@ prints the full vocabulary.
 
 #### Putting values where they belong
 
-`-normalize` additionally moves kept fields a file holds under an older name
-into the one this tool writes: an ID3v2.2 frame, a genre stored as `(19)`, an
-MP4 `gnre` atom, a Vorbis `PERFORMER`, a year with no `TDRL` beside it. The
-values do not change, only where they are kept — which is what decides whether
-the next tool along finds them. A dry run counts them without writing.
+`-normalize` additionally rewrites kept fields a file does not hold the way
+this tool writes them: an ID3v2.2 frame, a genre stored as `(19)`, an MP4
+`gnre` atom, a Vorbis `PERFORMER`, a year with no `TDRL` beside it, a date
+carrying more than the year. The values do not change, only the form they are
+kept in — which is what decides whether the next tool along finds them, and
+whether editing one of them does anything.
+
+That last case is the one worth knowing about. A purchased file often dates
+itself `2011-08-29`, or with a full iTunes timestamp, and the year is parsed
+out of it on the way in — so the track reads as 2011, setting the year to 2011
+matches what is already there, and the edit is dropped as a no-op. Normalising
+writes the bare year the rest of the library uses, which is also what makes the
+field editable again. The month and day go with it.
 
 #### What goes, and what that costs
 

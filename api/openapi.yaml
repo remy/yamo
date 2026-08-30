@@ -326,6 +326,44 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
 
+  /tracks/split:
+    post:
+      tags: [batch]
+      summary: Split each title into the fields it contains
+      description: |
+        For a compilation whose artist tag says Various Artists and whose titles
+        therefore carry the performer: "Michael Jackson - Beat It". The template
+        describes the shape the title is in, naming fields with a leading `$`,
+        and every capture but the last stops at the first separator that matches
+        in full — so `$artist - $title` gets "Jay-Z - 99 Problems" right, and
+        gives "Faithless - Insomnia - Monster Mix" the whole remainder as its
+        title.
+
+        Separators are matched literally. Values are trimmed, an empty one is
+        not written, and a title the template does not fit is counted in
+        `unmatched` and left alone rather than guessed at.
+
+        Run it with `dryRun` first: the result carries worked examples and the
+        count of titles that did not fit, which together are what say whether
+        the template is right before it is applied to everything selected.
+      operationId: splitTracks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SplitRequest' }
+            examples:
+              artistDashTitle:
+                summary: Pull the performer out of a compilation's titles
+                value:
+                  selector: { query: "album:\"now that's what i call music\"" }
+                  template: "$artist - $title"
+                  dryRun: true
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CountMismatch' }
+
   /artwork/batch:
     post:
       tags: [artwork, batch]
@@ -442,6 +480,39 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/LookupUnavailable' }
 
+  /tracks/{id}/audio:
+    get:
+      tags: [tracks]
+      summary: The audio itself
+      description: |
+        Streams the file, so a player can confirm that the song in front of you
+        is the one the tags describe.
+
+        Range requests are answered, which is what lets a player seek without
+        pulling the whole file first. The media type comes from the format the
+        catalogue recorded rather than from sniffing the bytes.
+
+        A browser cannot point an `<audio>` element straight at this when the
+        page and the server are different origins: the element sends no
+        `Authorization` header and a token is required cross-origin. Fetch it
+        and play the blob instead, as the bundled web app does.
+      operationId: getAudio
+      parameters:
+        - $ref: '#/components/parameters/TrackId'
+      responses:
+        '200':
+          description: The whole file.
+          content:
+            audio/*:
+              schema: { type: string, format: binary }
+        '206':
+          description: The requested byte range.
+          content:
+            audio/*:
+              schema: { type: string, format: binary }
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /discogs/search:
     get:
       tags: [discogs]
@@ -506,6 +577,47 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DiscogsMaster' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/LookupUnavailable' }
+
+  /discogs/album:
+    get:
+      tags: [discogs]
+      summary: Look an album up for its year and genre
+      description: |
+        The cheap half of the Discogs lookup. Where a cover search has to fetch
+        every candidate by id to discover its image, the year and the genres
+        come back in the search response itself — with or without a token — so
+        this normally costs one request out of the per-minute budget.
+
+        The leading hit wins, preferring one that has both a year and a genre.
+        A second request is made only when that hit has neither, in which case
+        the master is read for them.
+
+        `genre` is the first of `genres`, since a genre tag holds one value.
+        `styles` is Discogs' narrower classification, offered for a client that
+        would rather write "Synth-pop" than "Electronic".
+      operationId: discogsAlbum
+      parameters:
+        - name: album
+          in: query
+          required: true
+          description: The album name.
+          schema: { type: string }
+        - name: artist
+          in: query
+          description: >-
+            The artist, which narrows the search. The album artist is the
+            better one to send for a compilation.
+          schema: { type: string }
+      responses:
+        '200':
+          description: What Discogs knows about the album.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DiscogsAlbumInfo' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -1013,10 +1125,15 @@ components:
           type: boolean
           default: false
           description: >-
-            Rewrite kept fields the file holds under an older name into the one
-            this library writes: an ID3v2.2 frame, a genre stored as "(19)", an
-            MP4 `gnre` atom, a Vorbis `PERFORMER`. Reported by a dry run as
-            `normalized` and `normalizeFields` without writing anything.
+            Rewrite kept fields the file does not hold the way this library
+            writes them: an ID3v2.2 frame, a genre stored as "(19)", an MP4
+            `gnre` atom, a Vorbis `PERFORMER`, a date carrying more than the
+            year. The value does not change, only its form — a `©day` of
+            "2011-08-29" becomes "2011", which is also what makes the year
+            editable, since the year is parsed out on the way in and setting it
+            to 2011 otherwise matches what the track already reads as. Reported
+            by a dry run as `normalized` and `normalizeFields` without writing
+            anything.
 
     RestoreRequest:
       type: object
@@ -1091,7 +1208,8 @@ components:
             normalized:
               type: integer
               description: >-
-                Tracks holding a kept field under an older name. Counted whether
+                Tracks holding a kept field in a form this does not write.
+                Counted whether
                 or not `normalize` was applied, so a dry run answers "is there
                 anything here to tidy".
             normalizeFields:
@@ -1272,6 +1390,81 @@ components:
           description: >-
             Some candidates have no cover because the budget ran out mid-search
             rather than because Discogs holds no image.
+
+    SplitRequest:
+      type: object
+      required: [selector, template]
+      properties:
+        selector: { $ref: '#/components/schemas/Selector' }
+        template:
+          type: string
+          description: >-
+            The shape the title is in, naming fields with a leading `$`. A
+            literal dollar is `$$`. `$title` on its own is refused, since it
+            would only copy the title onto itself.
+          examples: ["$artist - $title", "$title ($artist)"]
+        dryRun:
+          type: boolean
+          description: Report what would happen without writing anything.
+
+    SplitResult:
+      allOf:
+        - $ref: '#/components/schemas/BatchResult'
+        - type: object
+          properties:
+            template: { type: string }
+            fields:
+              type: array
+              items: { type: string }
+              description: What the template writes, in the order it names them.
+              examples: [["artist", "title"]]
+            unmatched:
+              type: integer
+              description: >-
+                Titles the template did not fit. Not failures and not skips —
+                nothing is wrong with those files, the template simply does not
+                describe them, and this is the number that says whether it is
+                the right one.
+            samples:
+              type: array
+              description: A few worked examples, for checking a template.
+              items:
+                type: object
+                properties:
+                  title: { type: string }
+                  fields:
+                    type: object
+                    additionalProperties: { type: string }
+
+    DiscogsAlbumInfo:
+      type: object
+      description: What a Discogs lookup found out about one album.
+      required: [masterId, title, rateLimit, rateRemaining, tokened]
+      properties:
+        masterId: { type: integer, format: int64 }
+        title: { type: string, examples: ["Depeche Mode - Violator"] }
+        artists:
+          type: string
+          description: Set only when the master had to be read for the rest.
+        year: { type: string, examples: ["1990"] }
+        genre:
+          type: string
+          description: The first of `genres` — what to write into a genre tag.
+          examples: ["Electronic"]
+        genres:
+          type: array
+          items: { type: string }
+          examples: [["Electronic", "Rock"]]
+        styles:
+          type: array
+          description: Discogs' narrower classification, under the genre.
+          items: { type: string }
+          examples: [["Synth-pop", "New Wave"]]
+        rateLimit:
+          type: integer
+          description: Requests a minute allowed — 25 without a token, 60 with one.
+        rateRemaining: { type: integer, description: How much of the budget is left. }
+        tokened: { type: boolean, description: Whether the server has a Discogs token. }
 
     DiscogsImage:
       type: object

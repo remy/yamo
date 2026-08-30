@@ -822,6 +822,66 @@ func TestNormalizeMovesValuesIntoStandardFields(t *testing.T) {
 	}
 }
 
+// The date form the same clean-up now finds, which is what a purchased file
+// carries: ©day holding "2011-08-29" where everything here writes a bare year.
+// It reads as 2011 either way, so the sheet shows 2011, typing 2011 changes
+// nothing, and the edit is dropped as a no-op — the clean-up is the only thing
+// that can tell the two apart.
+func TestNormalizeReducesAFullDateToTheYear(t *testing.T) {
+	ff := ffmpegOrSkip(t)
+	root := t.TempDir()
+	music := filepath.Join(root, "music")
+	if err := os.MkdirAll(music, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(music, "01 dated.m4a")
+	cmd := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "aac",
+		"-metadata", "title=Where Them Girls At", "-metadata", "artist=David Guetta",
+		"-metadata", "date=2011-08-29", path)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, b)
+	}
+
+	s, err := Open(Options{CatalogPath: filepath.Join(root, "catalog.db"), SaveInterval: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	scan, err := s.Scan(ScanRequest{Roots: []string{music}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitJob(t, s, scan.ID)
+
+	strip := func(dry bool) StripResult {
+		t.Helper()
+		j, err := s.Strip(StripRequest{Selector: Selector{All: true}, DryRun: dry, Normalize: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return waitJob(t, s, j.ID).Result.(StripResult)
+	}
+
+	dry := strip(true)
+	if dry.Normalized != 1 || len(dry.NormalizeFields) != 1 || dry.NormalizeFields[0] != "date" {
+		t.Fatalf("dry run reported normalized=%d fields=%v", dry.Normalized, dry.NormalizeFields)
+	}
+	if got := strip(false); got.Normalized != 1 {
+		t.Fatalf("apply reported normalized=%d", got.Normalized)
+	}
+	if after := strip(true); after.Normalized != 0 {
+		t.Fatalf("still non-canonical after normalising: %v", after.NormalizeFields)
+	}
+
+	// The year survives, and now the file says only what it reads as — so
+	// setting the year to something else is a change the editor can see.
+	r := tags.NewReader()
+	if md, _ := r.ReadFile(path); md.Year != 2011 || md.Title != "Where Them Girls At" {
+		t.Fatalf("normalising changed the values: %+v", md)
+	}
+}
+
 func TestEventsArePublished(t *testing.T) {
 	s, _ := realService(t, 2)
 	ch, cancel := s.Events().Subscribe()

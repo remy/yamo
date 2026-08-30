@@ -54,6 +54,31 @@ func (f Format) Writable() bool {
 	return false
 }
 
+// MIME is the media type for serving the audio itself.
+//
+// A separate question from Writable: this library refuses to edit a WMA and a
+// browser refuses to play one, but neither fact follows from the other, and
+// serving the bytes is possible either way.
+func (f Format) MIME() string {
+	switch f {
+	case FormatMP3:
+		return "audio/mpeg"
+	case FormatFLAC:
+		return "audio/flac"
+	case FormatMP4:
+		return "audio/mp4"
+	case FormatOggVorbis, FormatOpus:
+		return "audio/ogg"
+	case FormatWMA:
+		return "audio/x-ms-wma"
+	case FormatWAV:
+		return "audio/wav"
+	case FormatAIFF:
+		return "audio/aiff"
+	}
+	return "application/octet-stream"
+}
+
 // ErrUnsupported is returned when a file's container has no reader or writer.
 var ErrUnsupported = errors.New("tags: unsupported format")
 

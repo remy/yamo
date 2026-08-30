@@ -34,11 +34,11 @@ type StripRequest struct {
 	// Backup records what was removed so it can be restored.
 	Backup bool `json:"backup,omitempty"`
 
-	// Normalize rewrites kept fields that the file holds under an older name
-	// into the one this library writes: an ID3v2.2 frame, a genre stored as
-	// "(19)", an MP4 gnre atom, a Vorbis PERFORMER. Off by default, because
-	// rewriting a field nobody asked to change is the thing field-level edits
-	// exist to avoid — it has to be asked for.
+	// Normalize rewrites kept fields the file does not hold the way this
+	// library writes them: an ID3v2.2 frame, a genre stored as "(19)", an MP4
+	// gnre atom, a Vorbis PERFORMER, a date carrying more than the year. Off by
+	// default, because rewriting a field nobody asked to change is the thing
+	// field-level edits exist to avoid — it has to be asked for.
 	Normalize bool `json:"normalize,omitempty"`
 }
 
@@ -52,8 +52,8 @@ type StripResult struct {
 	Bytes    int64          `json:"bytesRemoved"`
 	Keep     []string       `json:"keep"`
 
-	// Normalized counts tracks holding a kept field under an older name, and
-	// NormalizeFields names those fields. Both are reported by a dry run,
+	// Normalized counts tracks holding a kept field in a form this does not
+	// write, and NormalizeFields names those fields. Both are reported by a dry run,
 	// which is what makes it worth offering: the count is the answer to "is
 	// there anything to tidy here".
 	Normalized      int      `json:"normalized,omitempty"`

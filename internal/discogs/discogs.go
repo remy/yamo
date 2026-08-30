@@ -147,6 +147,12 @@ type Result struct {
 	Formats  []string `json:"formats,omitempty"`
 	Label    string   `json:"label,omitempty"`
 
+	// Genres and Styles are Discogs' two levels of classification: a handful
+	// of broad genres, and the narrower styles under them. A search returns
+	// both without a token, which is what makes reading a genre off one cheap.
+	Genres []string `json:"genres,omitempty"`
+	Styles []string `json:"styles,omitempty"`
+
 	// Thumb and Cover are only ever set for an authenticated search. They are
 	// carried through so a tokened client can skip the per-master fetch.
 	Thumb string `json:"thumb,omitempty"`
@@ -164,11 +170,13 @@ type Image struct {
 
 // Master is a master release and its images.
 type Master struct {
-	MasterID int64   `json:"masterId"`
-	Title    string  `json:"title"`
-	Year     int     `json:"year,omitempty"`
-	Artists  string  `json:"artists,omitempty"`
-	Images   []Image `json:"images"`
+	MasterID int64    `json:"masterId"`
+	Title    string   `json:"title"`
+	Year     int      `json:"year,omitempty"`
+	Artists  string   `json:"artists,omitempty"`
+	Genres   []string `json:"genres,omitempty"`
+	Styles   []string `json:"styles,omitempty"`
+	Images   []Image  `json:"images"`
 }
 
 // Primary returns the front cover, falling back to the first image. Discogs
@@ -213,6 +221,8 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Result,
 			Country  string   `json:"country"`
 			Format   []string `json:"format"`
 			Label    []string `json:"label"`
+			Genre    []string `json:"genre"`
+			Style    []string `json:"style"`
 			Thumb    string   `json:"thumb"`
 			Cover    string   `json:"cover_image"`
 		} `json:"results"`
@@ -237,6 +247,8 @@ func (c *Client) Search(ctx context.Context, query string, limit int) ([]Result,
 			Country:  r.Country,
 			Formats:  dedupe(r.Format),
 			Label:    first(r.Label),
+			Genres:   dedupe(r.Genre),
+			Styles:   dedupe(r.Style),
 			Thumb:    r.Thumb,
 			Cover:    r.Cover,
 		})
@@ -257,6 +269,8 @@ func (c *Client) MasterByID(ctx context.Context, id int64) (*Master, error) {
 		Artists []struct {
 			Name string `json:"name"`
 		} `json:"artists"`
+		Genres []string `json:"genres"`
+		Styles []string `json:"styles"`
 		Images []struct {
 			URI    string `json:"uri"`
 			URI150 string `json:"uri150"`
@@ -269,7 +283,10 @@ func (c *Client) MasterByID(ctx context.Context, id int64) (*Master, error) {
 		return nil, err
 	}
 
-	m := &Master{MasterID: id, Title: body.Title, Year: body.Year}
+	m := &Master{
+		MasterID: id, Title: body.Title, Year: body.Year,
+		Genres: dedupe(body.Genres), Styles: dedupe(body.Styles),
+	}
 	names := make([]string, 0, len(body.Artists))
 	for _, a := range body.Artists {
 		names = append(names, a.Name)

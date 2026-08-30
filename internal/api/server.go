@@ -95,6 +95,7 @@ func (s *Server) routes() {
 	s.handle("GET /v1/albums", s.listAlbums)
 	s.handle("GET /v1/values/{field}", s.listValues)
 	s.handle("GET /v1/stats", s.getStats)
+	s.handle("GET /v1/tracks/{id}/audio", s.getAudio)
 
 	// Artwork.
 	s.handle("GET /v1/tracks/{id}/artwork", s.getArtwork)
@@ -111,9 +112,11 @@ func (s *Server) routes() {
 	// Discogs cover lookup.
 	s.handle("GET /v1/discogs/search", s.discogsSearch)
 	s.handle("GET /v1/discogs/masters/{id}", s.discogsMaster)
+	s.handle("GET /v1/discogs/album", s.discogsAlbum)
 
 	// Batch and maintenance.
 	s.handle("POST /v1/tracks/batch", s.batchEditTracks)
+	s.handle("POST /v1/tracks/split", s.splitTracks)
 	s.handle("POST /v1/strip", s.stripTags)
 	s.handle("GET /v1/backups", s.listBackups)
 	s.handle("POST /v1/restore", s.restoreBackup)

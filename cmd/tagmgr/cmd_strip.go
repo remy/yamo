@@ -69,7 +69,7 @@ func cmdStrip(args []string) error {
 	keepFlag := fs.String("keep", "", "replace the keep list with this comma-separated set")
 	alsoFlag := fs.String("also", "", "add these tags to the keep list, comma-separated")
 	backup := fs.Bool("backup", false, "record removed tags on the server so restore can undo them")
-	normalize := fs.Bool("normalize", false, "also move kept fields stored under an older name into the standard one")
+	normalize := fs.Bool("normalize", false, "also rewrite kept fields the file does not hold the way this writes them")
 	if err := parseFlags(fs, args, stripSummary, queryHelp); err != nil {
 		return err
 	}
@@ -143,7 +143,7 @@ func printStripResult(res library.StripResult, apply bool) {
 		if apply {
 			verb = "held"
 		}
-		fmt.Printf("%s tracks %s %s under an older name\n", ui.FormatCount(res.Normalized),
+		fmt.Printf("%s tracks %s %s in a form this does not write\n", ui.FormatCount(res.Normalized),
 			verb, strings.Join(res.NormalizeFields, ", "))
 	}
 	if len(res.Skipped) > 0 {

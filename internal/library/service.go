@@ -200,6 +200,20 @@ func (s *Service) Get(id string) (Track, error) {
 
 // Path returns the file path for a track id, which several operations need
 // without the rest of the record.
+// Audio returns the file to play for a track and the media type to serve it
+// as. Separate from Path because the caller streaming a file needs both, and
+// the format is known here without a second read.
+func (s *Service) Audio(id string) (path, mime string, err error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	i, ok := s.lookupLocked(id)
+	if !ok {
+		return "", "", ErrNotFound
+	}
+	t := &s.cat.Tracks[i]
+	return t.Path, t.Format.MIME(), nil
+}
+
 func (s *Service) Path(id string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

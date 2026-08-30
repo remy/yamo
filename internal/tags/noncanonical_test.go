@@ -60,6 +60,100 @@ func TestNonCanonicalCleanFile(t *testing.T) {
 	}
 }
 
+// A date holding more than a year, which is what an iTunes purchase leaves
+// behind. It reads as 2011 whatever it says, so nothing but the clean-up can
+// see that the file and the field disagree.
+func TestNonCanonicalFullDate(t *testing.T) {
+	dir := t.TempDir()
+	path := genFile(t, dir, "dated.m4a", "-c:a", "aac")
+
+	// ffmpeg writes a bare year, so the shape this is about has to be put
+	// there: a purchased file carries the timestamp iTunes sold it with.
+	if err := updateMP4(path, func(items []mp4Item, _ *Metadata) []mp4Item {
+		for i := range items {
+			if items[i].Name == atomDate {
+				items[i].Body = mp4TextBody("2011-08-29T08:00:00Z")
+			}
+		}
+		return items
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := StripFile(path, NewKeepSet(DefaultKeepTags), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := nonCanonicalNames(rep); got != "date" {
+		t.Fatalf("non-canonical = %q, want %q", got, "date")
+	}
+
+	// The year the clean-up will write back is the one the file already reads
+	// as, so normalising it changes the form and not the value.
+	var r Reader
+	md, err := r.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md.Year != 2011 {
+		t.Errorf("year = %d, want 2011", md.Year)
+	}
+}
+
+// The shapes a date field turns up in. A bare year is the form this library
+// writes, and anything else that still holds a year is worth rewriting.
+func TestDateBeyondYear(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"2011", false},
+		{" 2011 ", false},
+		{"0000", false}, // iTunes' empty original year, not a date at all
+		{"2908", false}, // an ID3v2.3 TDAT, which is DDMM rather than a year
+		{"", false},
+		{"2011-08-29", true},
+		{"2009-02-23T08:00:00Z", true},
+		{"16/08/1977", true},
+	} {
+		if got := dateBeyondYear(tc.in); got != tc.want {
+			t.Errorf("dateBeyondYear(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The same date rule in the two branches a file cannot easily be built for.
+func TestNonCanonicalDateNativeKeys(t *testing.T) {
+	keep := NewKeepSet(DefaultKeepTags)
+
+	rep := &StripReport{}
+	filterMP4Items([]mp4Item{
+		{Name: atomDate, Body: mp4TextBody("2011-08-29")},
+		{Name: atomTitle, Body: mp4TextBody("Where Them Girls At")},
+	}, keep, rep)
+	if got := nonCanonicalNames(rep); got != "date" {
+		t.Errorf("mp4: non-canonical = %q, want %q", got, "date")
+	}
+
+	// A bare year is what this writes, so it must not be reported: a clean-up
+	// that rewrote every file for nothing would be worse than none.
+	rep = &StripReport{}
+	filterMP4Items([]mp4Item{{Name: atomDate, Body: mp4TextBody("2011")}}, keep, rep)
+	if got := nonCanonicalNames(rep); got != "" {
+		t.Errorf("mp4: non-canonical = %q for a bare year, want none", got)
+	}
+
+	rep = &StripReport{}
+	vc := &vorbisComment{fields: []vorbisField{
+		{key: "DATE", value: "2011-08-29"},
+		{key: "ALBUM", value: "Nothing But The Beat"},
+	}}
+	stripVorbisFields(vc, keep, FormatFLAC, rep)
+	if got := nonCanonicalNames(rep); got != "date" {
+		t.Errorf("vorbis: non-canonical = %q, want %q", got, "date")
+	}
+}
+
 // The MP4 and Vorbis branches, driven directly: ffmpeg writes ©gen and ARTIST,
 // so a file exhibiting the older spellings has to be built by hand, and the
 // filtering functions are the smallest thing that can hold one.

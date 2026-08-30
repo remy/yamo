@@ -298,6 +298,58 @@ func TestBatchEdit(t *testing.T) {
 	}, http.StatusBadRequest)
 }
 
+// The audio endpoint serves the file itself, which is what lets the sheet
+// settle whether a song is the one its tags describe.
+func TestAudioEndpoint(t *testing.T) {
+	h := newHarness(t, 1)
+	track := h.firstTrack(t)
+	id, path := track["id"].(string), track["path"].(string)
+
+	res, body := h.do(t, http.MethodGet, "/v1/tracks/"+id+"/audio", nil, http.StatusOK)
+	if ct := res.Header.Get("Content-Type"); ct != "audio/mpeg" {
+		t.Errorf("Content-Type = %q, want audio/mpeg — the format the catalogue recorded", ct)
+	}
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(body, want) {
+		t.Errorf("served %d bytes, want the file's %d", len(body), len(want))
+	}
+
+	// Range requests are what let a player seek without pulling the file
+	// again, and they are the reason this serves content rather than copying.
+	if res.Header.Get("Accept-Ranges") != "bytes" {
+		t.Error("the response does not advertise ranges")
+	}
+	req, err := http.NewRequest(http.MethodGet, h.srv.URL+"/v1/tracks/"+id+"/audio", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=0-63")
+	part, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer part.Body.Close()
+	if part.StatusCode != http.StatusPartialContent {
+		t.Fatalf("a range request returned %d, want 206", part.StatusCode)
+	}
+	chunk, _ := io.ReadAll(part.Body)
+	if !bytes.Equal(chunk, want[:64]) {
+		t.Errorf("the range returned %d bytes, want the first 64 of the file", len(chunk))
+	}
+
+	h.do(t, http.MethodGet, "/v1/tracks/nosuchtrack/audio", nil, http.StatusNotFound)
+
+	// The catalogue is a snapshot, so a track it lists can have been moved
+	// since. That is a missing resource rather than a server fault.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	h.do(t, http.MethodGet, "/v1/tracks/"+id+"/audio", nil, http.StatusNotFound)
+}
+
 func TestArtworkEndpoints(t *testing.T) {
 	h := newHarness(t, 3)
 	ff, _ := exec.LookPath("ffmpeg")

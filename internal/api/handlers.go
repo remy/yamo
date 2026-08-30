@@ -4,8 +4,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/remy/tag-manager/internal/discogs"
 	"github.com/remy/tag-manager/internal/library"
@@ -87,6 +91,44 @@ func (s *Server) getArtwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeImage(w, pic)
+}
+
+// getAudio streams the file itself, so a song can be listened to rather than
+// only read about.
+//
+// http.ServeContent rather than a copy: it answers Range requests, which is
+// what makes a player able to seek without pulling the whole file, and it
+// handles conditional requests from the modification time for free.
+func (s *Server) getAudio(w http.ResponseWriter, r *http.Request) {
+	path, mime, err := s.svc.Audio(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		// The catalogue is a snapshot, so a track it lists can have been moved
+		// or deleted since the scan. That is a missing resource rather than a
+		// server fault, and saying so is what tells a client to rescan.
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "not_found", "the file is no longer where the catalogue says it is")
+			return
+		}
+		fail(w, err)
+		return
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	// Set before serving: ServeContent only sniffs a type when the header is
+	// empty, and sniffing reads the first bytes of the file to guess what the
+	// catalogue already knows.
+	w.Header().Set("Content-Type", mime)
+	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
 }
 
 func writeImage(w http.ResponseWriter, pic *tags.Picture) {
@@ -254,6 +296,27 @@ func pictureETag(p *tags.Picture) string {
 
 // --- batch and maintenance ----------------------------------------------
 
+// splitTracks pulls the artist out of the title across a selection.
+func (s *Server) splitTracks(w http.ResponseWriter, r *http.Request) {
+	var req library.SplitRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	job, err := s.svc.Split(req)
+	if err != nil {
+		// A template that cannot be parsed is the caller's mistake, and saying
+		// which part of it is wrong is the whole value of the message.
+		if errors.Is(err, library.ErrBadTemplate) {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		fail(w, err)
+		return
+	}
+	writeJob(w, job)
+}
+
 func (s *Server) batchEditTracks(w http.ResponseWriter, r *http.Request) {
 	var req library.BatchSetRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -391,6 +454,23 @@ func (s *Server) discogsMaster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// discogsAlbum looks one album up for the fields the Get Info sheet can fill
+// in, which is a different question from finding a cover and a far cheaper
+// one: a search already carries the year and the genres.
+func (s *Server) discogsAlbum(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if strings.TrimSpace(q.Get("album")) == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "an album name is required")
+		return
+	}
+	info, err := s.svc.DiscogsAlbum(r.Context(), q.Get("artist"), q.Get("album"))
+	if err != nil {
+		failDiscogs(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 // copyArtworkFromURL puts a Discogs cover on the clipboard, from where the

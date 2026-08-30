@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -167,6 +168,104 @@ func (s *Service) DiscogsSearch(ctx context.Context, query string, limit int) (*
 	}
 	out.Items = kept
 
+	out.Limit, out.Remaining = s.discogs.Budget()
+	return out, nil
+}
+
+// DiscogsAlbumInfo is what a lookup found out about one album: the fields the
+// Get Info sheet can fill in, and the state of the budget it cost.
+type DiscogsAlbumInfo struct {
+	MasterID int64  `json:"masterId"`
+	Title    string `json:"title"`
+	Artists  string `json:"artists,omitempty"`
+
+	// Year and Genre are the two values worth writing into a tag. Genre is the
+	// first of Genres: Discogs allows several and a genre tag holds one.
+	Year  string `json:"year,omitempty"`
+	Genre string `json:"genre,omitempty"`
+
+	// Genres and Styles are the rest of the classification, kept so a client
+	// can offer the narrower style — "Synth-pop" — instead of "Electronic".
+	Genres []string `json:"genres,omitempty"`
+	Styles []string `json:"styles,omitempty"`
+
+	Limit     int  `json:"rateLimit"`
+	Remaining int  `json:"rateRemaining"`
+	Tokened   bool `json:"tokened"`
+}
+
+// albumInfoCandidates is how many hits a lookup considers.
+//
+// Small on purpose. Only the first usable one is returned, and the rest exist
+// so that a lead hit with no year and no genre — Discogs has plenty — does not
+// end the lookup empty-handed. It costs nothing extra: per_page does not
+// change what a search charges.
+const albumInfoCandidates = 5
+
+// DiscogsAlbum looks an album up for its year and genre, rather than its
+// cover.
+//
+// It is the cheap half of the Discogs feature. A search carries genres, styles
+// and a year without a token, so the usual cost is the one search request; the
+// master is only fetched when the leading hit came back missing both, which is
+// the one case where a second request buys something.
+func (s *Service) DiscogsAlbum(ctx context.Context, artist, album string) (*DiscogsAlbumInfo, error) {
+	if s.discogs == nil {
+		return nil, ErrNoDiscogs
+	}
+	artist, album = strings.TrimSpace(artist), strings.TrimSpace(album)
+	if album == "" {
+		return nil, errors.New("library: a Discogs album lookup needs an album name")
+	}
+
+	hits, err := s.discogs.Search(ctx, strings.TrimSpace(artist+" "+album), albumInfoCandidates)
+	if err != nil {
+		return nil, err
+	}
+
+	var out *DiscogsAlbumInfo
+	for _, h := range hits {
+		if h.MasterID == 0 {
+			continue
+		}
+		info := &DiscogsAlbumInfo{
+			MasterID: h.MasterID, Title: h.Title,
+			Year: h.Year, Genres: h.Genres, Styles: h.Styles,
+		}
+		if out == nil {
+			out = info // the best match, whatever it holds
+		}
+		if info.Year != "" && len(info.Genres) > 0 {
+			out = info // a complete one is worth preferring
+			break
+		}
+	}
+	if out == nil {
+		return nil, fmt.Errorf("%w: nothing on Discogs matched %q", ErrNotFound, strings.TrimSpace(artist+" "+album))
+	}
+
+	// Only when the search left something out: a master fetch is a second
+	// request out of 25 a minute, and it is the whole difference between this
+	// lookup being cheap and being as expensive as searching for a cover.
+	if out.Year == "" || len(out.Genres) == 0 {
+		if m, err := s.discogs.MasterByID(ctx, out.MasterID); err == nil {
+			out.Title, out.Artists = m.Title, m.Artists
+			if out.Year == "" && m.Year > 0 {
+				out.Year = strconv.Itoa(m.Year)
+			}
+			if len(out.Genres) == 0 {
+				out.Genres, out.Styles = m.Genres, m.Styles
+			}
+		}
+		// A failure here is not fatal. Whatever the search gave is still the
+		// answer, and refusing it because the extra request was rate limited
+		// would throw away the part that already worked.
+	}
+
+	if len(out.Genres) > 0 {
+		out.Genre = out.Genres[0]
+	}
+	out.Tokened = s.discogs.Authenticated()
 	out.Limit, out.Remaining = s.discogs.Budget()
 	return out, nil
 }

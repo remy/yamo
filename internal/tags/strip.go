@@ -102,11 +102,27 @@ type StripReport struct {
 	Changed     bool // metadata was removed, or would be in a dry run
 
 	// NonCanonical lists kept tags the file does not hold the way this library
-	// writes them — under an older name, in a numeric form, or missing one of
-	// the frames a write would produce. Readers still find them; they just
+	// writes them — under an older name, in a numeric form, carrying more than
+	// the year, or missing one of the frames a write would produce. Readers still find them; they just
 	// find them somewhere the next tool along may not look. Rewriting the
 	// field puts it right.
 	NonCanonical []Tag
+}
+
+// dateBeyondYear reports whether a date field holds more than the bare year
+// this library writes: "2011-08-29", or the timestamp iTunes leaves behind.
+//
+// It is worth reporting because the year is parsed out on the way in. A file
+// holding "2011-08-29" reads as 2011, so nothing downstream — not the sheet,
+// not the edit endpoint — can tell that setting the year to 2011 would change
+// anything, and the edit is dropped as a no-op. Naming it here hands the job
+// to the clean-up, which rewrites the field as the year it already reads as.
+func dateBeyondYear(s string) bool {
+	s = strings.TrimSpace(s)
+	if len(s) == 4 {
+		return false // a bare year already, or not a date at all
+	}
+	return parseYear(s) > 0
 }
 
 // noteNonCanonical records a tag once.
@@ -202,6 +218,10 @@ func stripID3(path string, keep KeepSet, apply bool, rep *StripReport) error {
 				if v := frameText(fr.payload); normaliseGenre(v) != v {
 					rep.noteNonCanonical(t) // "(19)" rather than "Industrial"
 				}
+			case t == TagDate:
+				if dateBeyondYear(frameText(fr.payload)) {
+					rep.noteNonCanonical(t) // "2011-08-29" where a year is written
+				}
 			}
 			continue
 		}
@@ -293,7 +313,10 @@ func stripVorbisFields(vc *vorbisComment, keep KeepSet, format Format, rep *Stri
 		t := tagForVorbisField(f.key)
 		if keep[t] {
 			out = append(out, f)
-			if vorbisAliases[strings.ToUpper(f.key)] {
+			switch {
+			case vorbisAliases[strings.ToUpper(f.key)]:
+				rep.noteNonCanonical(t)
+			case t == TagDate && dateBeyondYear(f.value):
 				rep.noteNonCanonical(t)
 			}
 			continue
@@ -377,8 +400,11 @@ func filterMP4Items(items []mp4Item, keep KeepSet, rep *StripReport) []mp4Item {
 		t := tagForMP4Atom(it.Name, it.Body)
 		if keep[t] {
 			out = append(out, it)
-			if it.Name == atomGenreID {
+			switch {
+			case it.Name == atomGenreID:
 				rep.noteNonCanonical(t) // gnre holds an ID3v1 genre number
+			case it.Name == atomDate && dateBeyondYear(mp4DataString(it.Body)):
+				rep.noteNonCanonical(t) // an iTunes purchase timestamp, usually
 			}
 			continue
 		}
