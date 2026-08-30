@@ -1,6 +1,7 @@
 package library
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -46,8 +47,10 @@ func (s *Service) List(p ListParams) ListResult {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	hits := s.cat.Index().Search(catalog.ParseQuery(p.Query))
-	sortHits(s.cat, hits, p.Sort)
+	q := catalog.ParseQuery(p.Query)
+	scored := q.Fuzzy()
+	hits := s.cat.Index().SearchScored(q)
+	sortHits(s.cat, hits, p.Sort, scored)
 
 	out := ListResult{Total: len(hits), Limit: p.Limit, Offset: p.Offset, Items: []Track{}}
 	if p.Offset >= len(hits) {
@@ -55,8 +58,14 @@ func (s *Service) List(p ListParams) ListResult {
 	}
 	end := min(p.Offset+p.Limit, len(hits))
 	out.Items = make([]Track, 0, end-p.Offset)
-	for _, i := range hits[p.Offset:end] {
-		out.Items = append(out.Items, toTrack(&s.cat.Tracks[i]))
+	for _, h := range hits[p.Offset:end] {
+		t := toTrack(&s.cat.Tracks[h.Index])
+		if scored {
+			// Rounded because the extra digits are noise: they encode which
+			// tier and bonuses fired, which no client should be reading.
+			t.Score = math.Round(h.Score*1000) / 1000
+		}
+		out.Items = append(out.Items, t)
 	}
 	return out
 }
@@ -81,18 +90,31 @@ func (s *Service) Count(query string) int {
 }
 
 // sortHits orders search results in place.
-func sortHits(c *catalog.Catalog, hits []int32, spec string) {
+//
+// A fuzzy query with no sort of its own is ordered by score, because a search
+// that admits near misses is asking to be ranked; a caller that gave a sort
+// still gets exactly the one it asked for.
+func sortHits(c *catalog.Catalog, hits []catalog.Hit, spec string, scored bool) {
 	keys := parseSort(spec)
 	if len(keys) == 0 {
-		// Catalogue order is path order, which groups albums naturally and is
-		// stable across requests.
-		sort.Slice(hits, func(i, j int) bool { return hits[i] < hits[j] })
-		return
+		if !scored {
+			// Catalogue order is path order, which groups albums naturally and
+			// is stable across requests.
+			sort.Slice(hits, func(i, j int) bool { return hits[i].Index < hits[j].Index })
+			return
+		}
+		keys = []sortKey{{score: true, desc: true}}
 	}
 	sort.SliceStable(hits, func(i, j int) bool {
-		a, b := &c.Tracks[hits[i]], &c.Tracks[hits[j]]
+		a, b := &c.Tracks[hits[i].Index], &c.Tracks[hits[j].Index]
 		for _, k := range keys {
-			if v := k.cmp(a, b); v != 0 {
+			v := 0
+			if k.score {
+				v = cmpFloat(hits[i].Score, hits[j].Score)
+			} else {
+				v = k.cmp(a, b)
+			}
+			if v != 0 {
 				if k.desc {
 					return v > 0
 				}
@@ -104,8 +126,9 @@ func sortHits(c *catalog.Catalog, hits []int32, spec string) {
 }
 
 type sortKey struct {
-	cmp  func(a, b *catalog.Track) int
-	desc bool
+	cmp   func(a, b *catalog.Track) int
+	score bool // ranks on the hit's relevance, which is not a field of a track
+	desc  bool
 }
 
 // parseSort compiles "artist,-year" into comparators, ignoring names it does
@@ -124,6 +147,12 @@ func parseSort(spec string) []sortKey {
 		} else if part[0] == '+' {
 			part = part[1:]
 		}
+		if part == "score" || part == "relevance" {
+			// Highest first is the only ordering anyone means by "score", so
+			// it is the default direction and "-score" is the way to invert it.
+			keys = append(keys, sortKey{score: true, desc: !desc})
+			continue
+		}
 		if cmp, ok := comparatorFor(part); ok {
 			keys = append(keys, sortKey{cmp: cmp, desc: desc})
 		}
@@ -135,7 +164,7 @@ func parseSort(spec string) []sortKey {
 var SortFields = []string{
 	"title", "artist", "albumartist", "album", "genre", "composer", "comment",
 	"year", "track", "disc", "path", "duration", "size", "bitrate", "format",
-	"modified",
+	"modified", "score",
 }
 
 func comparatorFor(name string) (func(a, b *catalog.Track) int, bool) {
@@ -169,6 +198,16 @@ func comparatorFor(name string) (func(a, b *catalog.Track) int, bool) {
 	return func(a, b *catalog.Track) int {
 		return strings.Compare(catalog.Fold(a.String(f)), catalog.Fold(b.String(f)))
 	}, true
+}
+
+func cmpFloat(a, b float64) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
 }
 
 func cmpInt64(a, b int64) int {

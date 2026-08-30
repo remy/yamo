@@ -157,6 +157,21 @@ func TestReadEndpoints(t *testing.T) {
 		t.Errorf("an impossible query matched %v", none["total"])
 	}
 
+	// A fuzzy term finds the misspelt artist from the correct spelling, and
+	// the score it was ranked on comes back with it.
+	fuzzy := h.getJSON(t, "/v1/tracks?q=artist:~presley", http.StatusOK)
+	if fuzzy["total"].(float64) != 4 {
+		t.Errorf("artist:~presley matched %v, want 4", fuzzy["total"])
+	}
+	near := fuzzy["items"].([]any)[0].(map[string]any)
+	if score, ok := near["score"].(float64); !ok || score <= 0 || score >= 1 {
+		t.Errorf("score = %v, want a number between 0 and 1", near["score"])
+	}
+	// An exact query carries none, so a client can tell a filter from a search.
+	if _, ok := page["items"].([]any)[0].(map[string]any)["score"]; ok {
+		t.Error("an exact query returned a score")
+	}
+
 	// One track, with an ETag a client can use as If-Match.
 	first := h.firstTrack(t)
 	resp, _ := h.do(t, http.MethodGet, "/v1/tracks/"+first["id"].(string), nil, http.StatusOK)
@@ -712,4 +727,79 @@ func TestScanIsNotConcurrent(t *testing.T) {
 
 	// And once finished, another is allowed again.
 	h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusAccepted)
+}
+
+func TestRenameAndDeleteTrack(t *testing.T) {
+	h := newHarness(t, 3)
+	track := h.firstTrack(t)
+	id, version := track["id"].(string), track["version"].(string)
+
+	// A rename returns the track under a new identity, because the id is
+	// derived from the path. Location says where it now answers.
+	resp, data := h.do(t, http.MethodPost, "/v1/tracks/"+id+"/rename",
+		strings.NewReader(`{"path":"01 Blue Suede Shoes.mp3"}`), http.StatusOK)
+	var moved map[string]any
+	if err := json.Unmarshal(data, &moved); err != nil {
+		t.Fatalf("rename returned unparseable JSON: %v\n%s", err, data)
+	}
+	newID := moved["id"].(string)
+	if newID == id {
+		t.Error("the id did not change, but the path did")
+	}
+	if got, want := resp.Header.Get("Location"), "/v1/tracks/"+newID; got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+	if !strings.HasSuffix(moved["path"].(string), "01 Blue Suede Shoes.mp3") {
+		t.Errorf("the new path is %q", moved["path"])
+	}
+	h.do(t, http.MethodGet, "/v1/tracks/"+id, nil, http.StatusNotFound)
+	h.do(t, http.MethodGet, "/v1/tracks/"+newID, nil, http.StatusOK)
+
+	// A destination that is taken is a 409, but with its own code: the answer
+	// is another name rather than another read.
+	second := h.getJSON(t, "/v1/tracks?sort=track&limit=2", http.StatusOK)["items"].([]any)[1].(map[string]any)
+	_, taken := h.do(t, http.MethodPost, "/v1/tracks/"+newID+"/rename",
+		strings.NewReader(`{"path":"`+filepath.Base(second["path"].(string))+`"}`), http.StatusConflict)
+	if !strings.Contains(string(taken), `"exists"`) {
+		t.Errorf("a taken name returned %s", taken)
+	}
+
+	// The rules that bound what a move can reach are the caller's mistake.
+	h.do(t, http.MethodPost, "/v1/tracks/"+newID+"/rename",
+		strings.NewReader(`{"path":"01 Blue Suede Shoes.flac"}`), http.StatusBadRequest)
+	h.do(t, http.MethodPost, "/v1/tracks/"+newID+"/rename",
+		strings.NewReader(`{"path":"`+filepath.Join(h.dir, "escaped.mp3")+`"}`), http.StatusBadRequest)
+
+	// Deleting with the version from before the rename must be refused: it is
+	// the file's state the client has not seen.
+	req, _ := http.NewRequest(http.MethodDelete, h.srv.URL+"/v1/tracks/"+newID, nil)
+	req.Header.Set("If-Match", `"`+version+`"`)
+	stale, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.Body.Close()
+	if stale.StatusCode != http.StatusConflict {
+		t.Fatalf("a stale If-Match on a delete returned %d, want 409", stale.StatusCode)
+	}
+
+	path := moved["path"].(string)
+	req2, _ := http.NewRequest(http.MethodDelete, h.srv.URL+"/v1/tracks/"+newID, nil)
+	req2.Header.Set("If-Match", `"`+moved["version"].(string)+`"`)
+	gone, err := h.srv.Client().Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone.Body.Close()
+	if gone.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete = %d, want 204", gone.StatusCode)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("the file is still on disk: %v", err)
+	}
+	h.do(t, http.MethodGet, "/v1/tracks/"+newID, nil, http.StatusNotFound)
+	if total := h.getJSON(t, "/v1/tracks", http.StatusOK)["total"].(float64); total != 2 {
+		t.Errorf("the library holds %v tracks, want 2", total)
+	}
+	h.do(t, http.MethodDelete, "/v1/tracks/nosuchid", nil, http.StatusNotFound)
 }

@@ -229,7 +229,14 @@ func BenchmarkIndexBuild(b *testing.B) {
 func BenchmarkSearch(b *testing.B) {
 	c := makeCatalog(100000)
 	ix := c.Index()
-	for _, q := range []string{"elvis", "artist:elvis", "hound", "year:>1990 genre:jazz", "artist:bjork -genre:rock"} {
+	for _, q := range []string{
+		"elvis", "artist:elvis", "hound", "year:>1990 genre:jazz",
+		"artist:bjork -genre:rock",
+		// The fuzzy forms, which cost far more per track and are the reason
+		// they are opt-in. A bare fuzzy term is the worst case: it scores
+		// every display field of every track.
+		"artist:^elvis", "artist:~presly", "~presly", "~elvis presly",
+	} {
 		parsed := ParseQuery(q)
 		b.Run(q, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {

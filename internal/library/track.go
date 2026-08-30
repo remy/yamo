@@ -62,6 +62,13 @@ type Track struct {
 	// as If-Match; a mismatch means the file changed underneath, which is what
 	// makes editing the same library from two devices safe.
 	Version string `json:"version"`
+
+	// Score is how well the track matched, between 0 and 1, and is present
+	// only for a fuzzy query — the ~ forms. An exact query is a filter, where
+	// every match is equally a match and a score would be a fiction. It is the
+	// last field because it belongs to the search, not to the file: the same
+	// track fetched by id has none.
+	Score float64 `json:"score,omitempty"`
 }
 
 // toTrack converts a catalogue entry into the service's view of it.

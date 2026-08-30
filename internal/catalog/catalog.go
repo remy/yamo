@@ -46,6 +46,20 @@ func (c *Catalog) touch(i int) {
 // Touch marks a track as changed so its index entry is rebuilt.
 func (c *Catalog) Touch(i int) { c.touch(i) }
 
+// Remove drops one track.
+//
+// Everything past it shifts down, so every index a caller holds — including
+// the ones inside the search index — is invalidated. The index is dropped
+// rather than patched: removals are rare, and rebuilding it is a single pass
+// over a slice that was going to be walked anyway.
+func (c *Catalog) Remove(i int) {
+	if i < 0 || i >= len(c.Tracks) {
+		return
+	}
+	c.Tracks = append(c.Tracks[:i], c.Tracks[i+1:]...)
+	c.index = nil
+}
+
 // DirtyCount reports how many tracks have unsaved edits.
 func (c *Catalog) DirtyCount() int {
 	n := 0

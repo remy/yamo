@@ -114,7 +114,12 @@ paths:
             Comma-separated field names, each optionally prefixed with `-` for
             descending. Unrecognised names are ignored rather than rejected, so
             a half-typed sort degrades instead of failing.
-          schema: { type: string, examples: ["artist,album,track", "-year"] }
+
+            `score` sorts by how well each track matched, best first — `-score`
+            inverts it. A fuzzy query with no `sort` at all is already ordered
+            that way; passing one replaces that ordering rather than adding to
+            it.
+          schema: { type: string, examples: ["artist,album,track", "-year", "score"] }
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
@@ -179,6 +184,94 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unwritable' }
+    delete:
+      tags: [tracks]
+      summary: Delete the file
+      description: |
+        Removes the file from disk and drops it from the catalogue. This is a
+        real deletion rather than a move to a holding area: the strip backup
+        exists because tags removed from a file cannot be recovered from
+        anywhere else, whereas whole files are what a NAS's own snapshots and
+        recycle bin are for.
+
+        A file already gone from disk is not an error. The catalogue is a
+        snapshot and can name files removed outside this program, and clearing
+        the entry is what was asked for either way.
+      operationId: deleteTrack
+      parameters:
+        - name: If-Match
+          in: header
+          description: |
+            The `version` the client last saw. When present it must still
+            match, or the request fails with `409` because the file changed
+            underneath. Worth sending here more than anywhere else: nothing
+            inside this program can undo the request.
+          schema: { type: string }
+      responses:
+        '204': { description: "The file was deleted, or was already gone." }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /tracks/{id}/rename:
+    parameters:
+      - $ref: '#/components/parameters/TrackId'
+    post:
+      tags: [tracks]
+      summary: Rename or move the file
+      description: |
+        Moves the file and follows it in the catalogue.
+
+        `path` may be a bare name, which renames the file where it is; a
+        relative path, which resolves against the track's own directory; or an
+        absolute path. Missing parent directories are created, so moving a
+        stray track into the album folder it belongs in is one request.
+
+        Three destinations are refused. One outside every library root, so
+        that this is not a way to scatter files across the machine the server
+        runs on. One that already exists — `409` with code `exists`, which
+        means "choose another name" rather than "read it again and retry". And
+        one that changes the extension, because the catalogue records the
+        format and a file renamed across containers would claim to be
+        something it is not.
+
+        **A track's id is derived from its path, so a rename changes it.** The
+        response is the track under its new identity and `Location` points at
+        it; the old id stops resolving. The `tracks.changed` event names both,
+        so a client holding the old one knows to drop it.
+      operationId: renameTrack
+      parameters:
+        - name: If-Match
+          in: header
+          description: |
+            The `version` the client last saw. When present it must still
+            match, or the request fails with `409`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameRequest' }
+            examples:
+              renameInPlace:
+                summary: Correct a filename
+                value: { path: "03 Blue Suede Shoes.mp3" }
+              moveIntoAlbum:
+                summary: Move a stray track into its album folder
+                value: { path: "../Sun Sessions/03 Blue Suede Shoes.mp3" }
+      responses:
+        '200':
+          description: The track, under its new id.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+            Location:
+              description: Where the track now answers, which is not where it was asked for.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Track' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/RenameConflict' }
 
   /tracks/{id}/artwork:
     parameters:
@@ -857,6 +950,10 @@ components:
         | `elvis` | any text field contains it |
         | `artist:elvis` | just that field |
         | `artist:"elvis presley"` | quoted values may contain spaces |
+        | `artist:^elvis` | the field begins with it |
+        | `artist:presley$` | the field ends with it |
+        | `artist:"^elvis presley$"` | the whole field, exactly |
+        | `artist:~presly` | fuzzy: near misses count, and are scored |
         | `year:>1980` | comparisons: `<`, `<=`, `>`, `>=` |
         | `year:1970-1979` | an inclusive range |
         | `-genre:live` | exclude matches |
@@ -870,6 +967,23 @@ components:
         A bare term searches the display fields only. The sort fields and
         `path` are reachable by name, so searching for `presley` does not also
         return every track whose sort tag reads "Presley, Elvis".
+
+        ### Fuzzy terms
+
+        `~` makes one term forgiving. It matches the value literally, or spread
+        through the field in order (`~elvpres` finds Elvis Presley), or within
+        a bounded number of typos — an insertion, a deletion, a substitution or
+        two letters swapped. Each match carries a `score` between 0 and 1, and
+        a query with a `~` in it comes back ranked by that score unless a
+        `sort` says otherwise.
+
+        The rest of the query is unaffected: `artist:~presly year:>1960
+        -genre:live` filters exactly on the year and the genre and only
+        loosens the artist. Terms without a `~` are never fuzzy, which is what
+        lets a script rely on the result being the set it asked for.
+
+        `~` and the anchors combine, in that order: `artist:~^presly` is
+        "starts with something close to this".
       schema: { type: string }
     Limit:
       name: limit
@@ -898,6 +1012,14 @@ components:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
     Conflict:
       description: The file changed since the version the client sent.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    RenameConflict:
+      description: |
+        Either the file changed since the version the client sent (`conflict`),
+        or something already exists at the destination (`exists`). The codes
+        are distinct because the answers are: re-read and retry, or choose
+        another name.
       content:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
     CountMismatch:
@@ -941,7 +1063,7 @@ components:
         code:
           type: string
           description: A stable identifier for the failure.
-          enum: [not_found, bad_request, conflict, count_mismatch, scan_running, unwritable, unauthorized, internal]
+          enum: [not_found, bad_request, conflict, exists, count_mismatch, scan_running, unwritable, unauthorized, internal]
         jobId: { type: string, description: "For scan_running, the scan already in progress." }
         expected: { type: integer, description: "For count_mismatch, the count the client sent." }
         actual: { type: integer, description: "For count_mismatch, the count the server found." }
@@ -989,6 +1111,16 @@ components:
         size: { type: integer, format: int64 }
         modTime: { type: integer, format: int64, description: Unix seconds. }
         hasArt: { type: boolean }
+        score:
+          type: number
+          minimum: 0
+          maximum: 1
+          description: >-
+            How well the track matched, present only for a query containing a
+            fuzzy `~` term. An exact query is a filter — every match is equally
+            a match — so it returns no score rather than a meaningless 1. The
+            same track fetched by id never carries one: the score belongs to
+            the search, not to the file.
         compilation:
           type: boolean
           description: >-
@@ -1052,6 +1184,20 @@ components:
             `"1"`, `"true"`, `"yes"` and `"on"` set it; `"0"`, `"false"`, `""`
             and `null` clear it.
           examples: ["1", "0"]
+
+    RenameRequest:
+      type: object
+      required: [path]
+      additionalProperties: false
+      properties:
+        path:
+          type: string
+          description: >-
+            Where the file should end up. A bare name renames it in place, a
+            relative path resolves against the track's own directory, and an
+            absolute path is taken as given. It must stay inside a library
+            root and keep the file's extension.
+          examples: ["03 Blue Suede Shoes.mp3", "../Sun Sessions/03 Blue Suede Shoes.mp3"]
 
     Selector:
       type: object

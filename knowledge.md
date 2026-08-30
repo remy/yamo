@@ -177,6 +177,51 @@ contiguous memory. At this size it beats an inverted index once query parsing
 and posting-list merges are paid for, **and** it supports mid-word matching,
 which a token index cannot.
 
+### Fuzzy search is opt-in, and that is the whole design
+
+`~` on a term (`~presly`, `artist:~presly`) is what makes matching forgiving;
+nothing else in the query loosens. Two reasons, in `internal/catalog/fuzzy.go`:
+
+- **The plain search is a filter and people depend on it being one.** `tagmgr
+  find -limit 0 -format path artist:elvis > elvis.m3u` must produce the tracks
+  that were asked for, not the ones that were nearly it. An automatic fallback
+  — retry fuzzily when a query returns little — was considered and rejected for
+  exactly this: the same query would mean different things on different days.
+- **It costs.** Over 100,000 tracks an exact search is 1–4 ms and a bare fuzzy
+  one is around 30 ms, because the scorer runs over each display field
+  separately rather than over the blob in one pass. That is fine for a search
+  someone asked for and would not be fine on every keystroke.
+
+The score is three attempts in descending confidence — substring, then
+subsequence, then bounded Damerau-Levenshtein — and **the bands do not
+overlap** (1.00–0.75, 0.74–0.45, 0.74–0.45 respectively, floored at 0.45). A
+literal hit therefore always outranks a spread-out one, whatever the bonuses
+inside a band add up to, which is what makes the number safe to sort on.
+
+Two things there are load-bearing and easy to undo by accident:
+
+- **The typo tier compares against each *word* of a field as well as the whole
+  of it.** One typo in one word of a long title is one edit; measured against
+  the whole title it is a dozen and would never be found.
+- **The DP table is a `uint8` scratch buffer passed in by the caller.** Go
+  zeroes an array on declaration, so declaring it inside `editDistance` meant
+  memsetting it once per candidate word per field per track. Hoisting it and
+  narrowing it from `int` halved the cost of a fuzzy search. `scoreTypo` walks
+  a field's words in place for the same reason — a `[]string` per field was the
+  single largest cost in the search.
+
+Anchors (`^`, `$`) came in alongside and are unrelated to fuzziness: they turn
+the substring test into a prefix, suffix or whole-field one, and cost nothing.
+Unqualified anchored or fuzzy terms are matched field by field rather than over
+the blob, because `^elvis` means "a field begins with this", not "the blob
+does", and a subsequence must not be allowed to wander out of the artist and
+into the album to complete itself.
+
+A marker only counts when something follows it, so `album:^` is still the
+"field is empty" form and a lone `$` is the character. That rule is what keeps
+the markers from changing the meaning of queries that were valid before they
+existed.
+
 ### The strip keep list is canonical, not per-format
 
 15 canonical tags (`internal/tags/tagkind.go`), each mapping to the native keys
@@ -243,11 +288,15 @@ to fail in both directions** — a test that cannot fail is worthless.
 
 Contract: `api/openapi.yaml`, embedded and served at `/openapi.yaml`,
 `/openapi.json` and browsable at `/docs` (self-contained, no CDN, because a NAS
-may have no outbound access). 25 operations.
+may have no outbound access). 34 operations.
 
 Reading: `GET /v1/tracks` (q, sort, limit, offset), `/tracks/{id}`, `/albums`,
 `/values/{field}`, `/stats`, `/tracks/{id}/artwork`.
 Writing: `PATCH /v1/tracks/{id}`, `PUT`/`DELETE` artwork, the clipboard.
+Files: `DELETE /v1/tracks/{id}` and `POST /v1/tracks/{id}/rename` — the only
+two that change which files exist rather than what is inside one. A rename is
+bounded to the library roots and may not change the extension, and because a
+track's id is derived from its path it comes back under a new one.
 Batch: `/tracks/batch`, `/artwork/batch`, `/strip`, `/restore`, `/scans`.
 Jobs: `/jobs`, `/jobs/{id}`, `/jobs/{id}/events`, `/events`.
 
@@ -537,6 +586,8 @@ On 100,000 synthetic MP3s (`tools/genlib`), M-series Mac, files in page cache:
 | Catalogue load (4.6 MiB snapshot) | 13 ms |
 | Search index build | 49 ms, once at startup |
 | Search | 0.9–3.6 ms |
+| Fuzzy search, one field (`artist:~presly`) | 7.7 ms |
+| Fuzzy search, unqualified (`~presly`) | 30 ms |
 | Snapshot encode / decode | 22 ms / 10 ms |
 
 On a NAS the scan will be bound by disk and network, but the per-file work is

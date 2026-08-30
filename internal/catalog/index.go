@@ -108,6 +108,17 @@ func (ix *Index) field(i, slot int) string {
 	return blob[start:end]
 }
 
+// Hit is one search result: a track, and how well it matched.
+//
+// Score is 1 for an exact query, whatever it matched — every match of a filter
+// is as good as every other. It only spreads out once a term is marked fuzzy,
+// and then it is the mean of the fuzzy terms' scores, so a query that is half
+// right ranks below one that is wholly right.
+type Hit struct {
+	Index int32
+	Score float64
+}
+
 // Search returns the indices of every track matching q, in catalogue order.
 // A nil or empty query returns everything.
 func (ix *Index) Search(q *Query) []int32 {
@@ -121,65 +132,150 @@ func (ix *Index) Search(q *Query) []int32 {
 	}
 	out := make([]int32, 0, 256)
 	for i := 0; i < n; i++ {
-		if ix.matches(i, q) {
+		if _, ok := ix.score(i, q); ok {
 			out = append(out, int32(i))
 		}
 	}
 	return out
 }
 
-func (ix *Index) matches(i int, q *Query) bool {
-	for k := range q.terms {
-		if ix.matchTerm(i, &q.terms[k]) == q.terms[k].negate {
-			return false
+// SearchScored is Search with the relevance of each hit kept. It exists
+// separately because most callers — counting a selection, resolving one for a
+// batch edit — have no use for a score and should not pay to carry one.
+func (ix *Index) SearchScored(q *Query) []Hit {
+	n := len(ix.blobs)
+	if q == nil || q.Empty() {
+		out := make([]Hit, n)
+		for i := range out {
+			out[i] = Hit{Index: int32(i), Score: 1}
+		}
+		return out
+	}
+	out := make([]Hit, 0, 256)
+	for i := 0; i < n; i++ {
+		if s, ok := ix.score(i, q); ok {
+			out = append(out, Hit{Index: int32(i), Score: s})
 		}
 	}
-	return true
+	return out
 }
 
-func (ix *Index) matchTerm(i int, t *term) bool {
+// score evaluates every term of a query against one track.
+//
+// A negated term contributes nothing to the score: "not christmas" is a filter,
+// and how badly a track fails to be christmas is not a measure of how well it
+// answers the query.
+func (ix *Index) score(i int, q *Query) (float64, bool) {
+	total, n := 0.0, 0
+	for k := range q.terms {
+		t := &q.terms[k]
+		s := ix.scoreTerm(i, t)
+		if (s > 0) == t.negate {
+			return 0, false
+		}
+		if t.fuzzy && !t.negate {
+			total += s
+			n++
+		}
+	}
+	if n == 0 {
+		return 1, true
+	}
+	return total / float64(n), true
+}
+
+// scoreTerm rates one clause against one track: 0 for no match, up to 1.
+func (ix *Index) scoreTerm(i int, t *term) float64 {
 	// Numeric fields compare against the track directly.
 	if t.op != cmpNone {
 		tr := &ix.cat.Tracks[i]
+		var v int32
 		switch t.field {
 		case FieldYear:
-			return t.matchNumeric(tr.Year)
+			v = tr.Year
 		case FieldTrackNo:
-			return t.matchNumeric(tr.TrackNo)
+			v = tr.TrackNo
 		case FieldDisc:
-			return t.matchNumeric(tr.Disc)
+			v = tr.Disc
 		case FieldCompilation:
 			// A flag rides the numeric path so that compilation:1 and
 			// compilation:0 both work, and so does the bare compilation:
 			// form that finds tracks without it.
-			var v int32
 			if tr.Compilation {
 				v = 1
 			}
-			return t.matchNumeric(v)
+		default:
+			return 0
 		}
-		return false
+		if t.matchNumeric(v) {
+			return 1
+		}
+		return 0
 	}
 
 	if t.field == fieldAny {
-		// Unqualified: scan the tag fields in one substring test.
-		blob := ix.blobs[i]
-		end := int(ix.spans[i][bareSlot])
-		if end > len(blob) {
-			end = len(blob)
+		// Unqualified and plain: scan the tag fields in one substring test.
+		// This is the hot path — every keystroke in the search bar — and it
+		// stays a single pass over contiguous memory.
+		if !t.fuzzy && !t.anchorStart && !t.anchorEnd {
+			blob := ix.blobs[i]
+			end := min(int(ix.spans[i][bareSlot]), len(blob))
+			if strings.Contains(blob[:end], t.value) {
+				return 1
+			}
+			return 0
 		}
-		return strings.Contains(blob[:end], t.value)
+		// Anchored or fuzzy, the fields are taken one at a time: "^elvis"
+		// means a field begins with it, not that the blob does, and a
+		// subsequence must not be allowed to wander from the artist into the
+		// album to complete itself.
+		best := 0.0
+		for slot := 0; slot <= bareSlot && best < 1; slot++ {
+			if s := ix.scoreField(ix.field(i, slot), t); s > best {
+				best = s
+			}
+		}
+		return best
 	}
 
 	slot := blobSlot[t.field]
 	if slot < 0 {
-		return false
+		return 0
 	}
-	v := ix.field(i, int(slot))
+	return ix.scoreField(ix.field(i, int(slot)), t)
+}
+
+// scoreField applies one text clause to the folded value of one field.
+func (ix *Index) scoreField(v string, t *term) float64 {
 	if t.value == "" {
-		return v == "" // field:  matches tracks where the field is unset
+		// field:  matches tracks where the field is unset.
+		if v == "" {
+			return 1
+		}
+		return 0
 	}
-	return strings.Contains(v, t.value)
+	if t.fuzzy {
+		return fuzzyScore(v, t.value, t.anchorStart, t.anchorEnd)
+	}
+	switch {
+	case t.anchorStart && t.anchorEnd:
+		if v == t.value {
+			return 1
+		}
+	case t.anchorStart:
+		if strings.HasPrefix(v, t.value) {
+			return 1
+		}
+	case t.anchorEnd:
+		if strings.HasSuffix(v, t.value) {
+			return 1
+		}
+	default:
+		if strings.Contains(v, t.value) {
+			return 1
+		}
+	}
+	return 0
 }
 
 // ValueCount is one distinct field value and how many tracks carry it.

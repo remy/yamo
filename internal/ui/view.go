@@ -185,7 +185,7 @@ func (m *Model) renderSearchBar(inner int) string {
 		rightW = 0
 		right = ""
 	}
-	field := m.search.Render(fieldW, m.mode == ModeSearch, th, "search: artist:elvis  year:>1980  -genre:live")
+	field := m.search.Render(fieldW, m.mode == ModeSearch, th, "search: artist:elvis  artist:~presly  year:>1980  -genre:live")
 	pad := inner - DisplayWidth(prompt) - fieldW - rightW - 1
 	if pad < 0 {
 		pad = 0

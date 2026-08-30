@@ -25,6 +25,10 @@ type term struct {
 	value  string // folded, for text matching
 	op     cmpOp
 	lo, hi int32
+
+	fuzzy       bool // ~ : score the match rather than demanding it
+	anchorStart bool // ^ : the value must begin the field
+	anchorEnd   bool // $ : the value must end it
 }
 
 // Query is a parsed search expression.
@@ -35,6 +39,10 @@ type term struct {
 //	elvis                 any text field contains "elvis"
 //	artist:elvis          the artist field contains "elvis"
 //	artist:"elvis presley" quoted values may contain spaces
+//	artist:^elvis         the field begins with it
+//	artist:presley$       the field ends with it
+//	artist:^elvis presley$ the whole field, exactly
+//	artist:~presly        fuzzy: near misses count, and are scored
 //	year:1977             exact year
 //	year:>1980            comparison; <, <=, >, >= all work
 //	year:1970-1979        inclusive range
@@ -49,6 +57,18 @@ type Query struct {
 
 // Empty reports whether the query imposes no constraints.
 func (q *Query) Empty() bool { return len(q.terms) == 0 }
+
+// Fuzzy reports whether any term was marked with ~, which is what makes a
+// result's score mean something. Without one, every match is exact and every
+// score is 1.
+func (q *Query) Fuzzy() bool {
+	for i := range q.terms {
+		if q.terms[i].fuzzy && !q.terms[i].negate {
+			return true
+		}
+	}
+	return false
+}
 
 // ParseQuery compiles a query string. It never fails: anything unparseable is
 // treated as literal text, so a half-typed query still does something useful.
@@ -123,8 +143,15 @@ func compileTerm(tok token) (term, bool) {
 		}
 	}
 
+	// The markers ride on the value, so they are peeled off before anything
+	// else looks at it. On a numeric field they are dropped rather than
+	// honoured: a year is already compared exactly, and there is nothing for
+	// a typo allowance or an anchor to loosen or tighten.
+	s, t.fuzzy, t.anchorStart, t.anchorEnd = splitMarkers(s)
+
 	if t.field == FieldYear || t.field == FieldTrackNo || t.field == FieldDisc ||
 		t.field == FieldCompilation {
+		t.fuzzy, t.anchorStart, t.anchorEnd = false, false, false
 		if op, lo, hi, ok := parseNumeric(s); ok {
 			t.op, t.lo, t.hi = op, lo, hi
 			return t, true
@@ -137,6 +164,25 @@ func compileTerm(tok token) (term, bool) {
 		return t, false
 	}
 	return t, true
+}
+
+// splitMarkers peels the fuzzy and anchor markers off a term's value.
+//
+// A marker only counts when something is left for it to apply to, so "album:^"
+// is still the "this field is empty" form and a bare "$" is the character
+// itself. That rule is what keeps the markers from stealing meaning from
+// queries that were valid before they existed.
+func splitMarkers(s string) (value string, fuzzy, aStart, aEnd bool) {
+	if len(s) > 1 && s[0] == '~' {
+		fuzzy, s = true, s[1:]
+	}
+	if len(s) > 1 && s[0] == '^' {
+		aStart, s = true, s[1:]
+	}
+	if len(s) > 1 && s[len(s)-1] == '$' {
+		aEnd, s = true, s[:len(s)-1]
+	}
+	return s, fuzzy, aStart, aEnd
 }
 
 // parseNumeric compiles the comparison forms accepted for numeric fields.

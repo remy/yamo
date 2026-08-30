@@ -33,3 +33,28 @@ func (p *pathLocks) withPath(path string, fn func() error) error {
 	defer p.Unlock(path)
 	return fn()
 }
+
+// withPaths runs fn while holding the locks for two paths, which a move needs:
+// it reads one file and creates another, and both ends have to be still.
+//
+// The locks are taken in shard order so that two moves crossing each other —
+// one renaming A to B while another renames B to A — cannot each hold what the
+// other waits for. When both paths land in the same shard, one lock already
+// covers both and taking it twice would deadlock against itself.
+func (p *pathLocks) withPaths(a, b string, fn func() error) error {
+	i := hash64(a) % pathLockShards
+	j := hash64(b) % pathLockShards
+	if i == j {
+		p.shards[i].Lock()
+		defer p.shards[i].Unlock()
+		return fn()
+	}
+	if i > j {
+		i, j = j, i
+	}
+	p.shards[i].Lock()
+	defer p.shards[i].Unlock()
+	p.shards[j].Lock()
+	defer p.shards[j].Unlock()
+	return fn()
+}

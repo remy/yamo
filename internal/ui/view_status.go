@@ -95,6 +95,8 @@ func (m *Model) helpAll(inner int) []string {
 			{"/", "search; press ⏎ to run it"},
 			{"artist:elvis", "restrict a term to one field"},
 			{"artist:\"elvis presley\"", "quote values containing spaces"},
+			{"artist:~presly", "fuzzy: near misses count, best first"},
+			{"artist:^elvis, artist:presley$", "anchor to the start or the end"},
 			{"year:1977, year:>1980", "compare numeric fields"},
 			{"year:1970-1979", "an inclusive range"},
 			{"-genre:live", "exclude matches"},

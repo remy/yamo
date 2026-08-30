@@ -56,6 +56,38 @@ func unquote(s string) string {
 	return s
 }
 
+// deleteTrack removes the file itself, not just its tags.
+//
+// If-Match is honoured for the same reason it is on an edit, and matters more:
+// this is the one request that cannot be undone from inside the program.
+func (s *Server) deleteTrack(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.Delete(r.PathValue("id"), unquote(r.Header.Get("If-Match"))); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// renameTrack moves the file. A track's id is derived from its path, so the
+// response is the track under its new identity and Location points at it.
+func (s *Server) renameTrack(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	t, err := s.svc.Rename(r.PathValue("id"), body.Path, unquote(r.Header.Get("If-Match")))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	w.Header().Set("Location", "/v1/tracks/"+t.ID)
+	w.Header().Set("ETag", strconv.Quote(t.Version))
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.svc.Albums(listParams(r)))
 }

@@ -149,6 +149,10 @@ The same query language works in the search bar and on the command line.
 | `elvis` | any text field contains "elvis" |
 | `artist:elvis` | just the artist field |
 | `artist:"elvis presley"` | quoted values may contain spaces |
+| `artist:^elvis` | the field begins with it |
+| `artist:presley$` | the field ends with it |
+| `artist:"^elvis presley$"` | the whole field, exactly |
+| `artist:~presly` | fuzzy: near misses count, and are scored |
 | `year:1977` | exact year |
 | `year:>1980`, `year:<=1969` | comparisons |
 | `year:1970-1979` | an inclusive range |
@@ -163,6 +167,27 @@ Björk, and `Beyoncé` finds Beyoncé. Unqualified terms search the display tag
 fields but not the file path or the sort fields; use `path:`, `artistsort:` and
 the rest for those. Searching for `presley` should not also return every track
 that merely files itself under "Presley, Elvis".
+
+#### Fuzzy terms
+
+`~` loosens one term. It matches the value literally, or spread through the
+field in order — `~elvpres` finds Elvis Presley — or within a bounded number of
+typos: an insertion, a deletion, a substitution, or two letters swapped, so
+both `~presly` and `~prelsey` land. Each result carries a score between 0 and
+1, and a query containing a `~` comes back ranked by it, best first, unless you
+pass a `-sort` of your own.
+
+It is opt-in rather than automatic, and only the terms that carry it are
+loosened:
+
+```sh
+tagmgr find 'artist:~presly year:>1960 -genre:live'
+```
+
+is strict about the year and the genre and forgiving only about the artist —
+which is what lets `find -format path` still be trustworthy as a playlist.
+`~` and the anchors combine, in that order: `artist:~^presly` is "starts with
+something close to this".
 
 On the command line a query starting with `-` needs `--` first, so the flag
 parser leaves it alone:

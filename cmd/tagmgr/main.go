@@ -44,6 +44,10 @@ const queryHelp = `Query syntax:
   elvis                     any text field contains "elvis"
   artist:elvis              restrict a term to one field
   artist:"elvis presley"    quoted values may contain spaces
+  artist:^elvis             the field begins with it
+  artist:presley$           the field ends with it
+  artist:"^elvis presley$"  the whole field, exactly
+  artist:~presly            fuzzy: near misses count, and are scored
   year:1977                 exact match on a numeric field
   year:>1980  year:<=1969   comparisons
   year:1970-1979            an inclusive range
@@ -62,6 +66,14 @@ A bare term searches the display fields only; the sort fields and path
 are reachable by name.
 
 Matching ignores case and accents, so "bjork" finds "Björk".
+
+Fuzzy terms:
+  ~ loosens one term. It matches the value literally, or spread through
+  the field in order ("~elvpres" finds Elvis Presley), or within a few
+  typos ("~presly", "~prelsey"). Every other term stays exact, so
+  "artist:~presly year:>1960" is strict about the year and forgiving
+  about the artist. Results come back best first, and -sort overrides
+  that like any other order. ~ and the anchors combine: artist:~^presly.
 
 A query beginning with "-" is otherwise read as a flag, so pass "--" first:
   tagmgr find -- -genre:live artist:elvis

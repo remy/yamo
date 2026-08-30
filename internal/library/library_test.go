@@ -66,6 +66,68 @@ func openService(t *testing.T, dir string, c *catalog.Catalog) *Service {
 	return s
 }
 
+// TestListFuzzy covers the part of fuzzy search that only exists above the
+// catalogue: the score reaching the client, and ranking by it.
+func TestListFuzzy(t *testing.T) {
+	dir := t.TempDir()
+	c := catalog.New()
+	for i, artist := range []string{"Elvis", "Elvis Presley", "Elvis Costello", "Björk"} {
+		c.Tracks = append(c.Tracks, catalog.Track{
+			Path:       filepath.Join(dir, "music", fmt.Sprintf("%02d song.mp3", i)),
+			Title:      fmt.Sprintf("Song %d", i),
+			Artist:     artist,
+			Album:      "An Album",
+			Year:       1977,
+			Format:     tags.FormatMP3,
+			DurationMS: 120000,
+		})
+	}
+	s := openService(t, dir, c)
+
+	// An exact query is a filter, so it carries no score at all: every match
+	// is as good as every other and a number would only invite sorting on it.
+	for _, it := range s.List(ListParams{Query: "artist:elvis"}).Items {
+		if it.Score != 0 {
+			t.Errorf("%q scored %.3f on an exact query, want no score", it.Artist, it.Score)
+		}
+	}
+
+	near := s.List(ListParams{Query: "artist:~presly"})
+	if near.Total != 1 {
+		t.Fatalf("artist:~presly matched %d, want the one misspelt artist", near.Total)
+	}
+	if s := near.Items[0].Score; s <= 0 || s >= 1 {
+		t.Errorf("a misspelt match scored %.3f, want it between 0 and 1", s)
+	}
+
+	// A fuzzy query with no sort of its own comes back ranked, best first.
+	ranked := s.List(ListParams{Query: "artist:~elvis"})
+	if ranked.Total != 3 {
+		t.Fatalf("artist:~elvis matched %d, want 3", ranked.Total)
+	}
+	if ranked.Items[0].Artist != "Elvis" || ranked.Items[0].Score != 1 {
+		t.Errorf("the best match was %q at %.3f, want Elvis at 1",
+			ranked.Items[0].Artist, ranked.Items[0].Score)
+	}
+	for i := 1; i < len(ranked.Items); i++ {
+		if ranked.Items[i].Score > ranked.Items[i-1].Score {
+			t.Errorf("results are not ranked: %.3f follows %.3f",
+				ranked.Items[i].Score, ranked.Items[i-1].Score)
+		}
+	}
+
+	// An explicit sort still wins, because a caller that asked for an order
+	// asked for that order and not for relevance.
+	byArtist := s.List(ListParams{Query: "artist:~elvis", Sort: "-artist"})
+	if got := byArtist.Items[0].Artist; got != "Elvis Presley" {
+		t.Errorf("-artist put %q first, want Elvis Presley", got)
+	}
+	// And score is a sort key like any other, in both directions.
+	if got := s.List(ListParams{Query: "artist:~elvis", Sort: "-score"}).Items[0].Artist; got == "Elvis" {
+		t.Error("-score put the best match first, want the worst")
+	}
+}
+
 func TestListSortAndPage(t *testing.T) {
 	s := newService(t, 200)
 

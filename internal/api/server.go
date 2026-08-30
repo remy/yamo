@@ -97,6 +97,11 @@ func (s *Server) routes() {
 	s.handle("GET /v1/stats", s.getStats)
 	s.handle("GET /v1/tracks/{id}/audio", s.getAudio)
 
+	// The files themselves. Everything else changes what is inside a file;
+	// these two change which files there are.
+	s.handle("DELETE /v1/tracks/{id}", s.deleteTrack)
+	s.handle("POST /v1/tracks/{id}/rename", s.renameTrack)
+
 	// Artwork.
 	s.handle("GET /v1/tracks/{id}/artwork", s.getArtwork)
 	s.handle("PUT /v1/tracks/{id}/artwork", s.putArtwork)
@@ -240,6 +245,12 @@ func fail(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, library.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
+	case errors.Is(err, library.ErrExists):
+		// Also a 409, but a distinct code: the client's answer is to choose
+		// another name rather than to re-read and retry.
+		writeError(w, http.StatusConflict, "exists", err.Error())
+	case errors.Is(err, library.ErrBadPath):
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 	case errors.As(err, &mismatch):
 		writeJSON(w, http.StatusConflict, apiError{
 			Error: mismatch.Error(), Code: "count_mismatch",

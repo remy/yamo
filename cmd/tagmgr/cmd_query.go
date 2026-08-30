@@ -27,6 +27,7 @@ one filename per line, which is both a valid playlist and easy to pipe:
 
 Examples:
   tagmgr find artist:elvis
+  tagmgr find artist:~presly
   tagmgr find -format tsv 'year:>1990 genre:jazz'
   tagmgr find -sort '-year,artist' 'genre:jazz'
   tagmgr find -- -genre:live artist:elvis
@@ -80,6 +81,12 @@ func cmdFind(args []string) error {
 	out := bufio.NewWriter(os.Stdout)
 	defer out.Flush()
 
+	// A fuzzy query ranks its results, so the table shows what it ranked them
+	// on. The machine-readable formats are left alone: a column that comes and
+	// goes would break the scripts they exist for, and -format json carries
+	// the score already.
+	scored := len(items) > 0 && items[0].Score > 0
+
 	for i := range items {
 		t := &items[i]
 		switch *format {
@@ -91,10 +98,14 @@ func cmdFind(args []string) error {
 		case "json":
 			writeJSONLine(out, t)
 		default:
-			fmt.Fprintf(out, "%-28s %-28s %-32s %4s  %s\n",
+			fmt.Fprintf(out, "%-28s %-28s %-32s %4s  %s",
 				ui.Truncate(t.Artist, 28), ui.Truncate(t.Album, 28),
 				ui.Truncate(t.Title, 32), ui.FormatTrackNo(t.TrackNo),
 				ui.FormatMillis(t.DurationMS))
+			if scored {
+				fmt.Fprintf(out, "  %.2f", t.Score)
+			}
+			fmt.Fprintln(out)
 		}
 	}
 	fmt.Fprintf(os.Stderr, "%d shown of %d matching in %s\n",
