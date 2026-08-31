@@ -18,7 +18,7 @@ import (
 	"github.com/remy/yamo/internal/library"
 )
 
-const serveSummary = `yamo serve - run the backend
+const serveSummary = `yamo serve - run the API server
 
 Usage:
   yamo serve [flags]
@@ -36,20 +36,32 @@ and browsed at /docs, which works with no outbound network access.
 
 The catalogue is a single file the server rebuilds from a scan. It goes in
 the user cache directory by default, since it is wholly derived from the
-music; -catalog or TAGMGR_CATALOG puts it elsewhere. Under systemd there is
+music; -catalog or YAMO_CATALOG puts it elsewhere. Under systemd there is
 often no HOME, and then -catalog is required rather than guessed at.
 
+Scanning on startup:
+  -root points at a music directory to scan when the server comes up
+  (repeatable, so several libraries can be given at once), or set YAMO_ROOT
+  to a comma-separated list — the form a container's environment can hold.
+  With no -root and an empty catalogue there is nothing to scan yet; ask for
+  one over the API (POST /v1/scan) or with "yamo scan" once the server is up.
+
+  The scan runs as a background job; the server starts accepting requests
+  immediately rather than waiting for it. It is incremental like any other
+  scan, so restarting a long-running container with -root set is cheap: a
+  library with nothing changed costs a stat per file, not a re-read.
+
 A web front end:
-  Run serve from a directory containing index.html — webapp/ in this
-  repository — and it is served at the root alongside the API. Same origin,
-  so the browser needs no CORS and therefore no token on loopback. -web
-  points somewhere else, and -web "" turns it off.
+  Run serve from a directory containing index.html and it is served at the
+  root alongside the API. Same origin, so the browser needs no CORS and
+  therefore no token on loopback. -web points somewhere else, and -web ""
+  turns it off.
 
 Access:
   It binds to loopback by default, where no token is needed. Binding to
   anything else requires one: it is generated on first run, printed once,
   and kept in the config directory. Pass it back with -token or
-  TAGMGR_TOKEN.
+  YAMO_TOKEN.
 
   Cross-origin browser requests are only allowed when a token is set. A
   server on loopback with no token and permissive headers could be driven
@@ -63,14 +75,15 @@ Album art from Discogs:
 
   The catch is the rate limit — 25 requests a minute per IP address, and a
   search costs one request plus one per candidate, because an unauthenticated
-  search returns no images. Set -discogs-token or TAGMGR_DISCOGS_TOKEN and it
+  search returns no images. Set -discogs-token or YAMO_DISCOGS_TOKEN and it
   becomes 60 a minute with covers in the search itself, one request a search.
   -no-discogs turns the lookup off, leaving the server making no outbound
   requests at all.
 
 Examples:
   yamo serve                                just this machine
-  cd webapp && yamo serve                   ...and serve the front end too
+  yamo serve -root /volume1/music           ...and scan it on startup
+  yamo serve -web ./webapp                  ...and serve a front end from a directory
   yamo serve -listen 0.0.0.0:8467           reachable on the network
   yamo serve -listen unix:///tmp/yamo.sock
 `
@@ -82,12 +95,14 @@ func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	catalogPath := catalogFlag(fs)
 	listen := fs.String("listen", DefaultListen, "address to bind, or unix:///path/to.sock")
-	token := fs.String("token", os.Getenv("TAGMGR_TOKEN"), "bearer token required for non-loopback binds")
+	token := fs.String("token", os.Getenv("YAMO_TOKEN"), "bearer token required for non-loopback binds")
 	noAuth := fs.Bool("no-auth", false, "serve without a token even when not on loopback")
 	saveEvery := fs.Duration("save-every", 5*time.Second, "how often to write the catalogue snapshot")
 	web := fs.String("web", ".", "directory of a web front end to serve at / (ignored if it has no index.html)")
-	discogsToken := fs.String("discogs-token", os.Getenv("TAGMGR_DISCOGS_TOKEN"), "optional Discogs token; raises the cover-lookup rate limit")
+	discogsToken := fs.String("discogs-token", os.Getenv("YAMO_DISCOGS_TOKEN"), "optional Discogs token; raises the cover-lookup rate limit")
 	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup, so the server makes no outbound requests")
+	roots := stringList(splitEnvList("YAMO_ROOT"))
+	fs.Var(&roots, "root", "directory to scan on startup (repeatable, or comma-separated in YAMO_ROOT)")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
 		return err
 	}
@@ -95,7 +110,7 @@ func cmdServe(args []string) error {
 	if *catalogPath == "" {
 		return errors.New("could not work out where to keep the catalogue: " +
 			"neither HOME nor XDG_CACHE_HOME is set, which is usual under systemd\n" +
-			"       pass -catalog /path/to/catalog.db, or set TAGMGR_CATALOG")
+			"       pass -catalog /path/to/catalog.db, or set YAMO_CATALOG")
 	}
 	// An absolute path so the startup line means something regardless of the
 	// working directory the service was started from.
@@ -175,6 +190,19 @@ func cmdServe(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "  docs: %s/docs\n", shown)
 
+	// -root/YAMO_ROOT exists for unattended starts — a container has no one
+	// around to run "yamo scan" by hand. The scan runs as a background job:
+	// the server below accepts requests immediately rather than waiting for
+	// it, the same as a scan asked for over the API. It is incremental, so
+	// asking for it on every restart is cheap once the library is caught up.
+	if len(roots) > 0 {
+		job, err := svc.Scan(library.ScanRequest{Roots: roots})
+		if err != nil {
+			return fmt.Errorf("initial scan of %s: %w", strings.Join(roots, ", "), err)
+		}
+		fmt.Fprintf(os.Stderr, "  scanning: %s (job %s)\n", strings.Join(roots, ", "), job.ID)
+	}
+
 	ctx, stop := notifyContext()
 	defer stop()
 
@@ -232,6 +260,25 @@ func removeStaleSocket(path string) error {
 		return fmt.Errorf("something is already listening on %s", path)
 	}
 	return os.Remove(path)
+}
+
+// splitEnvList reads a comma-separated environment variable, which is the
+// shape a container's environment can hold, unlike a repeated flag.
+// Whitespace around each entry is trimmed and empty entries are dropped, so
+// a trailing comma or stray space in compose YAML does not become a bogus
+// root.
+func splitEnvList(name string) []string {
+	v := os.Getenv(name)
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, s := range strings.Split(v, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // isLoopback reports whether a bind address only accepts local connections.

@@ -13,10 +13,10 @@ import (
 // command line that could open it directly would be a second writer to files
 // the server believes it alone touches.
 func serverFlags(fs *flag.FlagSet) (server, token *string) {
-	server = fs.String("server", os.Getenv("TAGMGR_SERVER"),
-		"yamo server address (default "+client.DefaultServer+", or TAGMGR_SERVER)")
-	token = fs.String("token", os.Getenv("TAGMGR_TOKEN"),
-		"bearer token, if the server requires one (or TAGMGR_TOKEN)")
+	server = fs.String("server", os.Getenv("YAMO_SERVER"),
+		"yamo server address (default "+client.DefaultServer+", or YAMO_SERVER)")
+	token = fs.String("token", os.Getenv("YAMO_TOKEN"),
+		"bearer token, if the server requires one (or YAMO_TOKEN)")
 	return
 }
 

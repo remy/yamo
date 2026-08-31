@@ -591,10 +591,10 @@ func TestDetectImageProtocol(t *testing.T) {
 		{map[string]string{"TERM_PROGRAM": "Apple_Terminal"}, ImageNone},
 		{map[string]string{}, ImageNone},
 		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TMUX": "/tmp/x"}, ImageNone},
-		{map[string]string{"TERM_PROGRAM": "iTerm.app", "TAGMGR_NO_IMAGES": "1"}, ImageNone},
+		{map[string]string{"TERM_PROGRAM": "iTerm.app", "YAMO_NO_IMAGES": "1"}, ImageNone},
 	}
 	for _, c := range cases {
-		for _, k := range []string{"TERM", "TERM_PROGRAM", "LC_TERMINAL", "KITTY_WINDOW_ID", "TMUX", "TAGMGR_NO_IMAGES"} {
+		for _, k := range []string{"TERM", "TERM_PROGRAM", "LC_TERMINAL", "KITTY_WINDOW_ID", "TMUX", "YAMO_NO_IMAGES"} {
 			t.Setenv(k, "")
 		}
 		for k, v := range c.env {

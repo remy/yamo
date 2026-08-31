@@ -1,8 +1,15 @@
 # yamo
 
-A terminal music metadata manager. It catalogues a large music library fast,
+![yamo — the green music organiser](yamo.jpg)
+
+An API server for a large music library. It catalogues a library fast,
 searches it instantly, and edits tags in place — including across hundreds of
-tracks at once.
+tracks at once — and every one of those operations is reachable over HTTP,
+described by an OpenAPI schema the server serves itself.
+
+The terminal browser below ships in the same binary and is the one client
+built so far, not the whole design: anything that can speak HTTP is as
+legitimate a client as it is. See [The API](#the-api).
 
 Built for a NAS: one static binary, no runtime dependencies, no database
 server, no GUI.
@@ -39,16 +46,65 @@ Both binaries are static and depend on nothing on the target.
 
 For local use: `make install` or `go install ./cmd/yamo`.
 
-## The server
+## Docker
 
-`yamo serve` runs the backend that owns the catalogue and the music files.
-It exposes an HTTP API described by an OpenAPI 3.1 schema, so a mobile web
-interface — or anything else — can be built on the same operations the terminal
-uses.
+The image is `ghcr.io/remy/yamo`, built by
+[`docker.yml`](.github/workflows/docker.yml) for `linux/amd64` and
+`linux/arm64` on every push to `main` (`:latest`) and every `vX.Y.Z` tag
+(`:X.Y.Z`, `:X.Y`, `:X`). It runs `yamo serve`; the terminal and the rest of
+the client commands are still in the binary if you `docker compose exec` in,
+but the container's job is to be the API server.
+
+```sh
+cp .env.example .env      # fill in YAMO_TOKEN and MUSIC_DIR
+docker compose up -d
+docker compose logs -f    # first run: confirms the initial scan under -root
+```
+
+That's [`docker-compose.yml`](docker-compose.yml) as committed: it binds the
+container's `/data` (the catalogue) and `/music` (the library, read-write —
+the API edits tags in place) to the host, and passes `YAMO_ROOT=/music` so
+the server scans on every start — see `YAMO_ROOT` in the table below for
+what that costs on a restart where nothing changed.
+
+A token is not optional here the way it is for `yamo serve` on a bare
+machine: binding `0.0.0.0` — the only address reachable through Docker's
+port mapping — trips the same "not loopback" check either way, so the
+compose file refuses to start without `YAMO_TOKEN` set (`docker compose up`
+fails fast with a clear error rather than the container looping on a
+generated token nothing outside it can read). Generate one with
+`openssl rand -hex 24`.
+
+### Environment variables
+
+The flags most worth setting without typing them are the ones with an
+environment variable fallback, because a container's configuration is
+environment variables and volumes, not command-line flags typed by a
+person. `YAMO_ROOT` is the one worth calling out for Docker specifically:
+with no one around to run `yamo scan` by hand after `docker compose up`, it
+scans on every start instead — a no-op cost (a stat per file, not a
+re-read) once the library is caught up, which is what makes it safe to
+leave set rather than something to remember to run once.
+
+| Variable | Flag | Used by | Meaning |
+| --- | --- | --- | --- |
+| `YAMO_CATALOG` | `-catalog` | `serve` | Catalogue file path. Defaults to the user cache directory outside Docker; the image sets it to `/data/catalog.db`. |
+| `YAMO_ROOT` | `-root` (repeatable) | `serve` | Comma-separated directories to scan on startup, in the background, without blocking the server from accepting requests. Unset means an empty new catalogue stays empty until something scans it. |
+| `YAMO_TOKEN` | `-token` | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back. |
+| `YAMO_DISCOGS_TOKEN` | `-discogs-token` | `serve` | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower. |
+| `YAMO_SERVER` | `-server` | every client command | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
+| `YAMO_NO_IMAGES` | — (no flag) | the terminal browser | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands. |
+
+## The API
+
+`yamo serve` is the whole program: it owns the catalogue and the music files,
+and everything else — the terminal browser, the `find`/`scan`/`art`/`strip`
+commands, a phone, a script — is a client of it over HTTP. It exposes that
+API as an OpenAPI 3.1 schema, so a mobile web interface, or anything else, can
+be built on the same operations the terminal uses rather than a subset of them.
 
 ```sh
 yamo serve                                 # loopback, no token needed
-cd webapp && yamo serve                    # ...and serve the browser front end
 yamo serve -listen 0.0.0.0:8467            # reachable on the network
 yamo serve -listen unix:///tmp/yamo.sock
 
@@ -101,12 +157,17 @@ Cross-origin browser requests are only permitted when a token is set. A server
 on loopback with permissive headers could be driven by any web page you
 happened to visit, and this API rewrites music files.
 
-## Use
+## The bundled clients
+
+The rest of this document covers the terminal browser and the scriptable
+commands (`scan`, `find`, `art`, `strip`, …) that ship in the same binary as
+the server. They are clients like any other — built against the API above,
+not given any access it doesn't offer.
 
 ```sh
-yamo serve                   # the backend; everything else is a client
+yamo serve                   # the API server; everything else is a client
 yamo scan /volume1/music     # build the catalogue
-yamo                         # browse and edit
+yamo                         # browse and edit, in the terminal
 yamo find artist:elvis       # query from a script
 yamo info                    # what is in the library
 yamo help                    # usage; `yamo help scan` for one command
@@ -120,7 +181,7 @@ Every command takes `-h`, and `yamo help <command>` prints the same thing.
 Usage goes to stdout so it pipes into a pager; errors go to stderr.
 
 The catalogue lives in your cache directory (`yamo info` prints the path).
-Override it with `-catalog PATH` or `TAGMGR_CATALOG`.
+Override it with `-catalog PATH` or `YAMO_CATALOG`.
 
 ### Scanning
 
@@ -512,13 +573,14 @@ is why 100,000 tracks fit in 4.6 MiB and load in 13 ms.
 
 ```
 api/               the OpenAPI contract, embedded into the binary
-cmd/yamo/        command line: serve, scan, find, info, art, strip, browse
+internal/api/      HTTP handlers over the service — the server itself
+internal/library/  the service layer: owns the catalogue, all operations
 internal/tags/     format parsers and writers; no third-party tag library
 internal/catalog/  in-memory library, binary snapshot, search index
 internal/scan/     parallel directory walk and tag extraction
-internal/library/  the service layer: owns the catalogue, all operations
-internal/api/      HTTP handlers over the service
-internal/ui/       the terminal interface
+internal/client/   Go client for the API, used by everything below
+internal/ui/       the terminal browser, a client like any other
+cmd/yamo/          serve, plus the client commands: scan, find, info, art, strip, browse
 tools/genlib/      synthetic library generator, for benchmarking
 tools/tuidrive/    drives the interface in a pty, for testing the rendering
 ```

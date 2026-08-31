@@ -11,9 +11,11 @@ code.
 
 ## 1. What it is
 
-A music metadata manager for a large library — the target is around 100,000
-files on a NAS. It catalogues them, searches them, and edits the tags in the
-files themselves.
+An API server for a large music library — the target is around 100,000 files
+on a NAS. It catalogues them, searches them, and edits the tags in the files
+themselves, all reachable over HTTP. The terminal browser bundled with it is
+one client of that API, not the design centre; see §3 for why the split is
+where it is.
 
 Written in Go. It compiles to one static binary with no runtime dependencies
 and cross-compiles to the NAS with an environment variable. The work is
@@ -46,7 +48,7 @@ yamo find artist:elvis
 yamo help <command>                         # every command has real usage
 ```
 
-Clients take `-server` / `TAGMGR_SERVER` and `-token` / `TAGMGR_TOKEN`.
+Clients take `-server` / `YAMO_SERVER` and `-token` / `YAMO_TOKEN`.
 
 Tests need `ffmpeg` on the path; they skip without it rather than failing. Real
 encoder output is used deliberately — hand-built fixtures would only prove the
@@ -77,7 +79,7 @@ given to `yamo scan` must be the **NAS's** paths.
 
 ### Where the catalogue lives
 
-`$TAGMGR_CATALOG`, else `-catalog`, else the user cache directory
+`$YAMO_CATALOG`, else `-catalog`, else the user cache directory
 (`~/.cache/yamo/catalog.db` on Linux). The server prints the resolved
 absolute path at startup.
 
@@ -106,10 +108,16 @@ supporting both). The reasoning recorded at the time:
 The accepted costs: `yamo` needs a running server, and remote use needs
 debouncing to stay responsive. There is deliberately **no auto-spawn**.
 
+`serve -root` (§5, "Only one scan runs at a time") is not an exception to
+that: it doesn't spawn anything, it just asks the one process that's already
+starting to also scan, which is a request a person could otherwise have made
+themselves with `yamo scan` seconds later. It exists because Docker has no
+person there to do that.
+
 ```
                     ┌──────────────────┐
    terminal ───────▶│                  │
-   command line ───▶│   yamo serve   │──▶ catalogue snapshot
+   command line ───▶│    yamo serve    │──▶ catalogue snapshot
    browser/phone ──▶│  (internal/api)  │──▶ music files
                     └──────────────────┘
                              │
@@ -128,13 +136,12 @@ debouncing to stay responsive. There is deliberately **no auto-spawn**.
 | `internal/catalog/` | 1,410 | In-memory library, binary snapshot, search index, query language. |
 | `internal/scan/` | 694 | Parallel directory walk and tag extraction. |
 | `internal/library/` | 3,136 | **The service.** Owns the catalogue, all operations, jobs, events. |
-| `internal/api/` | 1,492 | HTTP handlers over the service, SSE, docs page. |
-| `internal/client/` | 889 | Go client for the API. |
-| `internal/ui/` | 4,296 | The terminal browser, now a client. |
+| `internal/api/` | 1,492 | **The server.** HTTP handlers over the service, SSE, docs page. |
+| `internal/client/` | 889 | Go client for the API. Everything below is built on it. |
+| `internal/ui/` | 4,296 | The terminal browser — a client, same as the command line. |
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
-| `cmd/yamo/` | 1,431 | `serve` plus the client commands. |
+| `cmd/yamo/` | 1,431 | `serve`, plus the client commands. |
 | `tools/genlib/` | 173 | Synthetic library generator, for benchmarking. |
-| `webapp/` | ~900 | Browser front end. A sample: vanilla ES modules, no build. Served by `yamo serve` when run from that directory. |
 | `tools/tuidrive/` | — | Python: drives the terminal in a pty. Not shipped. |
 
 Direct dependencies are only `bubbletea`, `lipgloss`, `go-runewidth` and
@@ -672,8 +679,9 @@ Recorded because several were invisible to the obvious test:
 - **Cover art normalising.** No resize or re-encode. Measured on a real
   library, **85% of embedded artwork is duplicate bytes** — the same cover once
   per track — so dedup or resizing is where the space is, not tag stripping.
-- **A TypeScript client.** Explicitly dropped. `webapp/` is a working browser
-  client written directly against the schema instead.
+- **A bundled browser client.** `webapp/` was a working demo written directly
+  against the schema and has since been removed; no browser client ships now.
+  The OpenAPI contract is the thing to build one against — see §1.
 - **`internal/artclip` and `cmd/yamo` have no tests of their own.** They are
   covered indirectly through the API and client suites.
 

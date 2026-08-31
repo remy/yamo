@@ -1,4 +1,7 @@
-// Command yamo catalogues and edits music metadata from the terminal.
+// Command yamo is an API server for a music library: it catalogues, searches
+// and edits tags, and every operation is reachable over HTTP. This binary
+// also carries the terminal browser and the scriptable client commands, but
+// those are clients of the API, not the thing itself — see "yamo serve".
 package main
 
 import (
@@ -14,10 +17,10 @@ import (
 	"syscall"
 )
 
-const rootUsage = `yamo - terminal music metadata manager
+const rootUsage = `yamo - API server for a music library, with a terminal client built in
 
 Usage:
-  yamo serve [flags]           run the backend that owns the library
+  yamo serve [flags]           run the API server that owns the library
   yamo [flags]                 browse and edit the catalogue (default)
   yamo scan [flags] <dir>...   build or refresh the catalogue
   yamo find [flags] <query>    print matching tracks and exit
@@ -35,7 +38,7 @@ Getting started:
 
 The catalogue defaults to
   %s
-Override it with -catalog or by setting TAGMGR_CATALOG.
+Override it with -catalog or by setting YAMO_CATALOG.
 `
 
 // queryHelp documents the search language, which is identical in the search
@@ -266,7 +269,7 @@ func writeUsage(w io.Writer, fs *flag.FlagSet, summary, footer string) {
 // happened to be, or fail to write and quietly rescan on every restart. The
 // server refuses instead and asks for -catalog.
 func defaultCatalogPath() string {
-	if p := os.Getenv("TAGMGR_CATALOG"); p != "" {
+	if p := os.Getenv("YAMO_CATALOG"); p != "" {
 		return p
 	}
 	if dir, err := os.UserCacheDir(); err == nil {

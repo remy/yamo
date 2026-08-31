@@ -33,7 +33,7 @@ func (p ImageProtocol) String() string {
 // Getting it wrong in the cautious direction costs a preview; getting it wrong
 // the other way corrupts the display, so anything uncertain reports none.
 func DetectImageProtocol() ImageProtocol {
-	if os.Getenv("TAGMGR_NO_IMAGES") != "" {
+	if os.Getenv("YAMO_NO_IMAGES") != "" {
 		return ImageNone
 	}
 	// Inside tmux or screen the escape sequences are swallowed or mangled

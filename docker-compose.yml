@@ -1,0 +1,27 @@
+services:
+  yamo:
+    image: ghcr.io/remy/yamo:latest
+    restart: unless-stopped
+    ports:
+      - "8467:8467"
+    volumes:
+      # Catalog: catalog.db and the generated token live here. Bind-mount it
+      # or the catalogue is gone the moment the container is removed.
+      - ./data:/data
+      # Music library: read-write, not read-only — editing tags is the
+      # point, and a read-only mount makes every edit fail with EROFS.
+      - ${MUSIC_DIR:-./music}:/music
+    environment:
+      YAMO_ROOT: /music
+      YAMO_TOKEN: ${YAMO_TOKEN:?set YAMO_TOKEN in .env — see README}
+      # Optional: raises the Discogs cover-lookup rate limit from 25 to 60
+      # requests/minute. Leave unset and lookups still work, just slower.
+      YAMO_DISCOGS_TOKEN: ${YAMO_DISCOGS_TOKEN:-}
+    healthcheck:
+      # `info` takes no query and no args beyond auth, so it is the cheapest
+      # thing that proves the API is actually answering, not just listening.
+      test: ["CMD", "/yamo", "info", "-token", "${YAMO_TOKEN}"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

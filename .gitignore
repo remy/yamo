@@ -1,3 +1,5 @@
 /dist/
 /.venv/
 *.db
+/.env
+/data/

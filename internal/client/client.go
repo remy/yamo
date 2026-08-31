@@ -77,10 +77,10 @@ func cutUnixPrefix(s string) (string, bool) {
 // FromEnv builds a client from the usual flags and environment.
 func FromEnv(server, token string) (*Client, error) {
 	if server == "" {
-		server = os.Getenv("TAGMGR_SERVER")
+		server = os.Getenv("YAMO_SERVER")
 	}
 	if token == "" {
-		token = os.Getenv("TAGMGR_TOKEN")
+		token = os.Getenv("YAMO_TOKEN")
 	}
 	return New(server, token)
 }
