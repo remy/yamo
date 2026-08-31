@@ -67,6 +67,21 @@ the API edits tags in place) to the host, and passes `YAMO_ROOT=/music` so
 the server scans on every start — see `YAMO_ROOT` in the table below for
 what that costs on a restart where nothing changed.
 
+The `user:` line is not decoration. The image is distroless `:nonroot`, so
+its default is uid 65532 — an account that exists inside the container and
+owns nothing on your host — and a bind-mounted `./data` owned by anyone else
+gives that uid no write permission. The symptom is the server starting fine
+and then failing on every save:
+
+```
+yamo: could not save the catalogue: open /data/.yamo-3876691773.tmp: permission denied
+```
+
+Set `PUID`/`PGID` in `.env` to the account that owns the bind-mounted
+directories (`id -u` and `id -g`), which is also the account that has to own
+the music files for tag edits to land. The same uid needs write access to
+`/music`, not just `/data`.
+
 A token is not optional here the way it is for `yamo serve` on a bare
 machine: binding `0.0.0.0` — the only address reachable through Docker's
 port mapping — trips the same "not loopback" check either way, so the

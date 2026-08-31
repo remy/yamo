@@ -4,6 +4,12 @@ services:
     restart: unless-stopped
     ports:
       - "8467:8467"
+    # The image is distroless:nonroot, so without this it runs as uid 65532 —
+    # an account that owns nothing on your host, which makes every catalogue
+    # save fail with "permission denied" on /data. Run it as whoever owns the
+    # bind-mounted directories instead: `id -u` and `id -g` for your own
+    # account, or the account that owns the music library on a NAS.
+    user: "${PUID:-1000}:${PGID:-1000}"
     volumes:
       # Catalog: catalog.db and the generated token live here. Bind-mount it
       # or the catalogue is gone the moment the container is removed.
