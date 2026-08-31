@@ -3,7 +3,15 @@
 # Static, CGO-free binary — the same build the NAS release gets (see the
 # Makefile's `nas` target), just cross-compiled for whatever platform
 # `docker buildx` was asked for via the automatic TARGETOS/TARGETARCH args.
-FROM golang:1.24-alpine AS build
+#
+# --platform=$BUILDPLATFORM pins this stage to the runner's own architecture
+# regardless of which target it's building for, so building linux/arm64 on
+# an amd64 runner runs the Go toolchain natively and cross-compiles — which
+# is what it's for — rather than running the whole compiler under QEMU. The
+# difference is minutes, not seconds: emulating a compiler running is far
+# slower than emulating the small binary it produces, which is the only
+# part (the final COPY below) that actually needs to be arm64.
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./
