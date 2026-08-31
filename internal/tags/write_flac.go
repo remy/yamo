@@ -72,7 +72,7 @@ func updateFLAC(path string, mutate flacMutator) error {
 
 	// Split the comment block out from the rest; a file without one gets an
 	// empty comment so an edit has somewhere to land.
-	vc := &vorbisComment{vendor: "tagmgr"}
+	vc := &vorbisComment{vendor: "yamo"}
 	other := make([]flacBlock, 0, len(blocks))
 	for _, b := range blocks {
 		switch b.typ {

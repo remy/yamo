@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/library"
 )
 
 // Label column widths inside the edit grid. "Album Artist" is the longest

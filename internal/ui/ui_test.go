@@ -12,9 +12,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/remy/tag-manager/internal/api"
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/api"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
 )
 
 // newTestModel builds a model over a real server holding a small library.

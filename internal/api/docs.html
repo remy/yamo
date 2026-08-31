@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>tagmgr API</title>
+<title>yamo API</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   :root {
@@ -67,7 +67,7 @@
   footer { padding: 2rem 1.5rem; color: var(--dim); font-size: .85rem; text-align: center }
 </style>
 <header>
-  <h1>tagmgr API</h1>
+  <h1>yamo API</h1>
   <p id="blurb">Loading the schema…</p>
   <p>
     <a href="/openapi.yaml" download>openapi.yaml</a> ·
@@ -76,7 +76,7 @@
   </p>
 </header>
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
-<footer>Served by the running tagmgr instance, so this is the contract it actually implements.</footer>
+<footer>Served by the running yamo instance, so this is the contract it actually implements.</footer>
 <script>
 const el = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n };
 

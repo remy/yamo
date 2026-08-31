@@ -5,8 +5,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
 )
 
 // Update handles one message. Key handling is split by mode so that each

@@ -4,7 +4,7 @@ import (
 	"flag"
 	"os"
 
-	"github.com/remy/tag-manager/internal/client"
+	"github.com/remy/yamo/internal/client"
 )
 
 // serverFlags registers the two flags every client command shares.
@@ -14,7 +14,7 @@ import (
 // the server believes it alone touches.
 func serverFlags(fs *flag.FlagSet) (server, token *string) {
 	server = fs.String("server", os.Getenv("TAGMGR_SERVER"),
-		"tagmgr server address (default "+client.DefaultServer+", or TAGMGR_SERVER)")
+		"yamo server address (default "+client.DefaultServer+", or TAGMGR_SERVER)")
 	token = fs.String("token", os.Getenv("TAGMGR_TOKEN"),
 		"bearer token, if the server requires one (or TAGMGR_TOKEN)")
 	return

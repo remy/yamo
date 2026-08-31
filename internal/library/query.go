@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/remy/tag-manager/internal/catalog"
+	"github.com/remy/yamo/internal/catalog"
 )
 
 // Paging bounds. A windowed table and a phone list both want a page and a

@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/library"
 )
 
 // streamEvents sends every catalogue change as a server-sent event.

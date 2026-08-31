@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // makeCatalog builds a synthetic library with the shape of a real one: a

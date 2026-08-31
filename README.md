@@ -1,4 +1,4 @@
-# tagmgr
+# yamo
 
 A terminal music metadata manager. It catalogues a large music library fast,
 searches it instantly, and edits tags in place — including across hundreds of
@@ -8,7 +8,7 @@ Built for a NAS: one static binary, no runtime dependencies, no database
 server, no GUI.
 
 ```
-┌─ tagmgr  /volume1/music ─────────────────────────────────────────────────────┐
+┌─ yamo  /volume1/music ─────────────────────────────────────────────────────┐
 │ / artist:elvis album:"sun sessions"                     12 selected · 12 / 98,412 │
 ├──┬───────────────┬──────────────────┬─────────────────────┬────┬────┬────────┤
 │  │Artist         │Album             │Title                │   #│Year│  Time  │
@@ -30,27 +30,27 @@ because nothing here is CPU-bound.
 ## Install
 
 ```sh
-make nas                       # builds dist/tagmgr-linux-{amd64,arm64}
-scp dist/tagmgr-linux-amd64 nas:/usr/local/bin/tagmgr
+make nas                       # builds dist/yamo-linux-{amd64,arm64}
+scp dist/yamo-linux-amd64 nas:/usr/local/bin/yamo
 ```
 
-UGREEN NASync boxes are x86-64, so `tagmgr-linux-amd64` is the one you want.
+UGREEN NASync boxes are x86-64, so `yamo-linux-amd64` is the one you want.
 Both binaries are static and depend on nothing on the target.
 
-For local use: `make install` or `go install ./cmd/tagmgr`.
+For local use: `make install` or `go install ./cmd/yamo`.
 
 ## The server
 
-`tagmgr serve` runs the backend that owns the catalogue and the music files.
+`yamo serve` runs the backend that owns the catalogue and the music files.
 It exposes an HTTP API described by an OpenAPI 3.1 schema, so a mobile web
 interface — or anything else — can be built on the same operations the terminal
 uses.
 
 ```sh
-tagmgr serve                                 # loopback, no token needed
-cd webapp && tagmgr serve                    # ...and serve the browser front end
-tagmgr serve -listen 0.0.0.0:8467            # reachable on the network
-tagmgr serve -listen unix:///tmp/tagmgr.sock
+yamo serve                                 # loopback, no token needed
+cd webapp && yamo serve                    # ...and serve the browser front end
+yamo serve -listen 0.0.0.0:8467            # reachable on the network
+yamo serve -listen unix:///tmp/yamo.sock
 
 curl -O http://127.0.0.1:8467/openapi.yaml   # download the contract
 open http://127.0.0.1:8467/docs              # browse it
@@ -104,36 +104,36 @@ happened to visit, and this API rewrites music files.
 ## Use
 
 ```sh
-tagmgr serve                   # the backend; everything else is a client
-tagmgr scan /volume1/music     # build the catalogue
-tagmgr                         # browse and edit
-tagmgr find artist:elvis       # query from a script
-tagmgr info                    # what is in the library
-tagmgr help                    # usage; `tagmgr help scan` for one command
+yamo serve                   # the backend; everything else is a client
+yamo scan /volume1/music     # build the catalogue
+yamo                         # browse and edit
+yamo find artist:elvis       # query from a script
+yamo info                    # what is in the library
+yamo help                    # usage; `yamo help scan` for one command
 ```
 
 The server owns the catalogue and the music files; nothing else opens them.
 Start it before anything else, or from a systemd unit or launchd plist so it
 comes up with the machine.
 
-Every command takes `-h`, and `tagmgr help <command>` prints the same thing.
+Every command takes `-h`, and `yamo help <command>` prints the same thing.
 Usage goes to stdout so it pipes into a pager; errors go to stderr.
 
-The catalogue lives in your cache directory (`tagmgr info` prints the path).
+The catalogue lives in your cache directory (`yamo info` prints the path).
 Override it with `-catalog PATH` or `TAGMGR_CATALOG`.
 
 ### Scanning
 
-`tagmgr scan` walks the given directories and extracts tags. Re-running it
+`yamo scan` walks the given directories and extracts tags. Re-running it
 without `-full` reuses every entry whose size and modification time are
 unchanged, so a refresh costs a stat per file rather than a read.
 
 ```sh
-tagmgr scan -status                     # is one running?
-tagmgr scan /volume1/music              # first run, or refresh
-tagmgr scan                             # refresh whatever the catalogue covers
-tagmgr scan -full /volume1/music        # ignore the cache, re-read everything
-tagmgr scan -exclude Podcasts /volume1/music
+yamo scan -status                     # is one running?
+yamo scan /volume1/music              # first run, or refresh
+yamo scan                             # refresh whatever the catalogue covers
+yamo scan -full /volume1/music        # ignore the cache, re-read everything
+yamo scan -exclude Podcasts /volume1/music
 ```
 
 Deleted files disappear from the catalogue on the next scan. Directories that
@@ -181,7 +181,7 @@ It is opt-in rather than automatic, and only the terms that carry it are
 loosened:
 
 ```sh
-tagmgr find 'artist:~presly year:>1960 -genre:live'
+yamo find 'artist:~presly year:>1960 -genre:live'
 ```
 
 is strict about the year and the genre and forgiving only about the artist —
@@ -193,7 +193,7 @@ On the command line a query starting with `-` needs `--` first, so the flag
 parser leaves it alone:
 
 ```sh
-tagmgr find -- -genre:live artist:elvis
+yamo find -- -genre:live artist:elvis
 ```
 
 ### Editing
@@ -265,13 +265,13 @@ many tracks as you like. The clipboard is on disk, so a cover copied in the
 browser can be pasted from the command line and the other way round.
 
 ```sh
-tagmgr art                                   # what art the library has
-tagmgr art -copy cover.jpg                   # put an image on the clipboard
-tagmgr art -copy "01 track.flac"             # ...or lift one off a track
-tagmgr art -paste artist:elvis -apply        # write it to matching tracks
-tagmgr art -from-folder -apply               # embed the folder.jpg beside each track
-tagmgr art -export ~/covers                  # write covers out as files
-tagmgr art -remove 'album:demos' -apply      # take art off
+yamo art                                   # what art the library has
+yamo art -copy cover.jpg                   # put an image on the clipboard
+yamo art -copy "01 track.flac"             # ...or lift one off a track
+yamo art -paste artist:elvis -apply        # write it to matching tracks
+yamo art -from-folder -apply               # embed the folder.jpg beside each track
+yamo art -export ~/covers                  # write covers out as files
+yamo art -remove 'album:demos' -apply      # take art off
 ```
 
 In the browser: `y` copies the cover under the cursor, `p` pastes it onto the
@@ -281,7 +281,7 @@ else. Unlike tag edits, artwork is written straight to disk rather than held
 for `^s`: holding several hundred covers in memory to write later would cost
 more than the library itself.
 
-`tagmgr art` with no other flag reports what is there, grouped by image:
+`yamo art` with no other flag reports what is there, grouped by image:
 
 ```
   tracks  image                           embedded  example album
@@ -343,15 +343,15 @@ rather than writing them: nothing is saved until OK.
 
 ### Stripping
 
-`tagmgr strip` removes every tag that is not on a keep list, leaving a uniform
+`yamo strip` removes every tag that is not on a keep list, leaving a uniform
 set of metadata across the library.
 
 ```sh
-tagmgr strip                                    # dry run over everything
-tagmgr strip artist:elvis                       # dry run over a subset
-tagmgr strip -list                              # print the keep list
-tagmgr strip -backup ~/strip.jsonl -apply       # do it, reversibly
-tagmgr restore -backup ~/strip.jsonl -apply     # put it all back
+yamo strip                                    # dry run over everything
+yamo strip artist:elvis                       # dry run over a subset
+yamo strip -list                              # print the keep list
+yamo strip -backup ~/strip.jsonl -apply       # do it, reversibly
+yamo restore -backup ~/strip.jsonl -apply     # put it all back
 ```
 
 It is a **dry run unless `-apply` is given**, and the dry run reports exactly
@@ -420,7 +420,7 @@ same song reports one. Writing both makes the two formats agree.
 
 Change the list with `-keep`, extend it with `-also`. Names may be canonical
 (`albumartist`) or native to any format (`TPE2`, `ALBUMARTIST`, `aART`) — you
-should not have to translate a list you already have. `tagmgr strip -list`
+should not have to translate a list you already have. `yamo strip -list`
 prints the full vocabulary.
 
 #### Putting values where they belong
@@ -512,7 +512,7 @@ is why 100,000 tracks fit in 4.6 MiB and load in 13 ms.
 
 ```
 api/               the OpenAPI contract, embedded into the binary
-cmd/tagmgr/        command line: serve, scan, find, info, art, strip, browse
+cmd/yamo/        command line: serve, scan, find, info, art, strip, browse
 internal/tags/     format parsers and writers; no third-party tag library
 internal/catalog/  in-memory library, binary snapshot, search index
 internal/scan/     parallel directory walk and tag extraction
@@ -545,7 +545,7 @@ To look at the interface without a terminal:
 
 ```sh
 python3 -m venv .venv && ./.venv/bin/pip install pyte
-./.venv/bin/python tools/tuidrive/drive.py "./dist/tagmgr" 120x30 '/artist:elvis<enter>' 'e'
+./.venv/bin/python tools/tuidrive/drive.py "./dist/yamo" 120x30 '/artist:elvis<enter>' 'e'
 ```
 
 ## Limitations
@@ -553,5 +553,5 @@ python3 -m venv .venv && ./.venv/bin/pip install pyte
 - WMA, WAV and AIFF are read but not written.
 - `strip` and `restore` cover MP3, FLAC, MP4, Ogg Vorbis and Opus. WMA, WAV
   and AIFF are read but not written, so they are reported and skipped.
-- The catalogue is not watched; run `tagmgr scan` after adding music.
+- The catalogue is not watched; run `yamo scan` after adding music.
 - One catalogue at a time; use `-catalog` to keep several.

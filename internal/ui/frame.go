@@ -58,7 +58,7 @@ func closeRule(width int, seps []int) string { return rule(width, seps, teeL, te
 func openRule(width int, seps []int) string { return rule(width, seps, teeL, teeT, teeR) }
 
 // titledRule draws a top edge with a label set into it, as in
-// ┌─ tagmgr ──────┐. The label is truncated if the box is too narrow for it.
+// ┌─ yamo ──────┐. The label is truncated if the box is too narrow for it.
 func titledRule(width int, label string) string {
 	if width <= 0 {
 		return ""

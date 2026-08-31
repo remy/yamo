@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // coverNames are the filenames album art conventionally goes by, in the order

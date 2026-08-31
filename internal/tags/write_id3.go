@@ -397,7 +397,7 @@ func rewriteWithNewHeader(path string, src *os.File, size, oldHeaderLen int64, n
 		return err
 	}
 	dir := dirOf(path)
-	tmp, err := os.CreateTemp(dir, ".tagmgr-*.tmp")
+	tmp, err := os.CreateTemp(dir, ".yamo-*.tmp")
 	if err != nil {
 		return err
 	}

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/library"
 )
 
 // harness is a running server over a real, freshly scanned library.

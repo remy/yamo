@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"net/http"
 
-	apispec "github.com/remy/tag-manager/api"
+	apispec "github.com/remy/yamo/api"
 )
 
 //go:embed docs.html

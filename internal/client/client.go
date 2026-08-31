@@ -1,4 +1,4 @@
-// Package client talks to a tagmgr server.
+// Package client talks to a yamo server.
 //
 // The types on the wire are the service's own, imported rather than restated.
 // Two parallel sets of structs describing the same JSON would drift, and the
@@ -20,13 +20,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/library"
 )
 
 // DefaultServer is where the client looks unless told otherwise.
 const DefaultServer = "http://127.0.0.1:8467"
 
-// Client is a connection to a tagmgr server.
+// Client is a connection to a yamo server.
 type Client struct {
 	base  string
 	token string
@@ -44,7 +44,7 @@ func New(server, token string) (*Client, error) {
 	c := &Client{token: token, http: &http.Client{Timeout: 0}}
 
 	if socket, ok := cutUnixPrefix(server); ok {
-		c.base = "http://tagmgr"
+		c.base = "http://yamo"
 		c.http.Transport = &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return (&net.Dialer{}).DialContext(ctx, "unix", socket)
@@ -123,7 +123,7 @@ type ErrServerUnreachable struct {
 }
 
 func (e *ErrServerUnreachable) Error() string {
-	return fmt.Sprintf("cannot reach a tagmgr server at %s\n       start one with: tagmgr serve", e.Base)
+	return fmt.Sprintf("cannot reach a yamo server at %s\n       start one with: yamo serve", e.Base)
 }
 
 func (e *ErrServerUnreachable) Unwrap() error { return e.Err }

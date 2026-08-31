@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
-  title: tagmgr
+  title: yamo
   version: "1.0.0"
   summary: Catalogue, search and edit the metadata of a large music library.
   description: |
-    tagmgr keeps a catalogue of a music library and edits the tags in the files
+    yamo keeps a catalogue of a music library and edits the tags in the files
     themselves. This API is the only way anything reaches those files: the
     terminal interface and the command line are both clients of it.
 

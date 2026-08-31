@@ -1,4 +1,4 @@
-# tagmgr — project knowledge
+# yamo — project knowledge
 
 Written for whoever (or whatever) picks this up next. It covers what the
 program is, how it is split, why the awkward decisions were made that way, and
@@ -29,8 +29,8 @@ contract, terminal browser, and command line. 102 tests, all clean under
 ## 2. Running it
 
 ```sh
-make build          # dist/tagmgr for this machine
-make nas            # dist/tagmgr-linux-{amd64,arm64}, static, no cgo
+make build          # dist/yamo for this machine
+make nas            # dist/yamo-linux-{amd64,arm64}, static, no cgo
 make test           # go test ./...
 make bench          # search and catalogue benchmarks
 ```
@@ -38,12 +38,12 @@ make bench          # search and catalogue benchmarks
 The server owns everything; every other command is a client.
 
 ```sh
-tagmgr serve                                  # loopback, no token
-tagmgr serve -listen 0.0.0.0:8467 -token XXX  # reachable on the network
-tagmgr scan /volume1/music                    # asks the server to scan
-tagmgr                                        # the browser
-tagmgr find artist:elvis
-tagmgr help <command>                         # every command has real usage
+yamo serve                                  # loopback, no token
+yamo serve -listen 0.0.0.0:8467 -token XXX  # reachable on the network
+yamo scan /volume1/music                    # asks the server to scan
+yamo                                        # the browser
+yamo find artist:elvis
+yamo help <command>                         # every command has real usage
 ```
 
 Clients take `-server` / `TAGMGR_SERVER` and `-token` / `TAGMGR_TOKEN`.
@@ -55,10 +55,10 @@ code agrees with itself.
 ### Releasing
 
 ```sh
-make release        # builds and copies to /Volumes/Media/tagmgr
+make release        # builds and copies to /Volumes/Media/yamo
 ```
 
-The NAS is **x86-64**, so `tagmgr-linux-amd64` is the build that ships. The
+The NAS is **x86-64**, so `yamo-linux-amd64` is the build that ships. The
 share is mounted on the Mac over SMB, so the binary is copied rather than
 scp'd; `make release` chmods it and then checks the execute bit actually
 stuck, because SMB mounts do not always honour it and a binary that arrives
@@ -73,17 +73,17 @@ server, but restarting it does apply the new build.
 
 Paths differ between the two machines: the Mac sees `/Volumes/Media/music`,
 the NAS sees `/volume1/Media/music`. Scans run on the server, so the roots
-given to `tagmgr scan` must be the **NAS's** paths.
+given to `yamo scan` must be the **NAS's** paths.
 
 ### Where the catalogue lives
 
 `$TAGMGR_CATALOG`, else `-catalog`, else the user cache directory
-(`~/.cache/tagmgr/catalog.db` on Linux). The server prints the resolved
+(`~/.cache/yamo/catalog.db` on Linux). The server prints the resolved
 absolute path at startup.
 
 With neither `HOME` nor `XDG_CACHE_HOME` — the normal case under systemd — the
 server **refuses to start** and asks for `-catalog`. It used to fall back to a
-relative `tagmgr-catalog.db`, which put the catalogue in whatever the working
+relative `yamo-catalog.db`, which put the catalogue in whatever the working
 directory happened to be, or failed to write and quietly rescanned on every
 restart.
 
@@ -103,13 +103,13 @@ supporting both). The reasoning recorded at the time:
   keystroke, autocomplete, bulk edit, artwork — so an API that satisfies it
   will satisfy a phone.
 
-The accepted costs: `tagmgr` needs a running server, and remote use needs
+The accepted costs: `yamo` needs a running server, and remote use needs
 debouncing to stay responsive. There is deliberately **no auto-spawn**.
 
 ```
                     ┌──────────────────┐
    terminal ───────▶│                  │
-   command line ───▶│   tagmgr serve   │──▶ catalogue snapshot
+   command line ───▶│   yamo serve   │──▶ catalogue snapshot
    browser/phone ──▶│  (internal/api)  │──▶ music files
                     └──────────────────┘
                              │
@@ -132,9 +132,9 @@ debouncing to stay responsive. There is deliberately **no auto-spawn**.
 | `internal/client/` | 889 | Go client for the API. |
 | `internal/ui/` | 4,296 | The terminal browser, now a client. |
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
-| `cmd/tagmgr/` | 1,431 | `serve` plus the client commands. |
+| `cmd/yamo/` | 1,431 | `serve` plus the client commands. |
 | `tools/genlib/` | 173 | Synthetic library generator, for benchmarking. |
-| `webapp/` | ~900 | Browser front end. A sample: vanilla ES modules, no build. Served by `tagmgr serve` when run from that directory. |
+| `webapp/` | ~900 | Browser front end. A sample: vanilla ES modules, no build. Served by `yamo serve` when run from that directory. |
 | `tools/tuidrive/` | — | Python: drives the terminal in a pty. Not shipped. |
 
 Direct dependencies are only `bubbletea`, `lipgloss`, `go-runewidth` and
@@ -182,7 +182,7 @@ which a token index cannot.
 `~` on a term (`~presly`, `artist:~presly`) is what makes matching forgiving;
 nothing else in the query loosens. Two reasons, in `internal/catalog/fuzzy.go`:
 
-- **The plain search is a filter and people depend on it being one.** `tagmgr
+- **The plain search is a filter and people depend on it being one.** `yamo
   find -limit 0 -format path artist:elvis > elvis.m3u` must produce the tracks
   that were asked for, not the ones that were nearly it. An automatic fallback
   — retry fuzzily when a query returns little — was considered and rejected for
@@ -637,8 +637,8 @@ Recorded because several were invisible to the obvious test:
    sequence carrying base64, and base64 contains every letter, so a scan
    stopping at the first `m` cut the sequence in half and mismeasured the line.
 6. **Flags after a positional were silently dropped.** Go's flag package stops
-   at the first non-flag argument, so `tagmgr strip artist:elvis -apply` did
-   nothing. `reorderArgs` in `cmd/tagmgr/main.go` fixes it for every command.
+   at the first non-flag argument, so `yamo strip artist:elvis -apply` did
+   nothing. `reorderArgs` in `cmd/yamo/main.go` fixes it for every command.
 7. **`Jobs.Start` returned the live job**, which a handler then serialised while
    the worker wrote progress into it. A real data race.
 8. **Strip left the catalogue holding removed values**, so a search matched
@@ -674,7 +674,7 @@ Recorded because several were invisible to the obvious test:
   per track — so dedup or resizing is where the space is, not tag stripping.
 - **A TypeScript client.** Explicitly dropped. `webapp/` is a working browser
   client written directly against the schema instead.
-- **`internal/artclip` and `cmd/tagmgr` have no tests of their own.** They are
+- **`internal/artclip` and `cmd/yamo` have no tests of their own.** They are
   covered indirectly through the API and client suites.
 
 ---

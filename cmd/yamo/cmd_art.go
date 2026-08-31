@@ -9,25 +9,25 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
-	"github.com/remy/tag-manager/internal/ui"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/ui"
 )
 
-const artSummary = `tagmgr art - inspect, copy and replace cover art
+const artSummary = `yamo art - inspect, copy and replace cover art
 
 Usage:
-  tagmgr art [flags] [query]
+  yamo art [flags] [query]
 
 Cover art moves by clipboard: copy one image, then paste it onto however
 many tracks you like. The clipboard lives on the server, so a cover copied
 here can be pasted in the browser or from a phone, and the other way round.
 
-  tagmgr art                            what art the matching tracks have
-  tagmgr art -copy TRACK_OR_IMAGE       put an image on the clipboard
-  tagmgr art -paste QUERY -apply        write it to the matching tracks
-  tagmgr art -export DIR QUERY          write covers out as files
-  tagmgr art -remove QUERY -apply       take the art off
+  yamo art                            what art the matching tracks have
+  yamo art -copy TRACK_OR_IMAGE       put an image on the clipboard
+  yamo art -paste QUERY -apply        write it to the matching tracks
+  yamo art -export DIR QUERY          write covers out as files
+  yamo art -remove QUERY -apply       take the art off
 
 -copy accepts an image file on this machine, which is uploaded, or a track
 id to lift the cover from one already in the library.
@@ -35,7 +35,7 @@ id to lift the cover from one already in the library.
 -paste, -remove and -from-folder are dry runs unless -apply is given.
 
 Folder art:
-  tagmgr art -from-folder QUERY -apply
+  yamo art -from-folder QUERY -apply
 
   Embeds the cover.jpg or folder.jpg sitting beside each track, which is
   how a downloaded library stores art and the usual reason none of it shows
@@ -88,7 +88,7 @@ func cmdArt(args []string) error {
 	case *paste:
 		if _, _, err := c.Clipboard(ctx); err != nil {
 			if client.IsNotFound(err) {
-				return errors.New("the clipboard is empty (try: tagmgr art -copy FILE)")
+				return errors.New("the clipboard is empty (try: yamo art -copy FILE)")
 			}
 			return err
 		}

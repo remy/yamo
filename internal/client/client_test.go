@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/remy/tag-manager/internal/api"
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/api"
+	"github.com/remy/yamo/internal/library"
 )
 
 // newTestClient starts a real server over a freshly scanned library and
@@ -300,7 +300,7 @@ func TestClientUnreachableIsHelpful(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a failure")
 	}
-	if !containsAll(err.Error(), "cannot reach", "tagmgr serve") {
+	if !containsAll(err.Error(), "cannot reach", "yamo serve") {
 		t.Errorf("the message does not say how to fix it: %v", err)
 	}
 }
@@ -325,11 +325,11 @@ func contains(s, sub string) bool {
 
 func TestClientUnixSocket(t *testing.T) {
 	// A unix address must be dialled as a socket rather than parsed as a host.
-	c, err := New("unix:///tmp/tagmgr-test.sock", "")
+	c, err := New("unix:///tmp/yamo-test.sock", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.base != "http://tagmgr" {
+	if c.base != "http://yamo" {
 		t.Errorf("unix client base = %q", c.base)
 	}
 	if c.http.Transport == nil {

@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/discogs"
-	"github.com/remy/tag-manager/internal/library"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/discogs"
+	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/tags"
 )
 
 func (s *Server) listTracks(w http.ResponseWriter, r *http.Request) {

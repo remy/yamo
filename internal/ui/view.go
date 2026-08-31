@@ -151,9 +151,9 @@ func (m *Model) editFieldRows() int {
 
 func (m *Model) headerTitle() string {
 	if len(m.roots) == 0 {
-		return "tagmgr"
+		return "yamo"
 	}
-	return "tagmgr  " + strings.Join(m.roots, "  ")
+	return "yamo  " + strings.Join(m.roots, "  ")
 }
 
 // renderSearchBar draws the query line with the result counts on the right.

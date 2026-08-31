@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/remy/tag-manager/internal/library"
+import "github.com/remy/yamo/internal/library"
 
 // fieldEdit is one field of one track changing value.
 type fieldEdit struct {

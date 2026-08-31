@@ -18,7 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 func main() {

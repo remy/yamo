@@ -15,7 +15,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // Clip is the held image plus a note of where it came from.

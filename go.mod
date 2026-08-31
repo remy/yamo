@@ -1,4 +1,4 @@
-module github.com/remy/tag-manager
+module github.com/remy/yamo
 
 go 1.24.2
 

@@ -1,7 +1,7 @@
 package ui
 
 import (
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/library"
 )
 
 // Column describes one column of the track table.

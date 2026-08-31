@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // The shapes a compilation's titles turn up in, and what the template makes of

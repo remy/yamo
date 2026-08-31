@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	apispec "github.com/remy/tag-manager/api"
+	apispec "github.com/remy/yamo/api"
 	"gopkg.in/yaml.v3"
 )
 

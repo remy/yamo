@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/remy/tag-manager/internal/discogs"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/discogs"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // fakeDiscogs stands in for the real API, with the shape that matters: a

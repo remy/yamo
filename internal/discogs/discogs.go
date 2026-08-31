@@ -37,7 +37,7 @@ const DefaultBaseURL = "https://api.discogs.com"
 
 // UserAgent identifies this client. Discogs asks that clients say who they are
 // and answers 403 to a request that does not.
-const UserAgent = "tagmgr/1.0 +https://github.com/remy/tag-manager"
+const UserAgent = "yamo/1.0 +https://github.com/remy/yamo"
 
 // maxImageBytes caps a cover download. Discogs serves covers at 600x600 and
 // they run to a few hundred kilobytes; anything past this is not a cover, and

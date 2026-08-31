@@ -1,4 +1,4 @@
-// Command tagmgr catalogues and edits music metadata from the terminal.
+// Command yamo catalogues and edits music metadata from the terminal.
 package main
 
 import (
@@ -14,24 +14,24 @@ import (
 	"syscall"
 )
 
-const rootUsage = `tagmgr - terminal music metadata manager
+const rootUsage = `yamo - terminal music metadata manager
 
 Usage:
-  tagmgr serve [flags]           run the backend that owns the library
-  tagmgr [flags]                 browse and edit the catalogue (default)
-  tagmgr scan [flags] <dir>...   build or refresh the catalogue
-  tagmgr find [flags] <query>    print matching tracks and exit
-  tagmgr art [flags] [query]     inspect, copy and replace cover art
-  tagmgr strip [flags] [query]   remove every tag except a fixed set
-  tagmgr restore [flags]         put stripped tags back from a backup
-  tagmgr info [flags]            show catalogue statistics
-  tagmgr help [command]          usage for a command
+  yamo serve [flags]           run the backend that owns the library
+  yamo [flags]                 browse and edit the catalogue (default)
+  yamo scan [flags] <dir>...   build or refresh the catalogue
+  yamo find [flags] <query>    print matching tracks and exit
+  yamo art [flags] [query]     inspect, copy and replace cover art
+  yamo strip [flags] [query]   remove every tag except a fixed set
+  yamo restore [flags]         put stripped tags back from a backup
+  yamo info [flags]            show catalogue statistics
+  yamo help [command]          usage for a command
 
-Run "tagmgr help <command>" for the flags a command accepts.
+Run "yamo help <command>" for the flags a command accepts.
 
 Getting started:
-  tagmgr scan /volume1/music     catalogue a library
-  tagmgr                         browse it; press ? for keys
+  yamo scan /volume1/music     catalogue a library
+  yamo                         browse it; press ? for keys
 
 The catalogue defaults to
   %s
@@ -76,7 +76,7 @@ Fuzzy terms:
   that like any other order. ~ and the anchors combine: artist:~^presly.
 
 A query beginning with "-" is otherwise read as a flag, so pass "--" first:
-  tagmgr find -- -genre:live artist:elvis
+  yamo find -- -genre:live artist:elvis
 `
 
 // errHelpRequested unwinds a help request back to main. Asking how to use a
@@ -88,7 +88,7 @@ func main() {
 		if errors.Is(err, errHelpRequested) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, "tagmgr:", err)
+		fmt.Fprintln(os.Stderr, "yamo:", err)
 		os.Exit(1)
 	}
 }
@@ -126,7 +126,7 @@ func run(args []string) error {
 	case "help":
 		return cmdHelp(args)
 	default:
-		return fmt.Errorf("unknown command %q (try: tagmgr help)", cmd)
+		return fmt.Errorf("unknown command %q (try: yamo help)", cmd)
 	}
 }
 
@@ -163,7 +163,7 @@ func cmdHelp(args []string) error {
 	case "browse", "tui":
 		return cmdBrowse([]string{"-h"})
 	}
-	return fmt.Errorf("unknown command %q (try: tagmgr help)", args[0])
+	return fmt.Errorf("unknown command %q (try: yamo help)", args[0])
 }
 
 func printRootUsage() {
@@ -188,7 +188,7 @@ func parseFlags(fs *flag.FlagSet, args []string, summary, footer string) error {
 			writeUsage(os.Stdout, fs, summary, footer)
 			return errHelpRequested
 		}
-		return fmt.Errorf("%w (try: tagmgr help %s)", err, fs.Name())
+		return fmt.Errorf("%w (try: yamo help %s)", err, fs.Name())
 	}
 	return nil
 }
@@ -197,7 +197,7 @@ func parseFlags(fs *flag.FlagSet, args []string, summary, footer string) error {
 //
 // Go's flag package stops parsing at the first non-flag argument. Every
 // command here takes a query, and writing the flag after it is the natural
-// way to type one — but "tagmgr strip artist:elvis -apply" would then treat
+// way to type one — but "yamo strip artist:elvis -apply" would then treat
 // -apply as part of the query and silently do nothing. For a command that
 // writes to a hundred thousand files, silently doing nothing is the good
 // outcome; the bad one is a flag that was meant to make an operation safer
@@ -270,10 +270,10 @@ func defaultCatalogPath() string {
 		return p
 	}
 	if dir, err := os.UserCacheDir(); err == nil {
-		return filepath.Join(dir, "tagmgr", "catalog.db")
+		return filepath.Join(dir, "yamo", "catalog.db")
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(home, ".cache", "tagmgr", "catalog.db")
+		return filepath.Join(home, ".cache", "yamo", "catalog.db")
 	}
 	return ""
 }

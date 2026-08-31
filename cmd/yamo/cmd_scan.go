@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
-	"github.com/remy/tag-manager/internal/ui"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/ui"
 )
 
-const scanSummary = `tagmgr scan - bring the library up to date
+const scanSummary = `yamo scan - bring the library up to date
 
 Usage:
-  tagmgr scan [flags] <dir>...
+  yamo scan [flags] <dir>...
 
 Asks the server to walk each directory and extract tags. Files whose size
 and modification time are unchanged since the last scan are reused without
@@ -37,11 +37,11 @@ The paths are resolved by the server, not by this command, so they must
 make sense on the machine running it.
 
 Examples:
-  tagmgr scan /volume1/music
-  tagmgr scan -status                     is one running?
-  tagmgr scan                             refresh the existing roots
-  tagmgr scan -full /volume1/music        re-read every file
-  tagmgr scan -exclude Podcasts /volume1/music
+  yamo scan /volume1/music
+  yamo scan -status                     is one running?
+  yamo scan                             refresh the existing roots
+  yamo scan -full /volume1/music        re-read every file
+  yamo scan -exclude Podcasts /volume1/music
 `
 
 func cmdScan(args []string) error {

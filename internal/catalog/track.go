@@ -8,7 +8,7 @@ package catalog
 import (
 	"strings"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // Track is one file plus its metadata. Field order is chosen so the struct

@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
 )
 
 // editField describes one slot in the edit panel.

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/remy/tag-manager/internal/discogs"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/discogs"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // ErrNoDiscogs means the server was built or configured without the lookup.

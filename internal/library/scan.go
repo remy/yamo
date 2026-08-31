@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/remy/tag-manager/internal/scan"
+	"github.com/remy/yamo/internal/scan"
 )
 
 // ScanRequest asks for a filesystem scan.

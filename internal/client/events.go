@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/library"
 )
 
 // Events streams catalogue changes from the server.

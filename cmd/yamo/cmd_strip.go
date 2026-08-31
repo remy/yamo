@@ -6,16 +6,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
-	"github.com/remy/tag-manager/internal/tags"
-	"github.com/remy/tag-manager/internal/ui"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/tags"
+	"github.com/remy/yamo/internal/ui"
 )
 
-const stripSummary = `tagmgr strip - remove every tag except a fixed set
+const stripSummary = `yamo strip - remove every tag except a fixed set
 
 Usage:
-  tagmgr strip [flags] [query]
+  yamo strip [flags] [query]
 
 Removes every tag that is not on the keep list, leaving a uniform set of
 metadata across the library. With a query, only matching tracks are
@@ -38,19 +38,19 @@ only where it is kept. A dry run counts them without writing.
 WMA, WAV and AIFF are read but not written, so they are counted and skipped.
 
 Examples:
-  tagmgr strip                          what would be removed from everything
-  tagmgr strip artist:elvis             ...from one artist
-  tagmgr strip -list                    print the keep list and exit
-  tagmgr strip -also musicbrainz -apply
-  tagmgr strip -backup -apply
-  tagmgr strip -normalize -backup -apply    tidy where values are stored too
-  tagmgr restore -backup ID -apply
+  yamo strip                          what would be removed from everything
+  yamo strip artist:elvis             ...from one artist
+  yamo strip -list                    print the keep list and exit
+  yamo strip -also musicbrainz -apply
+  yamo strip -backup -apply
+  yamo strip -normalize -backup -apply    tidy where values are stored too
+  yamo restore -backup ID -apply
 `
 
-const restoreSummary = `tagmgr restore - put stripped tags back from a backup
+const restoreSummary = `yamo restore - put stripped tags back from a backup
 
 Usage:
-  tagmgr restore [flags] -backup ID
+  yamo restore [flags] -backup ID
 
 Backups live on the server and are addressed by id, so the client that
 restores need not be the one that stripped. List them with -list.
@@ -150,7 +150,7 @@ func printStripResult(res library.StripResult, apply bool) {
 		fmt.Printf("skipped (this build cannot write them): %s\n", countsLine(res.Skipped))
 	}
 	if res.BackupID != "" {
-		fmt.Printf("backup %s — undo with: tagmgr restore -backup %s -apply\n", res.BackupID, res.BackupID)
+		fmt.Printf("backup %s — undo with: yamo restore -backup %s -apply\n", res.BackupID, res.BackupID)
 	}
 	reportFailures(res.BatchResult)
 	if !apply && res.Changed > 0 {
@@ -168,14 +168,14 @@ func printKeepList(keepFlag, alsoFlag string) error {
 	if keepFlag != "" {
 		parsed, unknown := tags.ParseKeepSet(splitList(keepFlag))
 		if len(unknown) > 0 {
-			return fmt.Errorf("unknown tag %q (try: tagmgr strip -list)", unknown[0])
+			return fmt.Errorf("unknown tag %q (try: yamo strip -list)", unknown[0])
 		}
 		keep = parsed
 	}
 	if alsoFlag != "" {
 		extra, unknown := tags.ParseKeepSet(splitList(alsoFlag))
 		if len(unknown) > 0 {
-			return fmt.Errorf("unknown tag %q (try: tagmgr strip -list)", unknown[0])
+			return fmt.Errorf("unknown tag %q (try: yamo strip -list)", unknown[0])
 		}
 		for t := range extra {
 			keep[t] = true
@@ -288,7 +288,7 @@ func cmdRestore(args []string) error {
 		return nil
 	}
 	if *backupID == "" {
-		return fmt.Errorf("-backup is required (try: tagmgr restore -list)")
+		return fmt.Errorf("-backup is required (try: yamo restore -list)")
 	}
 
 	job, err := c.Restore(ctx, library.RestoreRequest{BackupID: *backupID, DryRun: !*apply})

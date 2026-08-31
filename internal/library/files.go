@@ -253,7 +253,7 @@ func moveAcrossDevices(src, dst string) error {
 		mode = fi.Mode().Perm()
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".tagmgr-move-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".yamo-move-*")
 	if err != nil {
 		return err
 	}

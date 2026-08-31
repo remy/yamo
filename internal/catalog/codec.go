@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // Snapshot format. Strings are interned into a single table and referenced by
@@ -284,7 +284,7 @@ func Save(path string, c *Catalog) error {
 			return err
 		}
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tagmgr-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".yamo-*.tmp")
 	if err != nil {
 		return err
 	}

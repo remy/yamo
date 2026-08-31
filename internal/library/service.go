@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/remy/tag-manager/internal/artclip"
-	"github.com/remy/tag-manager/internal/catalog"
-	"github.com/remy/tag-manager/internal/discogs"
+	"github.com/remy/yamo/internal/artclip"
+	"github.com/remy/yamo/internal/catalog"
+	"github.com/remy/yamo/internal/discogs"
 )
 
 // Options configures a Service.
@@ -157,7 +157,7 @@ func (s *Service) reindexLocked() {
 		if prev, dup := s.byID[id]; dup {
 			// Astronomically unlikely, but silently serving the wrong file
 			// would be worse than a log line.
-			fmt.Fprintf(os.Stderr, "tagmgr: track id collision %s: %q and %q\n",
+			fmt.Fprintf(os.Stderr, "yamo: track id collision %s: %q and %q\n",
 				id, s.cat.Tracks[prev].Path, s.cat.Tracks[i].Path)
 		}
 		s.byID[id] = int32(i)
@@ -268,7 +268,7 @@ func (s *Service) saveLoop() {
 			return
 		case <-t.C:
 			if err := s.saveIfDirty(); err != nil {
-				fmt.Fprintf(os.Stderr, "tagmgr: could not save the catalogue: %v\n", err)
+				fmt.Fprintf(os.Stderr, "yamo: could not save the catalogue: %v\n", err)
 			}
 		}
 	}

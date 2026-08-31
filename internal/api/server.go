@@ -18,8 +18,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/library"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // Options configures the HTTP server.
@@ -178,7 +178,7 @@ func (s *Server) authenticate(next http.HandlerFunc) http.HandlerFunc {
 		const prefix = "Bearer "
 		got := r.Header.Get("Authorization")
 		if !strings.HasPrefix(got, prefix) || !constantTimeEqual(got[len(prefix):], s.opts.Token) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="tagmgr"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="yamo"`)
 			writeError(w, http.StatusUnauthorized, "unauthorized", "a bearer token is required")
 			return
 		}

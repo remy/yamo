@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/remy/tag-manager/internal/catalog"
+	"github.com/remy/yamo/internal/catalog"
 )
 
 // Splitting a title into the fields it actually contains.

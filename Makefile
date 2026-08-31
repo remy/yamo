@@ -1,5 +1,5 @@
-BIN     := tagmgr
-PKG     := ./cmd/tagmgr
+BIN     := yamo
+PKG     := ./cmd/yamo
 DIST    := dist
 LDFLAGS := -s -w
 
@@ -10,7 +10,7 @@ export CGO_ENABLED = 0
 
 # Where a release lands. The NAS is x86-64, and the share is mounted here on
 # the Mac; the binary is copied over SMB rather than scp'd.
-RELEASE := /Volumes/Media/tagmgr
+RELEASE := /Volumes/Media/yamo
 
 .PHONY: all build test vet fmt bench nas release clean install
 

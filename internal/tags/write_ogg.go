@@ -245,7 +245,7 @@ func rewriteCommentPacket(pkt []byte, mutate oggMutator) ([]byte, bool, error) {
 
 	vc, ok := parseVorbisComment(body)
 	if !ok {
-		vc = &vorbisComment{vendor: "tagmgr"}
+		vc = &vorbisComment{vendor: "yamo"}
 	}
 	if !mutate(vc) {
 		return nil, false, nil
@@ -329,7 +329,7 @@ func stampCRC(page []byte) {
 
 // replaceWholeFile writes data over path via a temporary file and a rename.
 func replaceWholeFile(path string, src *os.File, fi os.FileInfo, data []byte) error {
-	tmp, err := os.CreateTemp(dirOf(path), ".tagmgr-*.tmp")
+	tmp, err := os.CreateTemp(dirOf(path), ".yamo-*.tmp")
 	if err != nil {
 		return err
 	}

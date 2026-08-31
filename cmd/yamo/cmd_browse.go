@@ -7,17 +7,17 @@ import (
 	"os"
 	"time"
 
-	"github.com/remy/tag-manager/internal/ui"
+	"github.com/remy/yamo/internal/ui"
 )
 
-const browseSummary = `tagmgr browse - browse and edit the catalogue
+const browseSummary = `yamo browse - browse and edit the catalogue
 
 Usage:
-  tagmgr [flags]
-  tagmgr browse [flags]
+  yamo [flags]
+  yamo browse [flags]
 
 Opens the full-screen browser against a running server. This is what
-tagmgr does with no command.
+yamo does with no command.
 
 Press ? inside it for the full key list; the essentials are:
 
@@ -59,7 +59,7 @@ func cmdBrowse(args []string) error {
 		return err
 	}
 	if st.Tracks == 0 {
-		fmt.Fprintln(os.Stderr, "the library is empty — run: tagmgr scan <music-dir>")
+		fmt.Fprintln(os.Stderr, "the library is empty — run: yamo scan <music-dir>")
 	}
 	return ui.Run(c, st.Roots)
 }

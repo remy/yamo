@@ -10,33 +10,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/remy/tag-manager/internal/client"
-	"github.com/remy/tag-manager/internal/library"
-	"github.com/remy/tag-manager/internal/ui"
+	"github.com/remy/yamo/internal/client"
+	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/ui"
 )
 
-const findSummary = `tagmgr find - print matching tracks and exit
+const findSummary = `yamo find - print matching tracks and exit
 
 Usage:
-  tagmgr find [flags] <query>
+  yamo find [flags] <query>
 
 Searches the library and prints the results. The -format path output is
 one filename per line, which is both a valid playlist and easy to pipe:
 
-  tagmgr find -limit 0 -format path artist:elvis > elvis.m3u
+  yamo find -limit 0 -format path artist:elvis > elvis.m3u
 
 Examples:
-  tagmgr find artist:elvis
-  tagmgr find artist:~presly
-  tagmgr find -format tsv 'year:>1990 genre:jazz'
-  tagmgr find -sort '-year,artist' 'genre:jazz'
-  tagmgr find -- -genre:live artist:elvis
+  yamo find artist:elvis
+  yamo find artist:~presly
+  yamo find -format tsv 'year:>1990 genre:jazz'
+  yamo find -sort '-year,artist' 'genre:jazz'
+  yamo find -- -genre:live artist:elvis
 `
 
-const infoSummary = `tagmgr info - show library statistics
+const infoSummary = `yamo info - show library statistics
 
 Usage:
-  tagmgr info [flags]
+  yamo info [flags]
 
 Prints what the library holds, and which fields are missing across it —
 which is where the work is.
@@ -131,7 +131,7 @@ func cmdInfo(args []string) error {
 		return err
 	}
 
-	roots := "none yet — run: tagmgr scan <dir>"
+	roots := "none yet — run: yamo scan <dir>"
 	if len(st.Roots) > 0 {
 		roots = strings.Join(st.Roots, "\n             ")
 	}

@@ -14,14 +14,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/remy/tag-manager/internal/api"
-	"github.com/remy/tag-manager/internal/library"
+	"github.com/remy/yamo/internal/api"
+	"github.com/remy/yamo/internal/library"
 )
 
-const serveSummary = `tagmgr serve - run the backend
+const serveSummary = `yamo serve - run the backend
 
 Usage:
-  tagmgr serve [flags]
+  yamo serve [flags]
 
 Starts the server that owns the catalogue and the music files. Every other
 command, and the browser, talks to it over HTTP; nothing else opens a
@@ -69,10 +69,10 @@ Album art from Discogs:
   requests at all.
 
 Examples:
-  tagmgr serve                                just this machine
-  cd webapp && tagmgr serve                   ...and serve the front end too
-  tagmgr serve -listen 0.0.0.0:8467           reachable on the network
-  tagmgr serve -listen unix:///tmp/tagmgr.sock
+  yamo serve                                just this machine
+  cd webapp && yamo serve                   ...and serve the front end too
+  yamo serve -listen 0.0.0.0:8467           reachable on the network
+  yamo serve -listen unix:///tmp/yamo.sock
 `
 
 // DefaultListen is where the server binds unless told otherwise.
@@ -168,7 +168,7 @@ func cmdServe(args []string) error {
 		shown = "http://" + addr
 	}
 	fmt.Fprintf(os.Stderr, "  catalogue: %s\n", *catalogPath)
-	fmt.Fprintf(os.Stderr, "  tagmgr serving %s tracks on %s\n",
+	fmt.Fprintf(os.Stderr, "  yamo serving %s tracks on %s\n",
 		formatCount(svc.Count("")), shown)
 	if webRoot != "" {
 		fmt.Fprintf(os.Stderr, "  web:  %s  (from %s)\n", shown, webRoot)

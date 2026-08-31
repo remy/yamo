@@ -522,7 +522,7 @@ func replaceRange(path string, src *os.File, size, off, oldLen int64, data []byt
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dirOf(path), ".tagmgr-*.tmp")
+	tmp, err := os.CreateTemp(dirOf(path), ".yamo-*.tmp")
 	if err != nil {
 		return err
 	}

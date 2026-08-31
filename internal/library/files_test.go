@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/remy/tag-manager/internal/catalog"
-	"github.com/remy/tag-manager/internal/tags"
+	"github.com/remy/yamo/internal/catalog"
+	"github.com/remy/yamo/internal/tags"
 )
 
 // newFileService opens a service over a catalogue whose files really exist.
