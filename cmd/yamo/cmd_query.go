@@ -139,6 +139,16 @@ func cmdInfo(args []string) error {
 	if !st.ScannedAt.IsZero() {
 		fmt.Printf("scanned      %s\n", st.ScannedAt.Format(time.RFC1123))
 	}
+	// Only worth a line when the server is on a timer. Without one the
+	// "scanned" line above is the whole story, which is the point of saying so.
+	if st.RescanEveryMS > 0 {
+		every := time.Duration(st.RescanEveryMS) * time.Millisecond
+		line := fmt.Sprintf("every %s", every)
+		if st.NextRescanAt != nil {
+			line += fmt.Sprintf(", next %s", st.NextRescanAt.Local().Format(time.RFC1123))
+		}
+		fmt.Printf("rescan       %s\n", line)
+	}
 	fmt.Printf("tracks       %s\n", ui.FormatCount(st.Tracks))
 	fmt.Printf("audio        %s across %s\n",
 		ui.FormatBytes(st.TotalBytes), ui.FormatDuration(time.Duration(st.TotalMS)*time.Millisecond))

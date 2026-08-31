@@ -385,7 +385,9 @@ paths:
       summary: Library statistics
       description: |
         Counts, totals and — the useful part for maintenance — how many tracks
-        are missing each field.
+        are missing each field. Also whether the server rescans on a timer and
+        when the next one is due, which is what says how current the numbers
+        are: nothing watches the filesystem.
       operationId: getStats
       responses:
         '200':
@@ -1466,6 +1468,19 @@ components:
           type: object
           additionalProperties: { type: integer }
           description: Tracks with no value for each field — where the work is.
+        rescanEveryMs:
+          type: integer
+          format: int64
+          description: >-
+            How often the server rescans its roots on a timer, set with
+            `-rescan-every`. Absent when the timer is off, which is the
+            default: nothing watches the filesystem, so the catalogue is then
+            only as current as the last scan somebody asked for.
+          examples: [3600000]
+        nextRescanAt:
+          type: string
+          format: date-time
+          description: When the next scheduled rescan is due. Absent when the timer is off.
 
     Picture:
       type: object

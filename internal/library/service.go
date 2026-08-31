@@ -40,6 +40,13 @@ type Options struct {
 	// NoDiscogs turns the cover lookup off entirely, for a server that should
 	// make no outbound requests at all.
 	NoDiscogs bool
+
+	// RescanInterval rescans the catalogue's own roots on a timer. Zero, the
+	// default, never rescans: nothing watches the filesystem, so a library
+	// changed by anything other than this server is only noticed when a scan
+	// is asked for. A rescan is incremental, so an unchanged library costs a
+	// stat per file rather than a re-read.
+	RescanInterval time.Duration
 }
 
 // Service owns the catalogue and performs every operation on it.
@@ -67,9 +74,15 @@ type Service struct {
 	saveMu    sync.Mutex
 	saveDirty bool
 
-	done     chan struct{}
-	saveDone chan struct{}
-	closeOne sync.Once
+	// rescanMu guards nextRescan, which a client reads through Stats while
+	// the rescan loop is writing it.
+	rescanMu   sync.Mutex
+	nextRescan time.Time
+
+	done       chan struct{}
+	saveDone   chan struct{}
+	rescanDone chan struct{}
+	closeOne   sync.Once
 }
 
 const defaultSaveInterval = 5 * time.Second
@@ -105,12 +118,13 @@ func Open(opts Options) (*Service, error) {
 	}
 
 	s := &Service{
-		cat:      cat,
-		opts:     opts,
-		clip:     artclip.New(opts.ClipboardDir),
-		events:   newEventBus(),
-		done:     make(chan struct{}),
-		saveDone: make(chan struct{}),
+		cat:        cat,
+		opts:       opts,
+		clip:       artclip.New(opts.ClipboardDir),
+		events:     newEventBus(),
+		done:       make(chan struct{}),
+		saveDone:   make(chan struct{}),
+		rescanDone: make(chan struct{}),
 	}
 	// The lookup is on unless it is turned off: it needs no credentials and
 	// makes no request until someone searches.
@@ -121,6 +135,12 @@ func Open(opts Options) (*Service, error) {
 	s.reindexLocked()
 
 	go s.saveLoop()
+	if opts.RescanInterval > 0 {
+		s.nextRescan = time.Now().Add(opts.RescanInterval)
+		go s.rescanLoop()
+	} else {
+		close(s.rescanDone) // nothing to wait for in Close
+	}
 	return s, nil
 }
 
@@ -134,9 +154,10 @@ func Open(opts Options) (*Service, error) {
 func (s *Service) Close() error {
 	var err error
 	s.closeOne.Do(func() {
+		close(s.done)      // stop the background loops
+		<-s.rescanDone     // before cancelling jobs, or it could start another
 		s.jobs.cancelAll() // cancels running jobs and waits for them
-		close(s.done)      // stop the save loop
-		<-s.saveDone       // and wait for any write it had started
+		<-s.saveDone       // and wait for any write the save loop had started
 		s.events.close()
 		err = s.saveIfDirty() // one final snapshot
 	})

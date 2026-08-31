@@ -51,6 +51,20 @@ Scanning on startup:
   scan, so restarting a long-running container with -root set is cheap: a
   library with nothing changed costs a stat per file, not a re-read.
 
+Keeping up with the files:
+  Nothing watches the filesystem. A library changed by something other than
+  this server — an album copied in over SMB, tags edited elsewhere — is only
+  noticed when a scan is asked for.
+
+  -rescan-every, or YAMO_RESCAN_EVERY, rescans the catalogue's roots on a
+  timer: -rescan-every 1h, or 0 (the default) to leave it off. It is the same
+  incremental scan, so the cost on an unchanged library is a stat per file;
+  an hour is a reasonable starting point and a minute is the floor. A tick
+  that lands while a scan is still running is skipped rather than queued.
+
+  The interval and the time of the next one are reported by GET /v1/stats,
+  and by "yamo info".
+
 A web front end:
   Run serve from a directory containing index.html and it is served at the
   root alongside the API. Same origin, so the browser needs no CORS and
@@ -83,6 +97,8 @@ Album art from Discogs:
 Examples:
   yamo serve                                just this machine
   yamo serve -root /volume1/music           ...and scan it on startup
+  yamo serve -root /volume1/music -rescan-every 1h
+                                            ...and keep it up to date
   yamo serve -web ./webapp                  ...and serve a front end from a directory
   yamo serve -listen 0.0.0.0:8467           reachable on the network
   yamo serve -listen unix:///tmp/yamo.sock
@@ -101,10 +117,26 @@ func cmdServe(args []string) error {
 	web := fs.String("web", ".", "directory of a web front end to serve at / (ignored if it has no index.html)")
 	discogsToken := fs.String("discogs-token", os.Getenv("YAMO_DISCOGS_TOKEN"), "optional Discogs token; raises the cover-lookup rate limit")
 	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup, so the server makes no outbound requests")
+	rescanEvery := fs.Duration("rescan-every", 0, "rescan the roots on this interval (e.g. 1h); 0 never rescans")
 	roots := stringList(splitEnvList("YAMO_ROOT"))
 	fs.Var(&roots, "root", "directory to scan on startup (repeatable, or comma-separated in YAMO_ROOT)")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
 		return err
+	}
+	// The flag wins when given, so that a compose file's environment can be
+	// overridden on the command line rather than edited.
+	if !flagPassed(fs, "rescan-every") {
+		d, err := envDuration("YAMO_RESCAN_EVERY")
+		if err != nil {
+			return err
+		}
+		*rescanEvery = d
+	}
+	// Below a minute the timer stops being a background chore and becomes the
+	// server's main activity: a scan of a hundred thousand files is a stat per
+	// file even when nothing has changed.
+	if *rescanEvery > 0 && *rescanEvery < time.Minute {
+		return fmt.Errorf("-rescan-every %s is too short; a minute is the shortest useful interval", *rescanEvery)
 	}
 
 	if *catalogPath == "" {
@@ -119,10 +151,11 @@ func cmdServe(args []string) error {
 	}
 
 	svc, err := library.Open(library.Options{
-		CatalogPath:  *catalogPath,
-		SaveInterval: *saveEvery,
-		DiscogsToken: *discogsToken,
-		NoDiscogs:    *noDiscogs,
+		CatalogPath:    *catalogPath,
+		SaveInterval:   *saveEvery,
+		DiscogsToken:   *discogsToken,
+		NoDiscogs:      *noDiscogs,
+		RescanInterval: *rescanEvery,
 	})
 	if err != nil {
 		return err
@@ -202,6 +235,9 @@ func cmdServe(args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "  scanning: %s (job %s)\n", strings.Join(roots, ", "), job.ID)
 	}
+	if *rescanEvery > 0 {
+		fmt.Fprintf(os.Stderr, "  rescan:   every %s\n", *rescanEvery)
+	}
 
 	ctx, stop := notifyContext()
 	defer stop()
@@ -279,6 +315,36 @@ func splitEnvList(name string) []string {
 		}
 	}
 	return out
+}
+
+// envDuration reads a duration from the environment. An unparseable value is
+// an error rather than a silent zero: a typo in a compose file would otherwise
+// turn the rescan timer off and look like the feature not working.
+func envDuration(name string) (time.Duration, error) {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q is not a duration (try 30m, 1h)", name, v)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("%s=%q is negative", name, v)
+	}
+	return d, nil
+}
+
+// flagPassed reports whether a flag was actually given on the command line,
+// which is how an environment default can be applied without overwriting one.
+func flagPassed(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 // isLoopback reports whether a bind address only accepts local connections.

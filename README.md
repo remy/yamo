@@ -106,6 +106,7 @@ leave set rather than something to remember to run once.
 | `YAMO_CATALOG` | `-catalog` | `serve` | Catalogue file path. Defaults to the user cache directory outside Docker; the image sets it to `/data/catalog.db`. |
 | `YAMO_ROOT` | `-root` (repeatable) | `serve` | Comma-separated directories to scan on startup, in the background, without blocking the server from accepting requests. Unset means an empty new catalogue stays empty until something scans it. |
 | `YAMO_TOKEN` | `-token` | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back. |
+| `YAMO_RESCAN_EVERY` | `-rescan-every` | `serve` | Optional. Rescans the catalogue's roots on this interval (`1h`, `30m`) — the same incremental scan, so a stat per file on an unchanged library. Unset, nothing is scanned unless asked: nothing watches the filesystem. A minute is the shortest accepted. |
 | `YAMO_DISCOGS_TOKEN` | `-discogs-token` | `serve` | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower. |
 | `YAMO_SERVER` | `-server` | every client command | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
 | `YAMO_NO_IMAGES` | — (no flag) | the terminal browser | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands. |
@@ -215,6 +216,29 @@ yamo scan -exclude Podcasts /volume1/music
 Deleted files disappear from the catalogue on the next scan. Directories that
 never hold music (`@eaDir`, `#recycle`, `lost+found`, dot-directories) are
 skipped, as are AppleDouble `._` sidecars.
+
+#### Keeping up with the files
+
+Nothing watches the filesystem. Music added or edited by anything other than
+this server — an album copied over SMB, tags changed in another program — is
+invisible until a scan is asked for.
+
+`-rescan-every` puts that on a timer:
+
+```sh
+yamo serve -root /volume1/music -rescan-every 1h
+```
+
+It runs the same incremental scan, so an unchanged library costs a stat per
+file rather than a re-read; an hour is a sensible starting point, and a
+minute is the shortest interval accepted. A tick that arrives while a scan is
+still running is skipped rather than queued, and the roots it scans are the
+catalogue's own — the same ones `yamo scan` with no arguments would use.
+
+`GET /v1/stats` reports the interval and when the next one is due, so a
+client can say how current its numbers are; `yamo info` prints the same line.
+Unset (the default) it never scans on its own, which is the behaviour to
+assume unless the stats say otherwise.
 
 ### Searching
 
@@ -630,5 +654,7 @@ python3 -m venv .venv && ./.venv/bin/pip install pyte
 - WMA, WAV and AIFF are read but not written.
 - `strip` and `restore` cover MP3, FLAC, MP4, Ogg Vorbis and Opus. WMA, WAV
   and AIFF are read but not written, so they are reported and skipped.
-- The catalogue is not watched; run `yamo scan` after adding music.
+- The catalogue is not watched — nothing detects file changes as they
+  happen. Run `yamo scan` after adding music, or start the server with
+  `-rescan-every` to have it rescan on a timer.
 - One catalogue at a time; use `-catalog` to keep several.

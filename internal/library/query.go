@@ -251,11 +251,23 @@ type Stats struct {
 	Genres     int            `json:"genres"`
 	Formats    map[string]int `json:"formats"`
 	Missing    map[string]int `json:"missing"`
+
+	// RescanEveryMS is the periodic rescan interval, absent when the timer is
+	// off — which is the default, and the thing worth knowing: nothing
+	// watches the filesystem, so without it the catalogue is only as current
+	// as the last scan somebody asked for.
+	RescanEveryMS int64      `json:"rescanEveryMs,omitempty"`
+	NextRescanAt  *time.Time `json:"nextRescanAt,omitempty"`
 }
 
 // Stats computes the library summary. It takes the write lock because the
 // distinct-value counts build the same cached sets that Values does.
 func (s *Service) Stats() Stats {
+	// The rescan schedule has its own lock. Read it before the catalogue lock
+	// rather than nesting inside it, so the two never acquire in an order
+	// anything else has to match.
+	every, next := s.RescanSchedule()
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -265,6 +277,13 @@ func (s *Service) Stats() Stats {
 		Tracks:    len(s.cat.Tracks),
 		Formats:   map[string]int{},
 		Missing:   map[string]int{},
+	}
+	if every > 0 {
+		st.RescanEveryMS = every.Milliseconds()
+		if !next.IsZero() {
+			at := next
+			st.NextRescanAt = &at
+		}
 	}
 	if st.Roots == nil {
 		st.Roots = []string{}

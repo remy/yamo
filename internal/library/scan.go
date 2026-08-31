@@ -3,6 +3,8 @@ package library
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/remy/yamo/internal/scan"
@@ -155,4 +157,55 @@ func (s *Service) Scan(req ScanRequest) (*Job, error) {
 		}
 		return res, err
 	}), nil
+}
+
+// RescanSchedule reports the periodic rescan setting: how often the roots are
+// rescanned and when the next one is due. A zero interval means the timer is
+// off, which is the default — nothing watches the filesystem, so a library
+// changed by something other than this server is only noticed when a scan is
+// asked for.
+func (s *Service) RescanSchedule() (every time.Duration, next time.Time) {
+	s.rescanMu.Lock()
+	defer s.rescanMu.Unlock()
+	return s.opts.RescanInterval, s.nextRescan
+}
+
+// rescanLoop rescans the catalogue's roots on a timer.
+//
+// It asks for exactly what "yamo scan" with no arguments asks for: an
+// incremental scan of the roots already in the catalogue. That is cheap on an
+// unchanged library — a stat per file rather than a re-read — which is what
+// makes running it on a timer reasonable at all.
+func (s *Service) rescanLoop() {
+	defer close(s.rescanDone)
+	t := time.NewTicker(s.opts.RescanInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-t.C:
+			s.rescanMu.Lock()
+			s.nextRescan = time.Now().Add(s.opts.RescanInterval)
+			s.rescanMu.Unlock()
+
+			// Nothing to scan yet is the ordinary state of a server started
+			// with an empty catalogue and no roots, so it is not worth a line
+			// on every tick.
+			s.mu.RLock()
+			roots := len(s.cat.Roots)
+			s.mu.RUnlock()
+			if roots == 0 {
+				continue
+			}
+
+			if _, err := s.Scan(ScanRequest{}); err != nil {
+				var running *ScanRunningError
+				if errors.As(err, &running) {
+					continue // the previous one is still going; skip this turn
+				}
+				fmt.Fprintf(os.Stderr, "yamo: scheduled rescan failed: %v\n", err)
+			}
+		}
+	}
 }

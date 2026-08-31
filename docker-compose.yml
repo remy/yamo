@@ -19,6 +19,10 @@ services:
       - ${MUSIC_DIR:-./music}:/music
     environment:
       YAMO_ROOT: /music
+      # Optional: rescan on a timer, since nothing watches the filesystem and
+      # a container has no one around to run "yamo scan" after copying music
+      # in. Unset means the catalogue only changes when something asks.
+      YAMO_RESCAN_EVERY: ${YAMO_RESCAN_EVERY:-}
       YAMO_TOKEN: ${YAMO_TOKEN:?set YAMO_TOKEN in .env — see README}
       # Optional: raises the Discogs cover-lookup rate limit from 25 to 60
       # requests/minute. Leave unset and lookups still work, just slower.

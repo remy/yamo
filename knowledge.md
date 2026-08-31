@@ -268,6 +268,35 @@ catalogue's own `scannedAt`. The check and the start are under one mutex
 (`Service.scanMu`), or two simultaneous requests would both see nothing
 running.
 
+### Nothing watches the filesystem; the timer is opt-in
+
+There is no `fsnotify` anywhere and there never has been. A watcher over a
+hundred thousand files on a NAS means a descriptor per directory, an inotify
+limit to tune, and SMB and NFS changes that do not raise events at all — the
+common case here is exactly the one a watcher misses.
+
+What exists instead is `-rescan-every` (`YAMO_RESCAN_EVERY`), off by default,
+which runs the incremental scan on a ticker: `Service.rescanLoop`. It asks for
+`ScanRequest{}`, the same thing `yamo scan` with no arguments asks for, so it
+scans the catalogue's own roots. Points worth keeping:
+
+- A tick landing on a running scan is **skipped**, not queued — `Scan` already
+  refuses a second one, and `ScanRunningError` is swallowed here rather than
+  logged, because with a short interval it would be the normal case.
+- With no roots the tick does nothing and says nothing. A container that has
+  never scanned is the ordinary way to be in that state, and a line per tick
+  would be noise.
+- `Close` closes `done` and waits on `rescanDone` **before** cancelling jobs,
+  or the loop could start a scan into a service that has just torn its jobs
+  down.
+- The floor is a minute, enforced in `cmd/yamo` rather than in the library, so
+  a test can use 50ms. On a real library a tick is a stat per file, and below
+  a minute that stops being a background chore.
+
+`Stats` carries `rescanEveryMs` and `nextRescanAt` — absent when the timer is
+off. That is deliberate: a client showing `scannedAt` needs to know whether
+that number is going to move on its own, and absence is a clear "no".
+
 ### Everything long-running returns a job
 
 Even when it finishes at once, so a client has one shape to handle rather than
