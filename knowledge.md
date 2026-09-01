@@ -1,4 +1,4 @@
-# yamo — project knowledge
+# YAMO — project knowledge
 
 Written for whoever (or whatever) picks this up next. It covers what the
 program is, how it is split, why the awkward decisions were made that way, and

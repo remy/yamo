@@ -1,6 +1,6 @@
-# yamo
+# YAMO
 
-![yamo — the green music organiser](yamo.jpg)
+![YAMO — the green music organiser](yamo.jpg)
 
 **An HTTP API for a large music library.** It catalogues a library fast,
 searches it instantly, and edits the tags in the files themselves — including
