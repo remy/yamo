@@ -25,9 +25,18 @@ type harness struct {
 	srv *httptest.Server
 	svc *library.Service
 	dir string
+
+	// token, when set, is sent as the bearer token on every request. Tests
+	// that check what happens without one clear it.
+	token string
 }
 
 func newHarness(t *testing.T, tracks int) *harness {
+	t.Helper()
+	return newHarnessOpts(t, tracks, Options{})
+}
+
+func newHarnessOpts(t *testing.T, tracks int, opts Options) *harness {
 	t.Helper()
 	ff, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -60,8 +69,8 @@ func newHarness(t *testing.T, tracks int) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, svc: svc, dir: dir}
-	h.srv = httptest.NewServer(New(svc, Options{}))
+	h := &harness{t: t, svc: svc, dir: dir, token: opts.Token}
+	h.srv = httptest.NewServer(New(svc, opts))
 	t.Cleanup(func() {
 		h.srv.Close()
 		svc.Close()
@@ -74,12 +83,25 @@ func newHarness(t *testing.T, tracks int) *harness {
 
 func (h *harness) do(t *testing.T, method, path string, body io.Reader, want int) (*http.Response, []byte) {
 	t.Helper()
+	return h.doWith(t, method, path, body, want, nil)
+}
+
+// doWith is do with extra request headers, for the conditional and concurrency
+// checks that are entirely about them.
+func (h *harness) doWith(t *testing.T, method, path string, body io.Reader, want int, headers map[string]string) (*http.Response, []byte) {
+	t.Helper()
 	req, err := http.NewRequest(method, h.srv.URL+path, body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if h.token != "" {
+		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := h.srv.Client().Do(req)
 	if err != nil {
@@ -724,19 +746,22 @@ func TestScanIsNotConcurrent(t *testing.T) {
 	h.waitJob(t, first["id"].(string))
 
 	// Exactly one scan job was created by this test beyond the harness's own.
-	var scans int
-	_, list := h.do(t, http.MethodGet, "/v1/jobs", nil, http.StatusOK)
-	var jobs []map[string]any
-	if err := json.Unmarshal(list, &jobs); err != nil {
+	// The listing filters server-side, which is the point of the parameter.
+	_, list := h.do(t, http.MethodGet, "/v1/jobs?kind=scan", nil, http.StatusOK)
+	var page struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(list, &page); err != nil {
 		t.Fatal(err)
 	}
-	for _, j := range jobs {
-		if j["kind"] == "scan" {
-			scans++
-		}
+	if page.Total != 2 { // the harness's initial scan, plus this one
+		t.Errorf("%d scan jobs exist, want 2", page.Total)
 	}
-	if scans != 2 { // the harness's initial scan, plus this one
-		t.Errorf("%d scan jobs exist, want 2", scans)
+	for _, j := range page.Items {
+		if j["kind"] != "scan" {
+			t.Errorf("?kind=scan returned a %v job", j["kind"])
+		}
 	}
 
 	// And once finished, another is allowed again.

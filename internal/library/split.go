@@ -44,6 +44,11 @@ type SplitRequest struct {
 	// template that fits nothing writes nothing, and one that fits badly
 	// writes badly across everything selected.
 	DryRun bool `json:"dryRun,omitempty"`
+
+	// Backup records the titles being rewritten so the job can be undone. It
+	// defaults to true: a split writes a different value into every file, so
+	// there is nothing a client could send to put them back by hand.
+	Backup bool `json:"backup"`
 }
 
 // SplitSample is one title and what the template made of it.
@@ -194,9 +199,15 @@ func (s *Service) Split(req SplitRequest) (*Job, error) {
 		return nil, err
 	}
 
-	return s.jobs.Start(JobEdit, func(ctx context.Context, j *Job) (any, error) {
+	var jrn *journal
+	if req.Backup && !req.DryRun {
+		jrn = s.tryJournal(JournalEdit)
+	}
+
+	return s.jobs.StartWithJournal(JobSplit, jrn.ID(), func(ctx context.Context, j *Job) (any, error) {
+		defer jrn.Close(j.ID)
 		res := SplitResult{
-			BatchResult: BatchResult{Matched: len(ids), DryRun: req.DryRun},
+			BatchResult: BatchResult{Matched: len(ids), DryRun: req.DryRun, BackupID: jrn.ID()},
 			Template:    strings.TrimSpace(req.Template),
 			Fields:      rule.fields,
 		}
@@ -227,7 +238,7 @@ func (s *Service) Split(req SplitRequest) (*Job, error) {
 				value := v
 				ch[f] = &value
 			}
-			changed, err := s.applyOne(id, ch, "", req.DryRun)
+			changed, err := s.applyOne(id, ch, "", req.DryRun, jrn)
 			switch {
 			case errors.Is(err, ErrNotFound):
 				res.Skipped++

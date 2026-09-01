@@ -82,10 +82,17 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: server
+    description: |
+      What this build can do, and whether the caller may do it. The only part
+      of the API that says nothing about the library, which is what lets
+      `/capabilities` be read without a token.
   - name: tracks
     description: Reading and editing individual tracks.
   - name: browse
-    description: Albums, artists, field values and library statistics.
+    description: |
+      Albums, artists, folders, duplicates, field values and library
+      statistics.
   - name: batch
     description: Operations across many tracks at once.
   - name: artwork
@@ -101,6 +108,62 @@ tags:
     description: Bringing the catalogue up to date with the filesystem.
 
 paths:
+  /capabilities:
+    get:
+      tags: [server]
+      summary: What this build can do
+      description: |
+        The formats it writes, the bounds it applies, the optional parts that
+        are turned on, and the vocabularies it accepts. Read it once at
+        startup rather than hard-coding any of it.
+
+        Three things here cannot be discovered any other way. **Which formats
+        this build writes** — `Track.writable` says a particular file cannot
+        be written, but only after you have found it, so a client that wants
+        to warn before an edit rather than after it needs this. **Whether the
+        Discogs lookup is configured**, which otherwise takes a search and a
+        `503` to establish. **What `limit` is actually capped to**, which the
+        paging rules otherwise leave you to discover by reading a response
+        back.
+
+        This is the one operation served without a token, and the reason is
+        `authRequired`: a client needs to know whether credentials are
+        required before it has any to present. Nothing here describes the
+        library — no roots, no counts, nothing that says what music is on the
+        machine — which is what makes that safe.
+      operationId: getCapabilities
+      security: []
+      responses:
+        '200':
+          description: What the server can do.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Capabilities' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /me:
+    get:
+      tags: [server]
+      summary: Check the token
+      description: |
+        There is one token and it grants everything, so there is no identity
+        to report. What this answers is whether the credentials work, which a
+        client otherwise has to discover by making a real request and reading
+        the failure — an awkward thing to do at startup when the only requests
+        available are ones that do something.
+
+        Reaching a `200` at all is the answer. A missing or wrong token is a
+        `401` here exactly as it is anywhere else.
+      operationId: getMe
+      responses:
+        '200':
+          description: The token is good.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Identity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
   /tracks:
     get:
       tags: [tracks]
@@ -128,6 +191,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/TrackPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}:
     parameters:
@@ -136,6 +201,8 @@ paths:
       tags: [tracks]
       summary: Fetch one track
       operationId: getTrack
+      parameters:
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The track.
@@ -144,7 +211,10 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Track' }
+        '304': { $ref: '#/components/responses/NotModified' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     patch:
       tags: [tracks]
       summary: Edit one track
@@ -184,6 +254,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unwritable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [tracks]
       summary: Delete the file
@@ -211,6 +283,53 @@ paths:
         '204': { description: "The file was deleted, or was already gone." }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /tracks/{id}/tags:
+    parameters:
+      - $ref: '#/components/parameters/TrackId'
+    get:
+      tags: [tracks]
+      summary: Every tag the file actually holds
+      description: |
+        Everything else here answers in the catalogue's vocabulary — an
+        artist, an album, a year. That is the right answer nearly always, and
+        exactly the wrong one before a `POST /strip`, where the question is
+        not what the track says but what is *in the file*: the iTunes purchase
+        account, the encoder's signature, the podcast frames, the ratings a
+        ripper left behind.
+
+        A strip's dry run answers that across a selection, aggregated. This
+        answers it for one file, which is what somebody looks at before
+        deciding the aggregate is safe to act on. `kept` on each tag says
+        whether the default keep list would preserve it, which is the next
+        question every time.
+
+        Keys are native — a frame id for MP3, an atom for MP4, a field name
+        for Vorbis comments — because that is what the file holds and what a
+        keep list may name. `field` is the canonical field it maps to, and its
+        absence is the interesting case: a tag that means nothing here is one
+        nothing else is likely to read either.
+
+        Largest first, since the reason to look is usually that something in
+        the file is bigger than it should be.
+
+        WMA, WAV and AIFF report `unsupported`. The listing comes from the
+        same walk of the container that a strip does, which only covers the
+        formats this build can also write — and that is the honest answer,
+        since the tags it cannot enumerate are also the ones it could not
+        remove.
+      operationId: getTrackTags
+      responses:
+        '200':
+          description: The file's raw metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RawTags' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/rename:
     parameters:
@@ -272,6 +391,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/RenameConflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/artwork:
     parameters:
@@ -279,7 +400,30 @@ paths:
     get:
       tags: [artwork]
       summary: Fetch a track's cover
+      description: |
+        The embedded image, or a scaled-down copy of it.
+
+        `size` is what makes an album grid possible. Embedded artwork on a
+        real library is routinely 1500×1500 and half a megabyte, so forty
+        tiles is twenty megabytes to draw forty postage stamps — which over a
+        phone's connection is the difference between a grid that appears and
+        one that does not. With `size` the image is scaled so its longest side
+        is at most that many pixels and re-encoded as JPEG; an image already
+        smaller is returned untouched rather than enlarged.
+
+        The `ETag` is the track's `version`, with the size folded in, so a
+        conditional request costs nothing when the file has not been rewritten
+        and a thumbnail is never served from a cache keyed only by the track.
+        Send it back as `If-None-Match` for a `304`.
       operationId: getArtwork
+      parameters:
+        - name: size
+          in: query
+          description: |
+            The longest side of the returned image, in pixels. Omit for the
+            image as it is embedded.
+          schema: { type: integer, minimum: 16, maximum: 1024 }
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The image.
@@ -288,12 +432,25 @@ paths:
           content:
             image/jpeg: { schema: { type: string, format: binary } }
             image/png: { schema: { type: string, format: binary } }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '404':
           description: The track has no embedded artwork.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     put:
       tags: [artwork]
       summary: Replace a track's cover
+      description: |
+        Embeds the image in the file.
+
+        `If-Match` is honoured here for the same reason it is on a field edit:
+        a cover is a write to the file like any other, and two clients pasting
+        different art onto one album should not be settled by whichever
+        finished last.
       operationId: putArtwork
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
       requestBody:
         required: true
         description: The raw image. The format is taken from the content, not the header.
@@ -304,19 +461,30 @@ paths:
       responses:
         '200':
           description: The updated track.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Track' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
         '422': { $ref: '#/components/responses/Unwritable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [artwork]
       summary: Remove a track's cover
       operationId: deleteArtwork
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
       responses:
         '204': { description: "The artwork was removed, or there was none." }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /albums:
     get:
@@ -341,6 +509,21 @@ paths:
       operationId: listAlbums
       parameters:
         - $ref: '#/components/parameters/Query'
+        - name: sort
+          in: query
+          description: |
+            Comma-separated, each optionally prefixed with `-` for descending.
+            Unrecognised names are ignored rather than rejected, as on
+            `/tracks`.
+
+            The keys are the group's own values, not a track's: `year` is the
+            earliest year among the album's tracks and `duration` is their
+            total. With no sort the order is album artist then album, which
+            groups a discography together.
+
+            Accepted: `album`, `albumartist`, `year`, `tracks`, `duration`,
+            `artwork`.
+          schema: { type: string, examples: ["-year", "albumartist,year", "-tracks"] }
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
@@ -349,6 +532,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AlbumPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /artists:
     get:
@@ -373,6 +558,13 @@ paths:
       operationId: listArtists
       parameters:
         - $ref: '#/components/parameters/Query'
+        - name: sort
+          in: query
+          description: |
+            As on `/albums`, over this listing's own values. Accepted:
+            `artist`, `albums`, `tracks`, `duration`, `artwork`. With no sort
+            the order is by name.
+          schema: { type: string, examples: ["-tracks", "artist", "-duration"] }
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
@@ -381,6 +573,109 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ArtistPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /folders:
+    get:
+      tags: [browse]
+      summary: Browse the library by folder
+      description: |
+        Albums and artists are the right way in when the tags are right.
+        Before they are, they are the wrong way in entirely: a grid built from
+        broken tags shows "Unknown Album" four thousand times, and throws away
+        the one thing still correct — that these forty files sit in a
+        directory together, and whoever ripped them meant them as a record.
+
+        This lists one level of the tree, the way a file browser does. With no
+        `path` the children are the library roots, so a tree starts where the
+        library does rather than at the filesystem's. Each entry carries the
+        `query` that reselects everything at or below it, so a folder can be
+        handed straight to a batch operation.
+
+        `tracks` counts the matching tracks directly in the folder and
+        `descendants` counts them below it too, which is what separates a
+        record from a shelf. So do `albums` and `artists`: one of each says
+        the folder is an album, several says it is a shelf — or that the tags
+        are wrong, which is the reason to be looking here.
+
+        `q` filters the tracks before the folders are derived, so
+        `?q=album:` lists only the folders holding tracks with no album.
+      operationId: listFolders
+      parameters:
+        - name: path
+          in: query
+          description: >-
+            The directory to list the contents of. Omit for the library roots.
+          schema: { type: string, examples: ["/music/Elvis Presley"] }
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: A page of folders.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FolderPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /duplicates:
+    get:
+      tags: [browse]
+      summary: Find the same recording more than once
+      description: |
+        A library merged from a few sources has duplicates, and they are
+        invisible from a search: the two copies sort next to each other, look
+        identical, and nothing counts them.
+
+        What counts as the same recording is the caller's to say, because it
+        depends on what went wrong. Two rips of one album duplicate on artist
+        and title. A compilation that also appears as its own album duplicates
+        on those but not on album. A file copied twice under different names
+        duplicates on everything including `size`. So `by` is a field list
+        rather than a rule, and it defaults to `artist,title` — the duplicate
+        people mean.
+
+        Matching folds case and accents, so a library holding both "Björk" and
+        "Bjork" reports one recording rather than two. A track missing any
+        field the key names is left out rather than grouped with the other
+        gaps, which would put every untitled track in one enormous false
+        group.
+
+        `wasted` is what keeping one copy of each would free, and it is what
+        the list is ordered by. Nothing is deleted here: one copy is usually
+        the better rip, so this offers the grouping and the evidence — paths,
+        bitrates, sizes — and the deciding is the client's.
+      operationId: listDuplicates
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - name: by
+          in: query
+          description: |
+            The fields that must match, comma-separated or repeated. Any
+            editable field, plus `duration` and `size`, which describe the
+            audio rather than the tags and so catch a duplicate whose metadata
+            was edited on one copy and not the other. Unrecognised names are
+            ignored; the response echoes the key actually used.
+          schema: { type: string, examples: ["artist,title", "title,duration", "artist,title,album"] }
+        - name: durationSeconds
+          in: query
+          description: >-
+            How coarsely durations are compared, in seconds, when `duration`
+            is part of the key. Two rips of one track differ by a few hundred
+            milliseconds, so comparing exactly would find nothing.
+          schema: { type: integer, minimum: 1, default: 2 }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: A page of duplicate groups, most wasteful first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DuplicatePage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /values/{field}:
     get:
@@ -410,6 +705,8 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/ValueCount' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /stats:
     get:
@@ -427,6 +724,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Stats' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/batch:
     post:
@@ -436,6 +735,13 @@ paths:
         The operation this API exists for. Applies one set of changes to every
         selected track, where the selection is usually a query rather than a
         list of identifiers.
+
+        **It is journalled by default**, which is the one thing to know that
+        the request body does not make obvious. Before each file is written
+        the values being overwritten are recorded, and the job comes back with
+        a `backupId`; `POST /jobs/{id}/undo` puts them back. Setting
+        `backup: false` turns that off, which is worth doing only for a run
+        so large that the journal itself is a problem.
       operationId: batchEditTracks
       requestBody:
         required: true
@@ -452,6 +758,8 @@ paths:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/split:
     post:
@@ -490,6 +798,74 @@ paths:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /tracks/rename:
+    post:
+      tags: [batch]
+      summary: Rename files after the tags they carry
+      description: |
+        The other half of the split. A split reads a filename's worth of
+        information out of a title; this writes the tags back out into the
+        name, and it is what a library looks like once the tags are right:
+        `01 Blue Suede Shoes.mp3` under `Elvis Presley/The Sun Sessions`,
+        rather than `track01.mp3` under `unsorted`.
+
+        The template is the destination path, naming fields with a leading
+        `$`, and it is resolved against the **library root** the track sits
+        under rather than the track's own directory — so a template that files
+        by artist and album can move a track out of the wrong folder rather
+        than nesting the right one inside it. Missing directories are created.
+
+        **The extension is never part of the template.** A rename may not
+        change a file's container, so the extension the file already has is
+        appended to whatever the template produces.
+
+        Three things happen automatically, because a template that had to
+        express them would be unreadable. `$track` and `$disc` are padded to
+        two digits, so a directory sorts as the record plays. A separator
+        inside a value is replaced, so an artist of "AC/DC" does not silently
+        become a folder called "AC". And the characters Windows refuses are
+        replaced too, because a library on a NAS is read over SMB as often as
+        not and a name it cannot represent is a file that does not appear.
+
+        A track missing a field the template names is counted in `incomplete`
+        and left alone — that is the number that says whether the tags are
+        ready. Two tracks wanting the same destination are counted in
+        `collisions`, whose answer is a better template, usually one carrying
+        `$disc` or `$track`, rather than a retry.
+
+        Run it with `dryRun` first. `samples` shows what it would do to real
+        files, which is the only way to tell a good template from one that
+        moves everything somewhere wrong. Journalled by default, so a bad run
+        can be undone — but a rename undone is a second pass over the library,
+        which is why the dry run matters more here than anywhere else.
+      operationId: renameTracks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameTracksRequest' }
+            examples:
+              numberAndTitle:
+                summary: Name each file after its track number and title
+                value:
+                  selector: { query: "album:\"the sun sessions\"" }
+                  template: "$track $title"
+                  dryRun: true
+              fileWholeLibrary:
+                summary: File everything by artist and album
+                value:
+                  selector: { all: true }
+                  template: "$albumartist/$album/$track $title"
+                  dryRun: true
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CountMismatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /artwork/batch:
     post:
@@ -514,6 +890,53 @@ paths:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /artwork/export:
+    post:
+      tags: [artwork, batch]
+      summary: Write embedded covers out beside the music
+      description: |
+        The other direction from `source: folder`. That reads a `cover.jpg`
+        into the files beside it, which is what a downloaded library needs;
+        this writes the embedded art back out, which is what a library edited
+        here needs. The covers are in the files, correct and identical across
+        the album, and every program that reads a folder rather than a tag — a
+        media server's poster, a file browser's thumbnail, the next tool along
+        — sees nothing.
+
+        One image per **directory**, not per track: an album's tracks carry
+        the same cover, so writing it once is the correct behaviour rather
+        than an optimisation. The cover comes from the first track in the
+        directory that has one.
+
+        The extension follows the image rather than the request — a PNG asked
+        for as `cover.jpg` is written as `cover.png` — for the same reason a
+        rename may not change a file's extension. `filename` must be a bare
+        name; this writes beside the music, not anywhere a client names.
+
+        `overwrite` is off by default, because a folder that already has a
+        `cover.jpg` usually has the one somebody chose, and the embedded art
+        may be the worse of the two.
+      operationId: exportArtwork
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExportArtworkRequest' }
+            examples:
+              wholeLibrary:
+                summary: Give every album folder a cover.jpg
+                value:
+                  selector: { all: true }
+                  dryRun: true
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { $ref: '#/components/responses/CountMismatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /clipboard/artwork:
     get:
@@ -527,6 +950,8 @@ paths:
             image/jpeg: { schema: { type: string, format: binary } }
             image/png: { schema: { type: string, format: binary } }
         '404': { description: Nothing has been copied. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     put:
       tags: [artwork]
       summary: Copy an image to the clipboard
@@ -547,12 +972,16 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Picture' }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [artwork]
       summary: Empty the clipboard
       operationId: deleteClipboard
       responses:
         '204': { description: Emptied. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /clipboard/artwork/from-track/{id}:
     put:
@@ -568,6 +997,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Picture' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /clipboard/artwork/from-url:
     put:
@@ -606,6 +1037,8 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/LookupUnavailable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/audio:
     get:
@@ -639,6 +1072,8 @@ paths:
               schema: { type: string, format: binary }
         '404':
           $ref: '#/components/responses/NotFound'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /discogs/search:
     get:
@@ -675,12 +1110,18 @@ paths:
       responses:
         '200':
           description: Candidate covers.
+          headers:
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DiscogsSearchResult' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/LookupUnavailable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /discogs/masters/{id}:
     get:
@@ -708,6 +1149,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/LookupUnavailable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /discogs/album:
     get:
@@ -742,6 +1185,10 @@ paths:
       responses:
         '200':
           description: What Discogs knows about the album.
+          headers:
+            RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+            RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+            RateLimit-Reset: { $ref: '#/components/headers/RateLimitReset' }
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DiscogsAlbumInfo' }
@@ -749,6 +1196,8 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/LookupUnavailable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /artwork/summary:
     get:
@@ -758,15 +1207,35 @@ paths:
         Groups identical covers together, which is the only way the duplication
         becomes visible: on a real library the great majority of embedded
         artwork is one image repeated once per track.
+
+        It takes a **selection**, not just a query, because it is the report
+        read before deciding what to change — and the thing then changed is
+        named by a `Selector`. Summarising a different set from the one about
+        to be operated on would make the report worth less than it looks. A
+        `GET` cannot carry a body, so the selector's parts arrive as
+        parameters: `q`, `ids`, `excludeIds` and `all`. `expectCount` is
+        deliberately absent; it is a safety rail for a change, and refusing to
+        answer a question because the count moved would be an obstacle and
+        nothing else.
+
+        Saying nothing at all means the whole library, which is what an empty
+        `q` has always meant here. The explicit `all` a write requires exists
+        so that "everything" cannot be *destroyed* by accident, and nothing
+        here destroys anything.
       operationId: artworkSummary
       parameters:
         - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/SelectIds'
+        - $ref: '#/components/parameters/SelectExcludeIds'
+        - $ref: '#/components/parameters/SelectAll'
       responses:
         '200':
           description: The summary.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ArtworkReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /strip:
     post:
@@ -789,25 +1258,94 @@ paths:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /backups:
     get:
       tags: [batch]
-      summary: List strip backups
+      summary: List undo journals
+      description: |
+        Every operation that writes across a selection can record what it is
+        about to overwrite. A strip records the tags it removes, an edit and a
+        split the values they replace, an artwork paste the covers it
+        replaces, and a rename where each file came from. `kind` says which,
+        which is what says how a restore will put it back.
+
+        Newest first. Nothing expires them — expiring the record of a change
+        nobody has noticed yet is the wrong default — so they accumulate until
+        something deletes them.
       operationId: listBackups
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
       responses:
         '200':
-          description: The stored backups, newest first.
+          description: A page of journals, newest first.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/Backup' }
+              schema: { $ref: '#/components/schemas/BackupPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /backups/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [batch]
+      summary: What one journal holds
+      description: |
+        A journal is addressed by an opaque id and may have been written by an
+        operation this client never made, so "what would restoring this put
+        back" needs an answer that is not "restore it and see".
+
+        `fields` names the fields an edit journal would write back, `groups`
+        counts the keys a strip removed, and `samples` shows a few of the
+        files with a note saying what is recorded for each.
+      operationId: getBackup
+      responses:
+        '200':
+          description: The journal and what it covers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BackupDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+    delete:
+      tags: [batch]
+      summary: Discard a journal
+      description: |
+        Journals are the only thing here that grows without bound: every strip
+        and every batch edit leaves one, and an artwork journal holds the
+        covers it replaced. This is how they stop accumulating.
+
+        The change itself is not undone — only the record that would let it be.
+      operationId: deleteBackup
+      responses:
+        '204': { description: The journal was deleted. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /restore:
     post:
       tags: [batch]
-      summary: Restore tags from a strip backup
+      summary: Restore from an undo journal
+      description: |
+        Puts back whatever the operation that wrote the journal changed. One
+        endpoint covers every kind, because the question is always the same —
+        undo what that did — and the difference between re-adding a stripped
+        frame, writing back a field, re-embedding a cover and moving a file
+        home is the server's business rather than the caller's.
+
+        `POST /jobs/{id}/undo` is the same work reached from the other end,
+        and is usually the one to want: a client watching a job it just
+        started has the job id in hand and should not have to go looking
+        through this list for the journal that job happens to have written.
       operationId: restoreBackup
       requestBody:
         required: true
@@ -817,6 +1355,8 @@ paths:
       responses:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /scans:
     get:
@@ -838,6 +1378,8 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ScanStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     post:
       tags: [scan]
       summary: Scan the filesystem
@@ -867,20 +1409,43 @@ paths:
           description: A scan is already running. `jobId` names it.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /jobs:
     get:
       tags: [jobs]
       summary: List jobs
+      description: |
+        Newest first. A long-running server accumulates jobs from every client
+        on it, so this filters and pages like every other listing: a phone
+        asking what is running wants `?state=running`, not the four hundred
+        that have finished.
+
+        Filtering happens before paging, so `total` counts the matches rather
+        than every job. `retentionMs` is how long a finished job stays here,
+        which is what tells an id that has aged out from one that never
+        existed.
       operationId: listJobs
+      parameters:
+        - name: kind
+          in: query
+          description: Only jobs of this kind.
+          schema: { $ref: '#/components/schemas/JobKind' }
+        - name: state
+          in: query
+          description: Only jobs in this state.
+          schema: { $ref: '#/components/schemas/JobState' }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
       responses:
         '200':
-          description: Known jobs, newest first.
+          description: A page of jobs, newest first.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/Job' }
+              schema: { $ref: '#/components/schemas/JobPage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /jobs/{id}:
     parameters:
@@ -899,6 +1464,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Job' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [jobs]
       summary: Cancel a running job
@@ -910,25 +1477,74 @@ paths:
         '204': { description: Cancellation was requested. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The job has already finished. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /jobs/{id}/undo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [jobs, batch]
+      summary: Undo a job
+      description: |
+        Reverses a job by restoring the journal it wrote, and returns a job of
+        its own to follow.
+
+        A job is undoable when it carries a `backupId`. Batch edits, splits
+        and renames journal by default; strips and artwork pastes do so when
+        asked. A job with no `backupId` answers `404` — nothing was recorded,
+        so there is nothing to undo it from.
+
+        What was already done is what gets undone: a job cancelled halfway is
+        still undoable for the files it reached. A job cancelled while still
+        running is not, until it stops.
+
+        This is not a stack. Undoing an undo is possible — the undo itself is
+        a restore, not a journalled edit, so it records nothing — which means
+        redo is not offered. What it is is the answer to "that was the wrong
+        two thousand files".
+      operationId: undoJob
+      responses:
+        '202': { $ref: '#/components/responses/JobAccepted' }
+        '404':
+          description: No such job, or the job recorded no journal.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '409':
+          description: The job is still running.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /jobs/{id}/events:
     get:
       tags: [jobs]
       summary: Stream a job's progress
-      description: A `text/event-stream` of `Event` objects for one job.
+      description: |
+        A `text/event-stream` of `Event` objects for one job. Resumable on the
+        same terms as `/events`.
       operationId: streamJobEvents
       parameters:
         - name: id
           in: path
           required: true
           schema: { type: string }
+        - $ref: '#/components/parameters/LastEventId'
+        - $ref: '#/components/parameters/LastEventIdHeader'
       responses:
         '200':
-          description: The event stream.
+          description: |
+            The event stream. Each `data:` line is one `Event`.
           content:
             text/event-stream:
-              schema: { type: string }
+              schema: { $ref: '#/components/schemas/Event' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /events:
     get:
@@ -940,16 +1556,43 @@ paths:
         `tracks.changed`, and the terminal drops those rows from its cache
         instead of polling for them.
 
-        A subscriber that falls too far behind loses events rather than
-        blocking the write that produced one, so a client that has been
-        disconnected should refetch rather than assume it saw everything.
+        ## Resuming
+
+        Every event carries an `id:` line of `<epoch>:<seq>`, which a browser's
+        `EventSource` sends back as `Last-Event-ID` when it reconnects by
+        itself. Everything else can send that header by hand, or pass
+        `?lastEventId=` — which is also how a browser resumes from an id it
+        stored in a previous session, since `EventSource` has no way to set a
+        header on the first connection.
+
+        A resumed stream replays what was missed before anything new, in
+        order. When it cannot — the events have aged out of the window, or the
+        server has restarted — the first event is a `stream.gap` instead, and
+        a client that receives one should refetch rather than trust its cache.
+        `missed` says how many events it stands for, or `-1` when the server
+        restarted and the count is unknowable.
+
+        The epoch is why the id is not a bare number: a sequence resets when
+        the process does, so event 12 from this run and event 12 from the last
+        one are different events, and resuming from the wrong one would
+        silently skip everything between.
+
+        A subscriber that falls behind *while connected* still loses events
+        rather than blocking the write that produced one. Resuming covers a
+        dropped connection, not a client that cannot keep up.
       operationId: streamEvents
+      parameters:
+        - $ref: '#/components/parameters/LastEventId'
+        - $ref: '#/components/parameters/LastEventIdHeader'
       responses:
         '200':
-          description: The event stream.
+          description: |
+            The event stream. Each `data:` line is one `Event`.
           content:
             text/event-stream:
-              schema: { type: string }
+              schema: { $ref: '#/components/schemas/Event' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
 components:
   securitySchemes:
@@ -964,6 +1607,15 @@ components:
     ETag:
       description: The track's `version`, for use as `If-Match` on a later edit.
       schema: { type: string }
+    RateLimitLimit:
+      description: Discogs requests a minute allowed — 25 without a token, 60 with one.
+      schema: { type: integer }
+    RateLimitRemaining:
+      description: How much of the Discogs budget is left.
+      schema: { type: integer }
+    RateLimitReset:
+      description: Seconds until the budget refills. The budget is per minute, so always 60.
+      schema: { type: integer }
 
   parameters:
     TrackId:
@@ -972,6 +1624,56 @@ components:
       required: true
       description: A stable identifier derived from the file's path.
       schema: { type: string }
+    IfMatch:
+      name: If-Match
+      in: header
+      description: |
+        The `version` the client last saw. When present it must still match,
+        or the request fails with `409` because the file changed underneath.
+      schema: { type: string }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      description: |
+        An `ETag` the client already holds. When it still matches, the
+        response is `304` with no body.
+      schema: { type: string }
+    LastEventId:
+      name: lastEventId
+      in: query
+      description: >-
+        Resume the stream after this event id. The same value the
+        `Last-Event-ID` header carries, for clients that cannot set a header
+        on the connection.
+      schema: { type: string, examples: ["a1b2c3d4e5f60718:412"] }
+    LastEventIdHeader:
+      name: Last-Event-ID
+      in: header
+      description: >-
+        Resume the stream after this event id. A browser's `EventSource` sends
+        it automatically when it reconnects.
+      schema: { type: string }
+    SelectIds:
+      name: ids
+      in: query
+      description: >-
+        Specific tracks, repeated or comma-separated. When present, `q` is
+        ignored, exactly as a `Selector`'s `ids` overrides its `query`.
+      schema: { type: array, items: { type: string } }
+      style: form
+      explode: true
+    SelectExcludeIds:
+      name: excludeIds
+      in: query
+      description: Removed from the selection — "all of these except these".
+      schema: { type: array, items: { type: string } }
+      style: form
+      explode: true
+    SelectAll:
+      name: all
+      in: query
+      description: Select the entire library.
+      schema: { type: boolean }
     Query:
       name: q
       in: query
@@ -1040,6 +1742,41 @@ components:
       description: No such resource.
       content:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    NotModified:
+      description: |
+        The client's `If-None-Match` still matches, so the body is unchanged
+        and is not sent. Covers are the reason this is worth using: an album
+        grid re-requests the same images every time it is opened, and each one
+        is a few hundred kilobytes that have not changed.
+      headers:
+        ETag: { $ref: '#/components/headers/ETag' }
+    Unauthorized:
+      description: |
+        No bearer token, or the wrong one. A token is required whenever the
+        server is bound to anything other than loopback; `GET /capabilities`
+        answers whether this one requires it, and is itself exempt.
+      headers:
+        WWW-Authenticate:
+          description: The scheme and realm, always `Bearer realm="yamo"`.
+          schema: { type: string }
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    TooLarge:
+      description: |
+        The uploaded image is larger than this server accepts. The bound is in
+        `GET /capabilities` as `limits.maxImageBytes`. It is refused rather
+        than truncated: half a JPEG embedded in every selected track would be
+        a corrupt cover and no error anywhere.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    ServerError:
+      description: |
+        Something failed that the request could not have predicted — a file
+        the catalogue lists that the disk refuses to read, a write that failed
+        halfway. Retrying is reasonable; the same request will not fail this
+        way twice unless something is actually broken.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
     BadRequest:
       description: The request was malformed or named an unknown field.
       content:
@@ -1083,6 +1820,12 @@ components:
           schema: { type: integer }
       content:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    # Reported on the successful Discogs responses as well as on the 429. The
+    # body carries the budget because it is worth showing a person, and the
+    # headers carry it because the code that has to pace itself is often not
+    # the code that parses the response — a fetch wrapper, a queue, a retry
+    # policy. Answering only on the 429 lets a client slow down after it has
+    # already run out rather than before.
     LookupUnavailable:
       description: The Discogs lookup is turned off on this server.
       content:
@@ -1097,7 +1840,8 @@ components:
         code:
           type: string
           description: A stable identifier for the failure.
-          enum: [not_found, bad_request, conflict, exists, count_mismatch, scan_running, unwritable, unauthorized, internal]
+          enum: [not_found, bad_request, conflict, exists, count_mismatch, scan_running,
+                 unwritable, too_large, rate_limited, unavailable, unauthorized, internal]
         jobId: { type: string, description: "For scan_running, the scan already in progress." }
         expected: { type: integer, description: "For count_mismatch, the count the client sent." }
         actual: { type: integer, description: "For count_mismatch, the count the server found." }
@@ -1267,6 +2011,56 @@ components:
         selector: { $ref: '#/components/schemas/Selector' }
         set: { $ref: '#/components/schemas/Changes' }
         dryRun: { type: boolean, default: false }
+        backup:
+          type: boolean
+          default: true
+          description: >-
+            Record the values being overwritten so the job can be undone.
+            On by default — the opposite of `/strip`, and for the opposite
+            reason: a strip is asked for deliberately, and this is the
+            ordinary way to work here, so the recovery has to be there without
+            being asked for. It costs a line of text per changed file.
+
+    RenameTracksRequest:
+      type: object
+      required: [selector, template]
+      properties:
+        selector: { $ref: '#/components/schemas/Selector' }
+        template:
+          type: string
+          description: |
+            The destination path, naming fields with a leading `$` and a
+            literal dollar as `$$`. Relative to the library root the track
+            sits under, not to the track's own directory. Never include the
+            extension: the file keeps the one it has.
+
+            `$track` and `$disc` are padded to two digits. A field with no
+            value on a given track makes that track `incomplete` rather than
+            producing a gap in the name.
+          examples: ["$track $title", "$albumartist/$album/$track $title", "$artist - $title"]
+        dryRun: { type: boolean, default: false }
+        backup: { type: boolean, default: true, description: Record where each file came from. }
+
+    ExportArtworkRequest:
+      type: object
+      required: [selector]
+      properties:
+        selector: { $ref: '#/components/schemas/Selector' }
+        filename:
+          type: string
+          default: cover.jpg
+          description: >-
+            What the image is called in each directory. A bare name, not a
+            path. The extension is replaced with the image's own, so a PNG
+            cover asked for as `cover.jpg` is written as `cover.png`.
+          examples: ["cover.jpg", "folder.jpg"]
+        overwrite:
+          type: boolean
+          default: false
+          description: >-
+            Replace an image already there. Off by default: a folder that
+            already has a cover usually has the one somebody chose.
+        dryRun: { type: boolean, default: false }
 
     BatchArtworkRequest:
       type: object
@@ -1285,6 +2079,14 @@ components:
           format: byte
           description: Base64 image data, required when `source` is `upload`.
         dryRun: { type: boolean, default: false }
+        backup:
+          type: boolean
+          default: false
+          description: >-
+            Record the covers being replaced so the job can be undone. Off by
+            default, unlike an edit's: this journal holds whole images rather
+            than a line of text, so undoing a paste across ten thousand tracks
+            is worth the space and doing it every time is not.
 
     StripRequest:
       type: object
@@ -1335,13 +2137,25 @@ components:
         followSymlinks: { type: boolean }
         workers: { type: integer }
 
+    JobKind:
+      type: string
+      description: |
+        What an operation was. Every operation that starts a job has a kind of
+        its own, because a client polling the list distinguishes them by this
+        and their results carry different fields.
+      enum: [scan, edit, split, rename, artwork, export, strip, restore, undo]
+
+    JobState:
+      type: string
+      enum: [running, succeeded, failed, cancelled]
+
     Job:
       type: object
       required: [id, kind, state, progress, createdAt]
       properties:
         id: { type: string }
-        kind: { type: string, enum: [scan, edit, artwork, strip, restore] }
-        state: { type: string, enum: [running, succeeded, failed, cancelled] }
+        kind: { $ref: '#/components/schemas/JobKind' }
+        state: { $ref: '#/components/schemas/JobState' }
         progress:
           type: object
           required: [done, total]
@@ -1350,14 +2164,89 @@ components:
             total: { type: integer, format: int64 }
             message: { type: string }
         result:
-          description: Present when the job succeeded; its shape depends on `kind`.
+          description: |
+            Present when the job succeeded. Its shape follows `kind`: `edit`
+            and `restore` and `undo` give a `BatchResult`, `split` a
+            `SplitResult`, `rename` a `RenameResult`, `artwork` a
+            `BatchResult`, `export` an `ExportResult`, `strip` a
+            `StripResult`, and `scan` a `ScanResult`.
           oneOf:
             - { $ref: '#/components/schemas/BatchResult' }
+            - { $ref: '#/components/schemas/SplitResult' }
+            - { $ref: '#/components/schemas/RenameResult' }
+            - { $ref: '#/components/schemas/ExportResult' }
             - { $ref: '#/components/schemas/StripResult' }
             - { $ref: '#/components/schemas/ScanResult' }
         error: { type: string }
+        backupId:
+          type: string
+          description: >-
+            The undo journal this job wrote, when it wrote one. Its presence
+            is what says the job can be undone; `POST /jobs/{id}/undo` finds
+            it through this rather than making the client remember it.
         createdAt: { type: string, format: date-time }
         finishedAt: { type: string, format: date-time }
+
+    JobPage:
+      description: One page of jobs, newest first.
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Job' }
+        total:
+          type: integer
+          description: Jobs matching the filter, before paging.
+        limit: { type: integer }
+        offset: { type: integer }
+        retentionMs:
+          type: integer
+          format: int64
+          description: >-
+            How long a finished job stays queryable. What tells an id that has
+            aged out from one that never existed.
+
+    Event:
+      type: object
+      description: |
+        One change, as it arrives on `/events`. The SSE `event:` line carries
+        `type` and the `id:` line carries `<epoch>:<seq>`.
+      required: [seq, epoch, type, at]
+      properties:
+        seq:
+          type: integer
+          format: int64
+          description: >-
+            Numbers events within one run of the server, from 1. Send
+            `<epoch>:<seq>` back as `Last-Event-ID` to resume after it.
+        epoch:
+          type: string
+          description: >-
+            Identifies this run of the server. Sequence numbers reset when the
+            process does, so an id from a previous run means something else
+            now — which is what this makes detectable.
+        type:
+          type: string
+          enum: [tracks.changed, catalog.replaced, job.progress, job.finished, clipboard.changed, stream.gap]
+        at: { type: string, format: date-time }
+        trackIds:
+          type: array
+          items: { type: string }
+          description: >-
+            On `tracks.changed`, the tracks affected. A rename names both the
+            old id and the new one, so a cache keyed by either can drop it.
+          examples: [["3f2a1b4c5d6e7f80"]]
+        job:
+          allOf: [{ $ref: '#/components/schemas/Job' }]
+          description: On `job.progress` and `job.finished`, the job.
+        missed:
+          type: integer
+          format: int64
+          description: >-
+            On `stream.gap`, how many events could not be replayed, or `-1`
+            when the server restarted and the count is unknowable. A client
+            that receives one should refetch rather than trust its cache.
 
     BatchResult:
       type: object
@@ -1367,6 +2256,12 @@ components:
         skipped: { type: integer, description: Already had the requested value. }
         failed: { type: integer }
         dryRun: { type: boolean }
+        backupId:
+          type: string
+          description: >-
+            The undo journal this operation wrote, when it wrote one. Pass it
+            to `/restore`, or undo the job it belongs to; either way it is how
+            the change is taken back.
         errors:
           type: array
           description: Capped, so a systematically failing run stays readable.
@@ -1453,6 +2348,13 @@ components:
         withArtwork: { type: integer }
         year: { type: integer, format: int32 }
         durationMs: { type: integer, format: int64 }
+        sampleTrackId:
+          type: string
+          description: >-
+            One of the album's tracks that has a cover, so a grid can fetch a
+            thumbnail without first listing the tracks to find one. Absent
+            when none of them has artwork, which is itself the answer a grid
+            needs.
         query: { type: string, description: Reselects exactly this album. }
 
     AlbumPage:
@@ -1484,6 +2386,9 @@ components:
         albums: { type: integer, description: Distinct releases among the matching tracks. }
         withArtwork: { type: integer }
         durationMs: { type: integer, format: int64 }
+        sampleTrackId:
+          type: string
+          description: One of the artist's tracks that has a cover, as on an album.
         query: { type: string, description: Reselects exactly this artist. }
 
     ArtistPage:
@@ -1630,6 +2535,13 @@ components:
         dryRun:
           type: boolean
           description: Report what would happen without writing anything.
+        backup:
+          type: boolean
+          default: true
+          description: >-
+            Record the titles being rewritten so the job can be undone. On by
+            default: a split writes a different value into every file, so
+            there is nothing a client could send to put them back by hand.
 
     SplitResult:
       allOf:
@@ -1659,6 +2571,334 @@ components:
                   fields:
                     type: object
                     additionalProperties: { type: string }
+
+    RenameResult:
+      allOf:
+        - $ref: '#/components/schemas/BatchResult'
+        - type: object
+          properties:
+            template: { type: string }
+            fields:
+              type: array
+              items: { type: string }
+              description: What the template reads, in the order it names them.
+              examples: [["track", "title"]]
+            incomplete:
+              type: integer
+              description: >-
+                Tracks the template could not be filled in for, because a
+                field it names is empty on that file. Not failures: nothing is
+                wrong with the file, it simply has no album to file itself
+                under, and this is the number that says whether the tags are
+                ready for the template.
+            collisions:
+              type: integer
+              description: >-
+                Destinations two selected tracks both wanted, or that
+                something already occupied. Counted apart from `failed`
+                because the answer is a better template — usually one carrying
+                `$disc` or `$track` — rather than a retry.
+            samples:
+              type: array
+              description: A few worked examples, for checking a template before applying it.
+              items:
+                type: object
+                properties:
+                  from: { type: string }
+                  to: { type: string }
+
+    ExportResult:
+      allOf:
+        - $ref: '#/components/schemas/BatchResult'
+        - type: object
+          properties:
+            directories:
+              type: integer
+              description: >-
+                Folders considered, which is the unit of work here. `changed`
+                counts the images written, and the two differ by the folders
+                that already had one.
+            filename:
+              type: string
+              description: The name actually used, after the extension followed the image.
+            withoutArtwork:
+              type: integer
+              description: Folders whose tracks carry no embedded cover, so there was nothing to write.
+            existing:
+              type: integer
+              description: Folders skipped because an image was already there and `overwrite` was not set.
+            written:
+              type: array
+              items: { type: string }
+              description: A few of the files, so a dry run shows what it would do rather than only how much.
+
+    RawTag:
+      type: object
+      required: [key, bytes, kept]
+      properties:
+        key:
+          type: string
+          description: >-
+            The native name — a frame id for MP3, an atom for MP4, a field
+            name for Vorbis comments. What the format calls it, not what this
+            library calls it.
+          examples: ["TPE2", "aART", "ALBUMARTIST", "TXXX:iTunNORM"]
+        field:
+          type: string
+          description: >-
+            The canonical field this maps to. Its absence is the interesting
+            case: a tag that means nothing here is one nothing else is likely
+            to read either.
+        meaning: { type: string, examples: ["album artist"] }
+        value:
+          type: string
+          description: >-
+            The tag rendered for display. A binary payload is described rather
+            than dumped — a cover reads as its size and type.
+        bytes: { type: integer }
+        kept:
+          type: boolean
+          description: Whether the default keep list would preserve this tag through a strip.
+
+    RawTags:
+      type: object
+      required: [id, path, format, tags, noTag, unsupported]
+      properties:
+        id: { type: string }
+        path: { type: string }
+        format: { type: string }
+        container:
+          type: string
+          description: >-
+            The metadata block the tags came out of, which is what makes the
+            keys legible: "TPE2" means something once you know it is an ID3v2
+            frame.
+          examples: ["ID3v2", "Vorbis comments", "iTunes atoms"]
+        tags:
+          type: array
+          description: Everything in the file's metadata, largest first.
+          items: { $ref: '#/components/schemas/RawTag' }
+        bytes: { type: integer, description: What the metadata occupies in total. }
+        noTag:
+          type: boolean
+          description: The file carries no metadata container at all, which is not the same as an empty one.
+        unsupported:
+          type: boolean
+          description: >-
+            This build can read the file's fields but cannot enumerate its raw
+            metadata. True for WMA, WAV and AIFF, which it also cannot write —
+            so the tags it cannot list are the ones it could not remove.
+        nonCanonical:
+          type: array
+          items: { type: string }
+          description: >-
+            Kept fields held in a form this library does not write. `/strip`'s
+            `normalize` is what tidies them.
+
+    Folder:
+      type: object
+      required: [path, name, tracks, descendants, query]
+      properties:
+        path: { type: string, description: The directory itself, absolute. }
+        name: { type: string, description: The last segment, which is what a list displays. }
+        tracks: { type: integer, description: Matching tracks directly in this folder. }
+        descendants: { type: integer, description: Matching tracks in this folder and everything below it. }
+        folders: { type: integer, description: Immediate subdirectories holding matching tracks. }
+        bytes: { type: integer, format: int64 }
+        durationMs: { type: integer, format: int64 }
+        withArtwork: { type: integer }
+        albums:
+          type: integer
+          description: >-
+            Distinct albums among the tracks directly here. One of these and
+            one artist says the folder is a record; several says it is a
+            shelf, or that the tags are wrong.
+        artists: { type: integer }
+        sampleTrackId:
+          type: string
+          description: A track in this folder, for fetching a cover to head the entry with.
+        query: { type: string, description: Reselects every track at or below this folder. }
+
+    FolderPage:
+      description: One page of folders. See "Paging" in the introduction.
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Folder' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+        parent:
+          type: string
+          description: The directory listed, absent when listing the roots.
+
+    DuplicateGroup:
+      type: object
+      required: [key, tracks, items, query]
+      properties:
+        key:
+          type: string
+          description: The shared value, rendered for display.
+          examples: ["Elvis Presley — Blue Suede Shoes"]
+        tracks: { type: integer }
+        bytes: { type: integer, format: int64, description: What the copies occupy in total. }
+        wasted:
+          type: integer
+          format: int64
+          description: >-
+            What keeping one copy would free, counting the largest as the one
+            to keep — which is very nearly always the better rip. This is what
+            the listing is ordered by.
+        items:
+          type: array
+          description: >-
+            The tracks themselves, so a client can compare bitrates and paths
+            without a request per group. Capped, since a file duplicated four
+            hundred times is a broken scan rather than a library to tidy.
+          items: { $ref: '#/components/schemas/Track' }
+        query:
+          type: string
+          description: >-
+            Reselects this group. Only the text fields go in, since duration
+            and size are not searchable — so a key including them reselects a
+            superset rather than claiming precision the query language does
+            not have.
+
+    DuplicatePage:
+      description: One page of duplicate groups, most wasteful first.
+      type: object
+      required: [items, total, limit, offset, by]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DuplicateGroup' }
+        total: { type: integer, description: Groups found, before paging. }
+        limit: { type: integer }
+        offset: { type: integer }
+        by:
+          type: array
+          items: { type: string }
+          description: >-
+            The key actually used. Echoed because an unrecognised field name
+            is dropped rather than rejected, and the client should know which.
+          examples: [["artist", "title"]]
+        duplicateTracks:
+          type: integer
+          description: Tracks in duplicate groups across the whole result, not just this page.
+        wastedBytes:
+          type: integer
+          format: int64
+          description: What keeping one of each would free, across the whole result.
+
+    Identity:
+      type: object
+      required: [authenticated, tokenRequired]
+      properties:
+        authenticated:
+          type: boolean
+          description: Always true — a bad token would have been a `401`.
+        tokenRequired: { type: boolean }
+        scopes:
+          type: array
+          items: { type: string }
+          description: >-
+            One token grants everything, so this is always `["read","write"]`.
+            Named rather than left implicit so a client written against it
+            keeps working if the answer ever becomes narrower.
+
+    Capabilities:
+      type: object
+      description: What this build and this configuration can do.
+      required: [name, version, authRequired, formats, limits, features]
+      properties:
+        name: { type: string, examples: ["yamo"] }
+        version: { type: string, examples: ["1.2.0", "dev"] }
+        authRequired:
+          type: boolean
+          description: >-
+            Whether a bearer token must be presented. The reason this endpoint
+            is served without one.
+        formats:
+          type: array
+          items: { $ref: '#/components/schemas/FormatSupport' }
+        limits: { $ref: '#/components/schemas/Limits' }
+        features: { $ref: '#/components/schemas/Features' }
+        editableFields:
+          type: array
+          items: { type: string }
+          description: Every key `Changes` accepts. Build a field picker from this, not from a copy of the documentation.
+        sortFields: { type: array, items: { type: string } }
+        duplicateFields: { type: array, items: { type: string } }
+        jobKinds: { type: array, items: { type: string } }
+        artworkSources: { type: array, items: { type: string } }
+        defaultKeepTags:
+          type: array
+          items: { type: string }
+          description: The keep list a strip applies when none is given.
+
+    FormatSupport:
+      type: object
+      required: [format, read, write]
+      properties:
+        format: { type: string, examples: ["mp3", "flac", "wma"] }
+        read: { type: boolean }
+        write:
+          type: boolean
+          description: >-
+            False for the formats this build reads but cannot write. A client
+            that knows this can warn before an edit rather than after it.
+        strip:
+          type: boolean
+          description: >-
+            Whether the raw metadata can be enumerated and removed, which
+            needs a writer for the container and so follows `write`.
+        extensions: { type: array, items: { type: string }, examples: [[".m4a", ".m4b", ".mp4"]] }
+        mime: { type: string }
+
+    Limits:
+      type: object
+      properties:
+        defaultPageSize: { type: integer }
+        maxPageSize:
+          type: integer
+          description: What `limit` is capped to. Requests above it are capped rather than rejected.
+        maxImageBytes: { type: integer, description: The largest cover an upload may carry. }
+        minThumbnailSize: { type: integer }
+        maxThumbnailSize: { type: integer }
+        eventHistory:
+          type: integer
+          description: >-
+            How many recent events a disconnected client can resume through
+            before it is told it missed some.
+        jobRetentionMs: { type: integer, format: int64 }
+
+    Features:
+      type: object
+      description: Which optional parts of this API are turned on.
+      properties:
+        discogs:
+          type: boolean
+          description: >-
+            The cover and album lookup. False on a server meant to make no
+            outbound requests, in which case those endpoints answer `503`.
+        discogsTokened:
+          type: boolean
+          description: Whether it is authenticated, which is 60 requests a minute rather than 25.
+        backups:
+          type: boolean
+          description: >-
+            Whether journals can be written, which needs somewhere to put
+            them. When false a batch edit still works and simply cannot be
+            undone — worth saying so before running one.
+        clipboard: { type: boolean }
+        rescan:
+          type: boolean
+          description: >-
+            Whether the server rescans its roots on a timer. When false
+            nothing watches the filesystem at all.
+        crossOrigin: { type: boolean, description: Whether a browser on another origin may call this API. }
 
     DiscogsAlbumInfo:
       type: object
@@ -1742,19 +2982,69 @@ components:
 
     Backup:
       type: object
+      description: One stored undo journal.
+      required: [id, kind, created]
       properties:
         id: { type: string }
-        created: { type: string, format: date-time }
-        tracks: { type: integer }
-        bytes: { type: integer, format: int64 }
-
-    Event:
-      type: object
-      required: [type, at]
-      properties:
-        type:
+        kind:
           type: string
-          enum: [tracks.changed, catalog.replaced, job.progress, job.finished, clipboard.changed]
-        at: { type: string, format: date-time }
-        trackIds: { type: array, items: { type: string } }
-        job: { $ref: '#/components/schemas/Job' }
+          enum: [strip, edit, artwork, rename]
+          description: >-
+            What kind of change was recorded, which says how a restore puts it
+            back. A journal written before journals had kinds reports `strip`,
+            which is what every one of them was.
+        jobId:
+          type: string
+          description: The job that wrote it. Undo that job rather than restoring by hand.
+        created: { type: string, format: date-time }
+        tracks: { type: integer, description: Files recorded. }
+        bytes: { type: integer, format: int64, description: The journal's size on disk. }
+
+    BackupPage:
+      description: One page of journals, newest first.
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Backup' }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+
+    BackupDetail:
+      description: |
+        A journal and what it holds, for deciding whether to restore it
+        without applying it first.
+      allOf:
+        - $ref: '#/components/schemas/Backup'
+        - type: object
+          properties:
+            fields:
+              type: array
+              items: { type: string }
+              description: The canonical fields an edit journal would write back.
+            formats:
+              type: object
+              additionalProperties: { type: integer }
+              description: For a strip, how many entries came from each container.
+            groups:
+              type: array
+              description: For a strip, the keys recorded and how many files each covers.
+              items:
+                type: object
+                properties:
+                  key: { type: string }
+                  tracks: { type: integer }
+            samples:
+              type: array
+              description: A few of the files, with a note of what is recorded for each.
+              items:
+                type: object
+                properties:
+                  path: { type: string }
+                  id: { type: string }
+                  note:
+                    type: string
+                    examples: ["artist, title", "moved from /music/unsorted/track01.mp3", "12 tags"]
+

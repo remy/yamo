@@ -53,7 +53,7 @@ func (s *Service) Rename(id, dest, ifMatch string) (Track, error) {
 	roots := append([]string(nil), s.cat.Roots...)
 	s.mu.RUnlock()
 
-	if ifMatch != "" && ifMatch != TrackVersion(&cur) {
+	if ifMatch != "" && ifMatch != s.version(&cur) {
 		return Track{}, ErrConflict
 	}
 
@@ -121,7 +121,7 @@ func (s *Service) Rename(id, dest, ifMatch string) (Track, error) {
 
 	s.markDirty()
 	s.events.publish(Event{Type: EventTracksChanged, TrackIDs: []string{id, newID}})
-	return toTrack(&cur), nil
+	return s.toTrack(&cur), nil
 }
 
 // Delete removes one file from disk and from the catalogue.
@@ -141,7 +141,7 @@ func (s *Service) Delete(id, ifMatch string) error {
 	cur := s.cat.Tracks[i]
 	s.mu.RUnlock()
 
-	if ifMatch != "" && ifMatch != TrackVersion(&cur) {
+	if ifMatch != "" && ifMatch != s.version(&cur) {
 		return ErrConflict
 	}
 

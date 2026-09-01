@@ -120,7 +120,11 @@ func TrackID(path string) string {
 }
 
 // TrackVersion identifies a file's state on disk, for optimistic concurrency.
-// It covers size and modification time, both of which a tag write changes.
+// It covers size and modification time, both of which a tag write usually
+// changes.
+//
+// Usually, but not always, and that is what Service.version exists to fix: see
+// the note there. Nothing outside this package should use this directly.
 func TrackVersion(t *catalog.Track) string {
 	h := hash64(t.Path)
 	h = hashMix(h, uint64(t.Size))

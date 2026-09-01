@@ -59,7 +59,7 @@ func (s *Service) List(p ListParams) ListResult {
 	end := min(p.Offset+p.Limit, len(hits))
 	out.Items = make([]Track, 0, end-p.Offset)
 	for _, h := range hits[p.Offset:end] {
-		t := toTrack(&s.cat.Tracks[h.Index])
+		t := s.toTrack(&s.cat.Tracks[h.Index])
 		if scored {
 			// Rounded because the extra digits are noise: they encode which
 			// tier and bonuses fired, which no client should be reading.
@@ -326,7 +326,14 @@ type Album struct {
 	WithArt     int    `json:"withArtwork"`
 	Year        int32  `json:"year,omitempty"`
 	DurationMS  int64  `json:"durationMs"`
-	Query       string `json:"query"` // reselects exactly this album
+
+	// SampleTrackID is one of the album's tracks that has a cover, so a grid
+	// can fetch a thumbnail without first listing the tracks to find one.
+	// Empty when none of them has artwork, which is itself the answer a grid
+	// needs.
+	SampleTrackID string `json:"sampleTrackId,omitempty"`
+
+	Query string `json:"query"` // reselects exactly this album
 }
 
 // AlbumsResult is one page of albums.
@@ -379,6 +386,9 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 		a.DurationMS += int64(t.DurationMS)
 		if t.HasArt {
 			a.WithArt++
+			if a.SampleTrackID == "" {
+				a.SampleTrackID = TrackID(t.Path)
+			}
 		}
 		if a.Year == 0 || (t.Year > 0 && t.Year < a.Year) {
 			a.Year = t.Year
@@ -391,12 +401,7 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 		a.Query = albumQuery(a.artistField(), a.AlbumArtist, a.Album.Album)
 		items = append(items, a.Album)
 	}
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].AlbumArtist != items[j].AlbumArtist {
-			return catalog.Fold(items[i].AlbumArtist) < catalog.Fold(items[j].AlbumArtist)
-		}
-		return catalog.Fold(items[i].Album) < catalog.Fold(items[j].Album)
-	})
+	sortAlbums(items, p.Sort)
 
 	out := AlbumsResult{Total: len(items), Limit: p.Limit, Offset: p.Offset, Items: []Album{}}
 	if p.Offset >= len(items) {
@@ -456,7 +461,12 @@ type Artist struct {
 	Albums     int    `json:"albums"`
 	WithArt    int    `json:"withArtwork"`
 	DurationMS int64  `json:"durationMs"`
-	Query      string `json:"query"` // reselects exactly this artist
+
+	// SampleTrackID is one of the artist's tracks that has a cover, for the
+	// same reason an album carries one.
+	SampleTrackID string `json:"sampleTrackId,omitempty"`
+
+	Query string `json:"query"` // reselects exactly this artist
 }
 
 // ArtistsResult is one page of artists.
@@ -509,6 +519,9 @@ func (s *Service) Artists(p ListParams) ArtistsResult {
 		a.DurationMS += int64(t.DurationMS)
 		if t.HasArt {
 			a.WithArt++
+			if a.SampleTrackID == "" {
+				a.SampleTrackID = TrackID(t.Path)
+			}
 		}
 		if t.Album != "" {
 			a.albums[catalog.Fold(t.Album)] = true
@@ -522,9 +535,7 @@ func (s *Service) Artists(p ListParams) ArtistsResult {
 		a.Query = artistQuery(artistField(a.byAlbumArtist, a.byArtist), a.Artist.Artist)
 		items = append(items, a.Artist)
 	}
-	sort.Slice(items, func(i, j int) bool {
-		return catalog.Fold(items[i].Artist) < catalog.Fold(items[j].Artist)
-	})
+	sortArtists(items, p.Sort)
 
 	out := ArtistsResult{Total: len(items), Limit: p.Limit, Offset: p.Offset, Items: []Artist{}}
 	if p.Offset >= len(items) {

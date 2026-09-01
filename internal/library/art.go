@@ -52,8 +52,13 @@ func (s *Service) Artwork(id string) (*tags.Picture, error) {
 }
 
 // SetArtwork replaces one track's cover, or removes it when pic is nil.
-func (s *Service) SetArtwork(id string, pic *tags.Picture) error {
-	changed, err := s.setArtwork(id, pic, false)
+//
+// When ifMatch is non-empty it must equal the track's current version, on the
+// same reasoning as a field edit: a cover is a write to the file like any
+// other, and two clients pasting different art onto one album should not
+// silently settle it by whoever finished last.
+func (s *Service) SetArtwork(id string, pic *tags.Picture, ifMatch string) error {
+	changed, err := s.setArtworkChecked(id, pic, ifMatch, false, nil)
 	if err != nil {
 		return err
 	}
@@ -65,7 +70,11 @@ func (s *Service) SetArtwork(id string, pic *tags.Picture) error {
 }
 
 // setArtwork writes one track's cover and reports whether the file changed.
-func (s *Service) setArtwork(id string, pic *tags.Picture, dryRun bool) (bool, error) {
+func (s *Service) setArtwork(id string, pic *tags.Picture, dryRun bool, jrn *journal) (bool, error) {
+	return s.setArtworkChecked(id, pic, "", dryRun, jrn)
+}
+
+func (s *Service) setArtworkChecked(id string, pic *tags.Picture, ifMatch string, dryRun bool, jrn *journal) (bool, error) {
 	s.mu.RLock()
 	i, ok := s.lookupLocked(id)
 	if !ok {
@@ -75,6 +84,9 @@ func (s *Service) setArtwork(id string, pic *tags.Picture, dryRun bool) (bool, e
 	cur := s.cat.Tracks[i]
 	s.mu.RUnlock()
 
+	if ifMatch != "" && ifMatch != s.version(&cur) {
+		return false, ErrConflict
+	}
 	if !cur.Format.Writable() {
 		return false, fmt.Errorf("library: %s files cannot be written by this build", cur.Format)
 	}
@@ -93,6 +105,12 @@ func (s *Service) setArtwork(id string, pic *tags.Picture, dryRun bool) (bool, e
 	if dryRun {
 		return true, nil
 	}
+	// The cover about to be replaced, read before the write. This is the one
+	// journal that costs real space — an image per track rather than a line of
+	// text — which is why artwork backups are asked for rather than assumed.
+	if jrn != nil {
+		jrn.write(journalRecord{Path: cur.Path, Art: journalArtFor(cur.Path, cur.HasArt)})
+	}
 
 	e := &tags.Edit{}
 	if pic == nil {
@@ -103,6 +121,7 @@ func (s *Service) setArtwork(id string, pic *tags.Picture, dryRun bool) (bool, e
 	if err := s.locks.withPath(cur.Path, func() error { return tags.Write(cur.Path, e) }); err != nil {
 		return false, err
 	}
+	s.bumpRev(cur.Path)
 
 	size, modTime := cur.Size, cur.ModTime
 	if fi, serr := os.Stat(cur.Path); serr == nil {
@@ -125,6 +144,12 @@ type BatchArtworkRequest struct {
 	Source   ArtworkSource `json:"source"`
 	Image    []byte        `json:"-"` // supplied out of band for uploads
 	DryRun   bool          `json:"dryRun,omitempty"`
+
+	// Backup records the covers being replaced so the job can be undone.
+	// Unlike a field edit's journal it holds whole images, so it is off
+	// unless asked for: undoing a paste across ten thousand tracks is worth
+	// the space, and doing it every time is not.
+	Backup bool `json:"backup,omitempty"`
 }
 
 // BatchArtwork starts a job that sets or clears artwork across a selection.
@@ -156,9 +181,17 @@ func (s *Service) BatchArtwork(req BatchArtworkRequest) (*Job, error) {
 		return nil, fmt.Errorf("library: unknown artwork source %q", req.Source)
 	}
 
+	var jrn *journal
+	if req.Backup && !req.DryRun {
+		if jrn, err = s.openJournal(JournalArtwork); err != nil {
+			return nil, err
+		}
+	}
+
 	folders := newFolderCache()
-	return s.jobs.Start(JobArtwork, func(ctx context.Context, j *Job) (any, error) {
-		res := BatchResult{Matched: len(ids), DryRun: req.DryRun}
+	return s.jobs.StartWithJournal(JobArtwork, jrn.ID(), func(ctx context.Context, j *Job) (any, error) {
+		defer jrn.Close(j.ID)
+		res := BatchResult{Matched: len(ids), DryRun: req.DryRun, BackupID: jrn.ID()}
 		j.SetProgress(Progress{Total: int64(len(ids))})
 
 		var touched []string
@@ -179,7 +212,7 @@ func (s *Service) BatchArtwork(req BatchArtworkRequest) (*Job, error) {
 				}
 			}
 
-			changed, err := s.setArtwork(id, pic, req.DryRun)
+			changed, err := s.setArtwork(id, pic, req.DryRun, jrn)
 			switch {
 			case errors.Is(err, ErrNotFound):
 				res.Skipped++
@@ -232,8 +265,20 @@ type ArtworkReport struct {
 // The grouping is the useful part: on a real library the great majority of
 // embedded artwork is the same image repeated once per track, and that is only
 // visible when identical covers are counted together.
-func (s *Service) ArtworkSummary(query string) ArtworkReport {
-	ids := s.matchIDs(query)
+//
+// It takes a selector rather than a bare query because it is the report a
+// client reads before deciding what to change, and the thing it then changes
+// is named by a selector. Summarising a different set from the one about to be
+// operated on would make the report worth less than it looks.
+func (s *Service) ArtworkSummary(sel Selector) (ArtworkReport, error) {
+	ids, err := s.Resolve(sel)
+	if err != nil {
+		return ArtworkReport{Groups: []ArtworkGroup{}}, err
+	}
+	return s.artworkSummary(ids), nil
+}
+
+func (s *Service) artworkSummary(ids []string) ArtworkReport {
 	rep := ArtworkReport{Tracks: len(ids), Groups: []ArtworkGroup{}}
 	groups := map[string]*ArtworkGroup{}
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/remy/yamo/internal/catalog"
@@ -67,12 +68,17 @@ type OpError struct {
 
 // BatchResult reports the outcome of an operation over many tracks.
 type BatchResult struct {
-	Matched int       `json:"matched"`
-	Changed int       `json:"changed"`
-	Skipped int       `json:"skipped"` // already had the requested value
-	Failed  int       `json:"failed"`
-	DryRun  bool      `json:"dryRun"`
-	Errors  []OpError `json:"errors,omitempty"`
+	Matched int  `json:"matched"`
+	Changed int  `json:"changed"`
+	Skipped int  `json:"skipped"` // already had the requested value
+	Failed  int  `json:"failed"`
+	DryRun  bool `json:"dryRun"`
+
+	// BackupID names the journal this operation wrote, when it wrote one.
+	// Pass it to /restore, or undo the job it belongs to; either way it is
+	// how the change is taken back.
+	BackupID string    `json:"backupId,omitempty"`
+	Errors   []OpError `json:"errors,omitempty"`
 }
 
 // maxReportedErrors bounds the error list so a systematically broken run
@@ -95,7 +101,7 @@ func (s *Service) Patch(id string, ch Changes, ifMatch string) (Track, error) {
 	if err := ch.Validate(); err != nil {
 		return Track{}, err
 	}
-	changed, err := s.applyOne(id, ch, ifMatch, false)
+	changed, err := s.applyOne(id, ch, ifMatch, false, nil)
 	if err != nil {
 		return Track{}, err
 	}
@@ -107,7 +113,12 @@ func (s *Service) Patch(id string, ch Changes, ifMatch string) (Track, error) {
 }
 
 // applyOne writes one track's changes. It reports whether anything changed.
-func (s *Service) applyOne(id string, ch Changes, ifMatch string, dryRun bool) (bool, error) {
+//
+// When jrn is non-nil the values about to be overwritten are recorded first,
+// which is what makes the operation undoable. Only the fields that actually
+// change are recorded: a batch that sets the artist on two thousand tracks
+// where half already read that way journals the half it rewrites.
+func (s *Service) applyOne(id string, ch Changes, ifMatch string, dryRun bool, jrn *journal) (bool, error) {
 	// Take a copy under the read lock; the file write must not hold it.
 	s.mu.RLock()
 	i, ok := s.lookupLocked(id)
@@ -118,20 +129,24 @@ func (s *Service) applyOne(id string, ch Changes, ifMatch string, dryRun bool) (
 	cur := s.cat.Tracks[i]
 	s.mu.RUnlock()
 
-	if ifMatch != "" && ifMatch != TrackVersion(&cur) {
+	if ifMatch != "" && ifMatch != s.version(&cur) {
 		return false, ErrConflict
 	}
 	if !cur.Format.Writable() {
 		return false, fmt.Errorf("library: %s files cannot be written by this build", cur.Format)
 	}
 
-	edit, applied := editFromChanges(&cur, ch)
+	edit, applied, before := editFromChanges(&cur, ch)
 	if edit.Empty() {
 		return false, nil
 	}
 	if dryRun {
 		return true, nil
 	}
+	// Recorded before the write, not after: a write that fails halfway has
+	// still changed the file, and a journal missing that record would offer an
+	// undo that quietly skipped it.
+	jrn.write(journalRecord{Path: cur.Path, Fields: before})
 
 	// Serialise on the path: tag writing is a read-modify-write, and two
 	// clients editing one track would otherwise lose an edit between them.
@@ -139,6 +154,10 @@ func (s *Service) applyOne(id string, ch Changes, ifMatch string, dryRun bool) (
 	if err != nil {
 		return false, err
 	}
+	// The file has been rewritten, which a client holding its version needs to
+	// see even when the padding absorbed the change and left the size and the
+	// second identical.
+	s.bumpRev(cur.Path)
 
 	// The write changed the file's size and modification time, so the
 	// in-memory record and its version have to catch up or the next If-Match
@@ -160,11 +179,29 @@ func (s *Service) applyOne(id string, ch Changes, ifMatch string, dryRun bool) (
 	return true, nil
 }
 
-// editFromChanges builds the tag edit and a function that applies the same
-// values to the in-memory record, so the two can never drift apart.
-func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.Track)) {
+// editFromChanges builds the tag edit, a function that applies the same values
+// to the in-memory record, and the values being overwritten.
+//
+// All three come from one pass because they have to agree: the applier keeps
+// the catalogue in step with the file, and the previous values are what an
+// undo writes back. Deriving any of them separately would be a second reading
+// of the same rules, and the two would drift.
+func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.Track), map[string]*string) {
 	e := &tags.Edit{}
 	var appliers []func(*catalog.Track)
+	before := map[string]*string{}
+
+	// was records a field's current value for the journal. An empty field is
+	// recorded as null rather than as "", because putting it back means
+	// clearing it and those are different requests.
+	was := func(name, value string) {
+		if value == "" {
+			before[name] = nil
+			return
+		}
+		v := value
+		before[name] = &v
+	}
 
 	for k, v := range ch {
 		key := strings.ToLower(strings.TrimSpace(k))
@@ -177,12 +214,14 @@ func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.
 		case FieldTrackTotal:
 			if n := atoi32(val); n != cur.TrackTotal {
 				e.SetInt("tracktotal", n)
+				was(FieldTrackTotal, itoa32(cur.TrackTotal))
 				appliers = append(appliers, func(t *catalog.Track) { t.TrackTotal = n })
 			}
 			continue
 		case FieldDiscTotal:
 			if n := atoi32(val); n != cur.DiscTotal {
 				e.SetInt("disctotal", n)
+				was(FieldDiscTotal, itoa32(cur.DiscTotal))
 				appliers = append(appliers, func(t *catalog.Track) { t.DiscTotal = n })
 			}
 			continue
@@ -201,12 +240,18 @@ func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.
 				continue
 			}
 			e.SetBool(name, want)
+			if cur.Compilation {
+				was(name, "1")
+			} else {
+				was(name, "0")
+			}
 			appliers = append(appliers, func(t *catalog.Track) { t.Compilation = want })
 			continue
 		}
 		if cur.String(f) == val {
 			continue // already that value; do not rewrite the file for nothing
 		}
+		was(name, cur.String(f))
 		switch f {
 		case catalog.FieldYear, catalog.FieldTrackNo, catalog.FieldDisc:
 			e.SetInt(name, atoi32(val))
@@ -221,7 +266,17 @@ func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.
 		for _, fn := range appliers {
 			fn(t)
 		}
+	}, before
+}
+
+// itoa32 renders a number the way Changes carries one: as a string, and with
+// zero written as empty, because a track total of zero is a field with nothing
+// in it rather than the number nought.
+func itoa32(n int32) string {
+	if n == 0 {
+		return ""
 	}
+	return strconv.FormatInt(int64(n), 10)
 }
 
 func atoi32(s string) int32 {
@@ -251,6 +306,13 @@ type BatchSetRequest struct {
 	Selector Selector `json:"selector"`
 	Set      Changes  `json:"set"`
 	DryRun   bool     `json:"dryRun,omitempty"`
+
+	// Backup records the values being overwritten so the job can be undone.
+	// It defaults to true, which is the opposite of strip's default and for
+	// the opposite reason: a strip is asked for deliberately and a batch edit
+	// is the ordinary way to work here, so the recovery has to be there
+	// without being asked for. It costs a line of text per changed file.
+	Backup bool `json:"backup"`
 }
 
 // BatchSet starts a job that applies changes to every selected track.
@@ -270,8 +332,14 @@ func (s *Service) BatchSet(req BatchSetRequest) (*Job, error) {
 		return nil, errors.New("library: no changes given")
 	}
 
-	return s.jobs.Start(JobEdit, func(ctx context.Context, j *Job) (any, error) {
-		res := BatchResult{Matched: len(ids), DryRun: req.DryRun}
+	var jrn *journal
+	if req.Backup && !req.DryRun {
+		jrn = s.tryJournal(JournalEdit)
+	}
+
+	return s.jobs.StartWithJournal(JobEdit, jrn.ID(), func(ctx context.Context, j *Job) (any, error) {
+		defer jrn.Close(j.ID)
+		res := BatchResult{Matched: len(ids), DryRun: req.DryRun, BackupID: jrn.ID()}
 		j.SetProgress(Progress{Total: int64(len(ids))})
 
 		var touched []string
@@ -279,7 +347,7 @@ func (s *Service) BatchSet(req BatchSetRequest) (*Job, error) {
 			if ctx.Err() != nil {
 				break
 			}
-			changed, err := s.applyOne(id, req.Set, "", req.DryRun)
+			changed, err := s.applyOne(id, req.Set, "", req.DryRun, jrn)
 			switch {
 			case errors.Is(err, ErrNotFound):
 				res.Skipped++
