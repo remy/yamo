@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>yamo API</title>
+<title>YAMO API</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   :root {
@@ -45,7 +45,7 @@
   .m.get { color: var(--get) } .m.post { color: var(--post) }
   .m.patch { color: var(--patch) } .m.put { color: var(--put) }
   .m.delete { color: var(--delete) }
-  .path { font: .92rem ui-monospace, monospace }
+  .path { font: .92rem ui-monospace, monospace; overflow-wrap: anywhere }
   .sum { color: var(--dim); flex: 1 1 100% }
   @media (min-width: 700px) { .sum { flex: 1 } }
   .body { padding: 0 .9rem .9rem; border-top: 1px solid var(--line) }
@@ -65,9 +65,34 @@
   .type { color: var(--dim); font: .84rem ui-monospace, monospace }
   a { color: var(--accent) }
   footer { padding: 2rem 1.5rem; color: var(--dim); font-size: .85rem; text-align: center }
+
+  /* Narrow: the sidebar becomes a row of links above the content, and the
+     generated tables scroll sideways rather than forcing the page to. */
+  @media (max-width: 700px) {
+    .wrap { flex-direction: column; align-items: stretch; gap: 1rem; padding: 1rem }
+    nav {
+      position: static; flex: none; width: 100%; display: flex; flex-wrap: wrap;
+      gap: 0 .9rem; padding-bottom: .75rem; border-bottom: 1px solid var(--line);
+    }
+    header { padding: 1.5rem 1rem .75rem }
+    footer { padding: 1.5rem 1rem }
+    h2 { margin-top: 1.5rem }
+    table { display: block; overflow-x: auto }
+  }
+  @media (max-width: 420px) {
+    body { font-size: 14px }
+    header { padding: 1.1rem .75rem .6rem }
+    header h1 { font-size: 1.25rem }
+    .wrap { padding: .75rem }
+    .op > summary { padding: .6rem .7rem; gap: .5rem }
+    .body { padding: 0 .7rem .7rem }
+    footer { padding: 1.25rem .75rem }
+    td, th { padding-right: .4rem }
+    .desc code, code.inline { overflow-wrap: anywhere }
+  }
 </style>
 <header>
-  <h1>yamo API</h1>
+  <h1>YAMO API</h1>
   <p id="blurb">Loading the schema…</p>
   <p>
     <a href="/openapi.yaml" download>openapi.yaml</a> ·
@@ -76,7 +101,7 @@
   </p>
 </header>
 <div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
-<footer>Served by the running yamo instance, so this is the contract it actually implements.</footer>
+<footer>Served by the running YAMO instance, so this is the contract it actually implements.</footer>
 <script>
 const el = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n };
 
