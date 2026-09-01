@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/remy/yamo/internal/tags"
@@ -119,7 +120,13 @@ type BackupSummary struct {
 const maxBackupSamples = 5
 
 // journal writes records for one operation.
+//
+// Every operation that writes one today does so from a single goroutine, but
+// the lock is not conditional on that staying true: a parallel batch would
+// interleave two records into one line and the corruption would only surface
+// when somebody tried to undo.
 type journal struct {
+	mu   sync.Mutex
 	id   string
 	kind string
 	dir  string
@@ -184,6 +191,8 @@ func (j *journal) write(rec journalRecord) {
 	if j == nil {
 		return
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	_ = json.NewEncoder(j.w).Encode(rec)
 	j.rows++
 }
@@ -197,6 +206,8 @@ func (j *journal) Close(jobID string) error {
 	if j == nil {
 		return nil
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	err := j.w.Flush()
 	if cerr := j.f.Close(); err == nil {
 		err = cerr

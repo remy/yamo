@@ -315,13 +315,18 @@ func (s *Service) RenameTracks(req RenameTracksRequest) (*Job, error) {
 					res.Changed++
 					break
 				}
-				jrn.write(journalRecord{Path: dest, From: from})
 				if _, err := s.Rename(id, dest, ""); err != nil {
 					if errors.Is(err, ErrExists) {
 						res.Collisions++
 					}
 					res.fail(id, from, err)
 				} else {
+					// Recorded after the move rather than before it. A rename
+					// is atomic, unlike a tag write, so there is no window
+					// where the file is half-changed — and a record written
+					// first would name a destination that a failed move never
+					// created, offering an undo that could only fail.
+					jrn.write(journalRecord{Path: dest, From: from})
 					res.Changed++
 				}
 			}
