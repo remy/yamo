@@ -16,6 +16,7 @@ import (
 
 	"github.com/remy/yamo/internal/api"
 	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/mcp"
 )
 
 const serveSummary = `yamo serve - run the API server
@@ -81,6 +82,18 @@ Access:
   server on loopback with no token and permissive headers could be driven
   by any web page you happened to visit, and this API rewrites music files.
 
+Tools for an assistant:
+  -mcp, or YAMO_MCP=1, mounts a Model Context Protocol endpoint at /mcp, so
+  an assistant can search the library and correct it. It offers twenty tools
+  over the forty-five endpoints: a model choosing between forty-five similar
+  operations chooses badly, and the ones that move bytes it cannot read — the
+  audio stream, artwork images — are no use to it.
+
+  Every writing tool is a dry run unless asked otherwise, and every selection
+  can carry the count the client expected, so a model that has lost track of
+  what it is about to change is refused rather than obeyed. It is off by
+  default, and behind the same token as the rest of the API.
+
 Album art from Discogs:
   The browser's Get Info sheet can search Discogs for cover art. It needs no
   credentials: searching is open, and the server does the fetching because
@@ -100,6 +113,7 @@ Examples:
   yamo serve -root /volume1/music -rescan-every 1h
                                             ...and keep it up to date
   yamo serve -web ./webapp                  ...and serve a front end from a directory
+  yamo serve -mcp                           ...and offer the MCP tools at /mcp
   yamo serve -listen 0.0.0.0:8467           reachable on the network
   yamo serve -listen unix:///tmp/yamo.sock
 `
@@ -118,6 +132,7 @@ func cmdServe(args []string) error {
 	discogsToken := fs.String("discogs-token", os.Getenv("YAMO_DISCOGS_TOKEN"), "optional Discogs token; raises the cover-lookup rate limit")
 	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup, so the server makes no outbound requests")
 	rescanEvery := fs.Duration("rescan-every", 0, "rescan the roots on this interval (e.g. 1h); 0 never rescans")
+	withMCP := fs.Bool("mcp", envBool("YAMO_MCP"), "mount the Model Context Protocol endpoint at /mcp")
 	roots := stringList(splitEnvList("YAMO_ROOT"))
 	fs.Var(&roots, "root", "directory to scan on startup (repeatable, or comma-separated in YAMO_ROOT)")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
@@ -188,11 +203,23 @@ func cmdServe(args []string) error {
 		}
 	}
 
+	// The MCP endpoint is built here rather than inside the API server so that
+	// package api keeps knowing nothing about it: both are clients of the same
+	// service, and neither is layered on the other.
+	var mcpSrv http.Handler
+	if *withMCP {
+		mcpSrv = mcp.New(svc, mcp.Options{
+			AuthRequired: *token != "",
+			CrossOrigin:  *token != "",
+		})
+	}
+
 	srv := api.New(svc, api.Options{
 		Token: *token,
 		// Only opened up when a token gates it; see the note above.
 		AllowCrossOrigin: *token != "",
 		WebRoot:          webRoot,
+		MCP:              mcpSrv,
 	})
 
 	ln, err := listenOn(network, addr)
@@ -222,6 +249,9 @@ func cmdServe(args []string) error {
 		fmt.Fprintf(os.Stderr, "  web:  %s  (from %s)\n", shown, webRoot)
 	}
 	fmt.Fprintf(os.Stderr, "  docs: %s/docs\n", shown)
+	if *withMCP {
+		fmt.Fprintf(os.Stderr, "  mcp:  %s/mcp\n", shown)
+	}
 
 	// -root/YAMO_ROOT exists for unattended starts — a container has no one
 	// around to run "yamo scan" by hand. The scan runs as a background job:
@@ -333,6 +363,18 @@ func envDuration(name string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s=%q is negative", name, v)
 	}
 	return d, nil
+}
+
+// envBool reads a boolean from the environment, for the flags a container has
+// no other way to set. Anything but the obvious falsehoods counts as true: a
+// variable somebody bothered to set is nearly always meant to turn something
+// on, and YAMO_MCP=yes silently doing nothing would be the worse surprise.
+func envBool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(name))) {
+	case "", "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 // flagPassed reports whether a flag was actually given on the command line,

@@ -2899,6 +2899,13 @@ components:
             Whether the server rescans its roots on a timer. When false
             nothing watches the filesystem at all.
         crossOrigin: { type: boolean, description: Whether a browser on another origin may call this API. }
+        mcp:
+          type: boolean
+          description: >-
+            Whether the Model Context Protocol endpoint is mounted at `/mcp`,
+            which the server is started with `-mcp`. It is outside this schema
+            — it is JSON-RPC rather than REST — so this is how a client finds
+            out it is there.
 
     DiscogsAlbumInfo:
       type: object

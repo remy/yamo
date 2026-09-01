@@ -107,6 +107,12 @@ type Features struct {
 
 	// CrossOrigin says whether a browser on another origin may call this API.
 	CrossOrigin bool `json:"crossOrigin"`
+
+	// MCP says whether the Model Context Protocol endpoint is mounted at
+	// /mcp. It is off unless the server was started with -mcp, and a client
+	// that wants to point an assistant at this library has no other way to
+	// find out short of posting to it.
+	MCP bool `json:"mcp"`
 }
 
 // maxImageBytes is duplicated from the API layer's upload bound so that the
@@ -114,18 +120,27 @@ type Features struct {
 // service is what the bound protects.
 const MaxImageBytes = 32 << 20
 
+// Serving is how a service is being served, which the service itself does not
+// know. It is a struct rather than a run of boolean arguments because they
+// would all be booleans, and a call site passing three of them in the wrong
+// order would still compile.
+type Serving struct {
+	AuthRequired bool
+	CrossOrigin  bool
+
+	// MCP says whether the Model Context Protocol endpoint is mounted, which
+	// is off unless the server was started with -mcp.
+	MCP bool
+}
+
 // Capabilities reports what this build and this configuration can do.
-//
-// authRequired and crossOrigin are the server's business rather than the
-// service's, so they are passed in: the service does not know how it is being
-// served.
-func (s *Service) Capabilities(authRequired, crossOrigin bool) Capabilities {
+func (s *Service) Capabilities(sv Serving) Capabilities {
 	every, _ := s.RescanSchedule()
 
 	c := Capabilities{
 		Name:            "yamo",
 		Version:         Version,
-		AuthRequired:    authRequired,
+		AuthRequired:    sv.AuthRequired,
 		Fields:          EditableFields(),
 		SortFields:      append([]string(nil), SortFields...),
 		DuplicateFields: append(EditableFields(), DupByDuration, DupBySize),
@@ -149,7 +164,8 @@ func (s *Service) Capabilities(authRequired, crossOrigin bool) Capabilities {
 			Backups:        s.opts.BackupDir != "",
 			Clipboard:      s.opts.ClipboardDir != "",
 			Rescan:         every > 0,
-			CrossOrigin:    crossOrigin,
+			CrossOrigin:    sv.CrossOrigin,
+			MCP:            sv.MCP,
 		},
 	}
 

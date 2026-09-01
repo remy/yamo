@@ -44,6 +44,13 @@ type Options struct {
 	// setup CORS is deliberately refused for.
 	WebRoot string
 
+	// MCP, when set, is mounted at /mcp behind the same token as the rest of
+	// the API. It is an http.Handler rather than a concrete type so that this
+	// package does not depend on the one that builds it: the MCP endpoint is
+	// a client of internal/library exactly as these handlers are, and neither
+	// needs to know about the other.
+	MCP http.Handler
+
 	Logger *log.Logger
 }
 
@@ -163,6 +170,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+
+	// The MCP endpoint, when it is turned on. It is outside /v1 and outside
+	// the schema on purpose: the schema describes an HTTP API, and this is a
+	// JSON-RPC transport that happens to arrive over HTTP. Documenting one
+	// POST that accepts any of twenty method calls would say nothing true
+	// about either. It is registered without a method, so that its own reply
+	// to a GET explains that there is no stream to open here.
+	//
+	// The token guards it like anything else: these tools rewrite music files.
+	if s.opts.MCP != nil {
+		s.mux.HandleFunc("/mcp", s.authenticate(s.opts.MCP.ServeHTTP))
+	}
 	// The front end, when there is one, is served unauthenticated: it has to
 	// load before it can present a token, and it contains none of the library.
 	if s.opts.WebRoot != "" {

@@ -520,7 +520,11 @@ func (s *Server) listFolders(w http.ResponseWriter, r *http.Request) {
 // it is the one operation served without a token: a client needs to know
 // whether a token is required before it can present one.
 func (s *Server) getCapabilities(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.svc.Capabilities(s.opts.Token != "", s.opts.AllowCrossOrigin))
+	writeJSON(w, http.StatusOK, s.svc.Capabilities(library.Serving{
+		AuthRequired: s.opts.Token != "",
+		CrossOrigin:  s.opts.AllowCrossOrigin,
+		MCP:          s.opts.MCP != nil,
+	}))
 }
 
 // identity is what the server can say about the caller. With a single shared

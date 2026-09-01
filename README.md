@@ -712,7 +712,9 @@ of every parameter. This is the map.
 
 Outside `/v1`, and outside the schema: `GET /healthz`, `GET /openapi.yaml`,
 `GET /openapi.json` and `GET /docs`, none of which require a token and none of
-which say anything about the library.
+which say anything about the library. `POST /mcp` is outside it too, and does
+require one — it is JSON-RPC rather than REST, and it is off unless the server
+was started with `-mcp`. See [Connecting an assistant](#connecting-an-assistant-mcp).
 
 ## Running the server
 
@@ -982,6 +984,7 @@ internal/tags/     format parsers and writers; no third-party tag library
 internal/catalog/  in-memory library, binary snapshot, search index
 internal/scan/     parallel directory walk and tag extraction
 internal/client/   Go client for the API, used by everything below
+internal/mcp/      the MCP endpoint: twenty tools over the same service
 internal/ui/       the terminal browser, a client like any other
 cmd/yamo/          serve, plus the client commands: scan, find, info, art, strip, browse
 tools/genlib/      synthetic library generator, for benchmarking
@@ -1038,3 +1041,134 @@ because nothing here is CPU-bound.
   happen. Run `yamo scan` after adding music, or start the server with
   `-rescan-every` to have it rescan on a timer.
 - One catalogue at a time; use `-catalog` to keep several.
+- The MCP tools cannot upload an image, read audio, or use the artwork
+  clipboard; those need the HTTP API.
+
+## Connecting an assistant (MCP)
+
+`yamo serve -mcp` mounts a Model Context Protocol endpoint at `/mcp`, so an
+assistant can search the library and correct it — "find every artist spelled
+two ways", "these forty tracks have no album art, is there a cover.jpg beside
+them" — using the same service the terminal browser and the HTTP API use.
+
+It is off by default. It is behind the same token as the rest of the API, and
+for the same reason: these tools rewrite music files.
+
+```sh
+yamo serve -mcp                       # loopback, no token needed
+YAMO_MCP=1 yamo serve                 # the form a container's environment holds
+```
+
+The endpoint is Streamable HTTP: one JSON-RPC message per `POST`, answered with
+one JSON response. There is no session id and no server-initiated stream,
+because no tool here needs to push — a long operation reports itself through the
+job it returns, exactly as it does over HTTP.
+
+```sh
+curl -s localhost:8467/mcp -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 400
+```
+
+### Connecting
+
+From Claude Code, on the machine running the server:
+
+```bash
+claude mcp add --transport http yamo http://127.0.0.1:8467/mcp
+```
+
+Over the network the server requires a token, and it goes in a header:
+
+```bash
+claude mcp add --transport http yamo http://nas.local:8467/mcp --header "Authorization: Bearer $YAMO_TOKEN"
+```
+
+Clients configured by file — Claude Desktop, Cursor, and most of the rest —
+take the same three things:
+
+```json
+{
+  "mcpServers": {
+    "yamo": {
+      "type": "http",
+      "url": "http://127.0.0.1:8467/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+Drop the `headers` entry on loopback, where no token is required. A client that
+speaks only stdio can be bridged with `npx -y mcp-remote http://127.0.0.1:8467/mcp`
+as its command.
+
+`GET /v1/capabilities` reports `features.mcp`, which is how a client finds out
+the endpoint is there: it is JSON-RPC rather than REST, so it is not in the
+OpenAPI schema and cannot be discovered from it.
+
+### The tools
+
+Twenty, over forty-five endpoints, and the arithmetic is the design. A model
+choosing between forty-five near-identical operations chooses badly, and the
+endpoints that move bytes it cannot read are no use to it at all.
+
+| Tool | |
+| --- | --- |
+| **Reading** | |
+| `search_tracks` | Search, sort and page. `total` counts every match, not the page |
+| `get_track` | One track, including the version that identifies it on disk |
+| `get_raw_tags` | Every tag actually in the file, rather than the fields the catalogue keeps |
+| `list_albums` | Albums with their track and artwork counts |
+| `list_artists` | Artists with their track and album counts |
+| `list_values` | Distinct values of a field, with counts — the misspelling finder |
+| `find_duplicates` | The same recording more than once, and what it wastes |
+| `artwork_summary` | Distinct covers across a selection, grouped, and how many have none |
+| `library_stats` | Counts, formats, missing fields, when it was scanned, what this build can do |
+| `lookup_album` | Year and genre from Discogs. The only tool that leaves the machine |
+| **Writing** | |
+| `edit_tracks` | One set of field values across a selection. `null` clears a field |
+| `split_titles` | Pull `$artist - $title` out of a title into its own tags |
+| `rename_files` | Move files to a path built from their own tags |
+| `strip_tags` | Remove everything but a keep list |
+| `set_artwork` | Embed the `cover.jpg` beside each track, paste the clipboard, or clear it |
+| **Jobs and recovery** | |
+| `scan_library` | Bring the catalogue up to date |
+| `get_job` | Poll a job, optionally waiting for it |
+| `list_backups` | The undo journals, which outlive the hour a job stays queryable |
+| `undo_job` | Reverse what a job did |
+| `restore_backup` | Put one journal back, for a job older than that hour |
+
+Four rules hold across all of them, and they are the four the API itself is
+built on.
+
+**Selections, not files.** Every writing tool takes `query`, or `ids`, or
+`all: true` — never a path. `all` must be set explicitly, so an empty selection
+can never be read as "everything". `expectCount` carries the number the
+assistant told you it was about to change, and the server refuses if the
+selection has moved since; it is the difference between a model with a stale
+count being obeyed and being corrected.
+
+**Writes are dry runs by default.** This is the one place the MCP surface
+deliberately differs from the HTTP API, where only `strip` defaults that way.
+An assistant should look before it leaps, so `dryRun` has to be passed as
+`false` to write anything at all. A dry run reports what it matched, what it
+would change, and for a split or a rename the worked examples that say whether
+the template is right.
+
+**Jobs are waited for.** Everything that can touch more than one file returns a
+job, and these tools wait up to fifteen seconds for it rather than handing back
+an id to poll — a batch edit over a few hundred tracks finishes in well under a
+second, and making a model poll for a result that is already there wastes a
+round trip and invites it to report work it has not seen finish. A scan is the
+exception: it is expected to outlive the call, and `get_job` takes a
+`waitSeconds` for that.
+
+**Everything is undoable.** Edits, splits and renames record a journal without
+being asked; strips and artwork pastes do it on request. `undo_job` takes back
+what a job did, and `list_backups` finds the older ones once the job itself has
+aged out.
+
+Not offered here, and deliberately: uploading an image, reading audio, the
+artwork clipboard, the event streams, and the per-track write endpoints. The
+first three move bytes a model cannot read, the fourth exists so a client can
+build its own concurrency, and the last is `edit_tracks` with one id in it.
