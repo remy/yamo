@@ -93,6 +93,7 @@ func (s *Server) routes() {
 	s.handle("GET /v1/tracks/{id}", s.getTrack)
 	s.handle("PATCH /v1/tracks/{id}", s.patchTrack)
 	s.handle("GET /v1/albums", s.listAlbums)
+	s.handle("GET /v1/artists", s.listArtists)
 	s.handle("GET /v1/values/{field}", s.listValues)
 	s.handle("GET /v1/stats", s.getStats)
 	s.handle("GET /v1/tracks/{id}/audio", s.getAudio)

@@ -324,10 +324,10 @@ to fail in both directions** — a test that cannot fail is worthless.
 
 Contract: `api/openapi.yaml`, embedded and served at `/openapi.yaml`,
 `/openapi.json` and browsable at `/docs` (self-contained, no CDN, because a NAS
-may have no outbound access). 34 operations.
+may have no outbound access). 35 operations.
 
 Reading: `GET /v1/tracks` (q, sort, limit, offset), `/tracks/{id}`, `/albums`,
-`/values/{field}`, `/stats`, `/tracks/{id}/artwork`.
+`/artists`, `/values/{field}`, `/stats`, `/tracks/{id}/artwork`.
 Writing: `PATCH /v1/tracks/{id}`, `PUT`/`DELETE` artwork, the clipboard.
 Files: `DELETE /v1/tracks/{id}` and `POST /v1/tracks/{id}/rename` — the only
 two that change which files exist rather than what is inside one. A rename is
@@ -347,12 +347,19 @@ and persisted beside the catalogue if not supplied.
 a loopback server with permissive headers could be driven by any web page the
 user visits, and this API rewrites music files.
 
-### `/albums` filters tracks, then groups
+### `/albums` and `/artists` filter tracks, then group
 
 `?q=cat` returns albums containing *tracks* that match, so an album can come
 back whose own title has nothing to do with the term — a composer called "Jamie
 Catto" is enough. This is the useful semantic (find the album with that one song
 on it) but it surprises people. Scope the term with `album:` to search titles.
+
+`/artists` shares the semantic and the grouping key — album artist, falling
+back to artist — so its names are exactly the names heading the album grid and
+a compilation lists once, under Various Artists. Its `query` is anchored to
+the whole name (`artist:"^elvis$"`), unlike an album's, because an artist's
+name is routinely a prefix of another's and the query has no second term to
+disambiguate with.
 
 Grouping happens over every matching track on each request: about 39 ms for an
 unfiltered `/albums` on 100,000 tracks, versus 2–6 ms for `/tracks`. Filtered

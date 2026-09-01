@@ -85,7 +85,7 @@ tags:
   - name: tracks
     description: Reading and editing individual tracks.
   - name: browse
-    description: Albums, field values and library statistics.
+    description: Albums, artists, field values and library statistics.
   - name: batch
     description: Operations across many tracks at once.
   - name: artwork
@@ -349,6 +349,38 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/AlbumPage' }
+
+  /artists:
+    get:
+      tags: [browse]
+      summary: List artists
+      description: |
+        Returns the artists **credited with tracks that match the query** — the
+        query filters tracks, and the matching tracks are then grouped, exactly
+        as `/albums` does. A bare term therefore matches every text field of
+        every track; scope it (`?q=artist:cat`) to search the names alone.
+
+        The grouping key is the one the album grid uses: the album artist,
+        falling back to the artist when a file has none. A compilation
+        therefore lists once, under its Various Artists credit, rather than
+        once per performer on it — and the names here are exactly the names
+        heading `/albums`.
+
+        `tracks` and `albums` count only the matching tracks and the releases
+        they sit on, not the artist's whole catalogue. Each artist carries a
+        `query` that reselects exactly it, anchored to the whole name so that
+        "Elvis" does not sweep in "Elvis Presley".
+      operationId: listArtists
+      parameters:
+        - $ref: '#/components/parameters/Query'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: A page of artists.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ArtistPage' }
 
   /values/{field}:
     get:
@@ -1435,6 +1467,37 @@ components:
         total:
           type: integer
           description: Total albums matching the query, before paging.
+        limit:
+          type: integer
+          description: The page size actually applied, which may be lower than requested.
+        offset:
+          type: integer
+          description: The offset this page starts at, echoed back.
+
+    Artist:
+      type: object
+      required: [id, artist, tracks, query]
+      properties:
+        id: { type: string }
+        artist: { type: string }
+        tracks: { type: integer }
+        albums: { type: integer, description: Distinct releases among the matching tracks. }
+        withArtwork: { type: integer }
+        durationMs: { type: integer, format: int64 }
+        query: { type: string, description: Reselects exactly this artist. }
+
+    ArtistPage:
+      description: One page of results. See "Paging" in the introduction.
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          description: This page. Never longer than `limit`, and shorter on the last page.
+          items: { $ref: '#/components/schemas/Artist' }
+        total:
+          type: integer
+          description: Total artists matching the query, before paging.
         limit:
           type: integer
           description: The page size actually applied, which may be lower than requested.

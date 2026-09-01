@@ -92,6 +92,10 @@ func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.svc.Albums(listParams(r)))
 }
 
+func (s *Server) listArtists(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.Artists(listParams(r)))
+}
+
 func (s *Server) listValues(w http.ResponseWriter, r *http.Request) {
 	vals, err := s.svc.Values(r.PathValue("field"), r.URL.Query().Get("prefix"), intParam(r, "limit", 20))
 	if err != nil {

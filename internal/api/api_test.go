@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,10 +181,23 @@ func TestReadEndpoints(t *testing.T) {
 	}
 	h.do(t, http.MethodGet, "/v1/tracks/nosuchid", nil, http.StatusNotFound)
 
-	// Albums, values and stats.
+	// Albums, artists, values and stats.
 	albums := h.getJSON(t, "/v1/albums", http.StatusOK)
 	if albums["total"].(float64) != 1 {
 		t.Errorf("albums total = %v, want 1", albums["total"])
+	}
+	artists := h.getJSON(t, "/v1/artists", http.StatusOK)
+	if artists["total"].(float64) != 1 {
+		t.Errorf("artists total = %v, want 1", artists["total"])
+	}
+	one := artists["items"].([]any)[0].(map[string]any)
+	if one["artist"] != "Elvis Presly" || one["tracks"].(float64) != 4 || one["albums"].(float64) != 1 {
+		t.Errorf("artists = %v", artists)
+	}
+	// The query an artist carries must reselect exactly it over the API too.
+	requery := h.getJSON(t, "/v1/tracks?q="+url.QueryEscape(one["query"].(string)), http.StatusOK)
+	if requery["total"].(float64) != 4 {
+		t.Errorf("the artist's query %q matched %v, want 4", one["query"], requery["total"])
 	}
 	_, vals := h.do(t, http.MethodGet, "/v1/values/artist?prefix=el", nil, http.StatusOK)
 	if !strings.Contains(string(vals), "Elvis") {
