@@ -830,7 +830,10 @@ func TestArtworkThroughService(t *testing.T) {
 		}
 	}
 
-	rep := s.ArtworkSummary("")
+	rep, err := s.ArtworkSummary(Selector{All: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(rep.Groups) != 1 || rep.Groups[0].Tracks != 3 {
 		t.Fatalf("summary grouped into %d, %+v", len(rep.Groups), rep.Groups)
 	}
@@ -893,8 +896,8 @@ func TestStripAndRestoreThroughService(t *testing.T) {
 		}
 	}
 
-	backups, err := s.Backups()
-	if err != nil || len(backups) != 1 {
+	backups, err := s.Backups(0, 0)
+	if err != nil || len(backups.Items) != 1 {
 		t.Fatalf("backups = %v, %v", backups, err)
 	}
 	restore, err := s.Restore(RestoreRequest{BackupID: res.BackupID})

@@ -20,14 +20,27 @@ const (
 	JobCancelled JobState = "cancelled"
 )
 
-// Job kinds.
+// Job kinds. A client polling the job list distinguishes operations by these,
+// so every operation that starts a job has one of its own: a split reported as
+// an edit would be indistinguishable from a batch set, and its result carries
+// different fields.
 const (
 	JobScan    = "scan"
 	JobEdit    = "edit"
+	JobSplit   = "split"
+	JobRename  = "rename"
 	JobArtwork = "artwork"
+	JobExport  = "export"
 	JobStrip   = "strip"
 	JobRestore = "restore"
+	JobUndo    = "undo"
 )
+
+// JobKinds lists every kind a job may have, for the capabilities endpoint.
+var JobKinds = []string{
+	JobScan, JobEdit, JobSplit, JobRename, JobArtwork, JobExport,
+	JobStrip, JobRestore, JobUndo,
+}
 
 // Progress is how far a job has got.
 type Progress struct {
@@ -51,6 +64,11 @@ type Job struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	FinishedAt *time.Time `json:"finishedAt,omitempty"`
 
+	// BackupID names the journal this job wrote, when it recorded one. It is
+	// what makes the job undoable: POST /jobs/{id}/undo finds the journal
+	// through this rather than making the client remember it.
+	BackupID string `json:"backupId,omitempty"`
+
 	mu     sync.Mutex
 	cancel context.CancelFunc
 	svc    *Service
@@ -62,7 +80,7 @@ func (j *Job) snapshot() *Job {
 	defer j.mu.Unlock()
 	return &Job{
 		ID: j.ID, Kind: j.Kind, State: j.State, Progress: j.Progress,
-		Result: j.Result, Error: j.Error,
+		Result: j.Result, Error: j.Error, BackupID: j.BackupID,
 		CreatedAt: j.CreatedAt, FinishedAt: j.FinishedAt,
 	}
 }
@@ -121,9 +139,19 @@ const jobRetention = time.Hour
 // Start registers a job, runs fn in the background, and returns a snapshot of
 // the job as it was at that moment.
 func (r *Jobs) Start(kind string, fn func(ctx context.Context, j *Job) (any, error)) *Job {
+	return r.StartWithJournal(kind, "", fn)
+}
+
+// StartWithJournal is Start for an operation that recorded an undo journal.
+//
+// The journal id is fixed before the job runs rather than filled in when it
+// finishes, so a client watching the job can offer an undo the moment the work
+// starts — and so a job cancelled halfway is still undoable for the files it
+// did get to.
+func (r *Jobs) StartWithJournal(kind, backupID string, fn func(ctx context.Context, j *Job) (any, error)) *Job {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &Job{
-		ID: newJobID(), Kind: kind, State: JobRunning,
+		ID: newJobID(), Kind: kind, State: JobRunning, BackupID: backupID,
 		CreatedAt: time.Now(), cancel: cancel, svc: r.svc,
 	}
 
@@ -188,15 +216,78 @@ func (r *Jobs) Get(id string) (*Job, error) {
 	return j.snapshot(), nil
 }
 
+// JobFilter narrows a job listing. Empty fields match everything.
+type JobFilter struct {
+	Kind   string // one job kind
+	State  string // one job state
+	Limit  int
+	Offset int
+}
+
+// JobPage is one page of jobs, in the envelope every other listing uses.
+type JobPage struct {
+	Items  []*Job `json:"items"`
+	Total  int    `json:"total"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+
+	// Retention is how long a finished job stays queryable, so a client can
+	// tell an id that has aged out from one that never existed.
+	RetentionMS int64 `json:"retentionMs"`
+}
+
 // List returns every known job, newest first.
 func (r *Jobs) List() []*Job {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]*Job, 0, len(r.jobs))
-	for _, j := range r.jobs {
-		out = append(out, j.snapshot())
+	return r.Page(JobFilter{Limit: -1}).Items
+}
+
+// Page returns a filtered, paged listing, newest first.
+//
+// A long-running server accumulates jobs from every client on it, and a phone
+// asking "what is running" wants the two that are, not the four hundred that
+// finished. Filtering happens before paging, so total counts the matches.
+func (r *Jobs) Page(f JobFilter) JobPage {
+	limit := f.Limit
+	switch {
+	case limit < 0:
+		limit = 0 // caller wants everything; applied after the count
+	case limit == 0:
+		limit = DefaultLimit
+	case limit > MaxLimit:
+		limit = MaxLimit
 	}
-	sort.Slice(out, func(i, k int) bool { return out[i].CreatedAt.After(out[k].CreatedAt) })
+	if f.Offset < 0 {
+		f.Offset = 0
+	}
+
+	r.mu.Lock()
+	all := make([]*Job, 0, len(r.jobs))
+	for _, j := range r.jobs {
+		snap := j.snapshot()
+		if f.Kind != "" && snap.Kind != f.Kind {
+			continue
+		}
+		if f.State != "" && string(snap.State) != f.State {
+			continue
+		}
+		all = append(all, snap)
+	}
+	r.mu.Unlock()
+
+	sort.Slice(all, func(i, k int) bool { return all[i].CreatedAt.After(all[k].CreatedAt) })
+
+	out := JobPage{
+		Total: len(all), Limit: limit, Offset: f.Offset, Items: []*Job{},
+		RetentionMS: jobRetention.Milliseconds(),
+	}
+	if f.Limit < 0 {
+		out.Items, out.Limit = all, len(all)
+		return out
+	}
+	if f.Offset >= len(all) {
+		return out
+	}
+	out.Items = all[f.Offset:min(f.Offset+limit, len(all))]
 	return out
 }
 

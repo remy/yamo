@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/remy/yamo/internal/library"
@@ -50,8 +52,42 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, want func(librar
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	events, cancel := s.svc.Events().Subscribe()
+	epoch, after := resumeFrom(r)
+	events, backlog, cancel := s.svc.Events().SubscribeFrom(epoch, after)
 	defer cancel()
+
+	send := func(e library.Event) {
+		if !want(e) {
+			return
+		}
+		payload, err := json.Marshal(e)
+		if err != nil {
+			return
+		}
+		// The id line is what the browser's EventSource sends back as
+		// Last-Event-ID after a dropped connection, which is what makes the
+		// resume automatic rather than something every client implements.
+		fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", eventID(e), e.Type, payload)
+		flusher.Flush()
+	}
+
+	// The backlog first, in order, before anything new: a client resuming has
+	// to see what it missed before it sees what happened since.
+	for _, e := range backlog {
+		// A gap is addressed to this subscriber rather than to the stream, so
+		// it goes out whatever the filter is: a job's stream that lost events
+		// is as much in the dark as the whole library's.
+		if e.Type == library.EventGap {
+			payload, err := json.Marshal(e)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", eventID(e), e.Type, payload)
+			flusher.Flush()
+			continue
+		}
+		send(e)
+	}
 
 	ticker := time.NewTicker(sseKeepAlive)
 	defer ticker.Stop()
@@ -67,15 +103,43 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, want func(librar
 			if !open {
 				return // the server is shutting down
 			}
-			if !want(e) {
-				continue
-			}
-			payload, err := json.Marshal(e)
-			if err != nil {
-				continue
-			}
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Type, payload)
-			flusher.Flush()
+			send(e)
 		}
 	}
+}
+
+// eventID is the identifier a client sends back to resume.
+//
+// It carries the epoch as well as the sequence number because a sequence
+// number alone is ambiguous across a restart: event 12 from this run of the
+// server and event 12 from the last one are different events, and resuming
+// from the wrong one would silently skip everything between.
+func eventID(e library.Event) string {
+	return e.Epoch + ":" + strconv.FormatUint(e.Seq, 10)
+}
+
+// resumeFrom reads where a client wants to pick up.
+//
+// The Last-Event-ID header is what a browser's EventSource sends by itself on
+// a reconnect. The query parameter is for everything else: a native client
+// reconnecting by hand, or a browser opening the stream for the first time
+// with an id it stored from a previous session, which EventSource has no way
+// to express.
+func resumeFrom(r *http.Request) (epoch string, after uint64) {
+	raw := r.Header.Get("Last-Event-ID")
+	if raw == "" {
+		raw = r.URL.Query().Get("lastEventId")
+	}
+	if raw == "" {
+		return "", 0
+	}
+	epoch, num, ok := strings.Cut(raw, ":")
+	if !ok {
+		return "", 0
+	}
+	seq, err := strconv.ParseUint(num, 10, 64)
+	if err != nil {
+		return "", 0
+	}
+	return epoch, seq
 }

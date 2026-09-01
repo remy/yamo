@@ -81,19 +81,33 @@ func (s *Server) setCORS(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match")
-	h.Set("Access-Control-Expose-Headers", "ETag, Location")
+	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match, If-None-Match, Last-Event-ID")
+	// A header a browser cannot read may as well not have been sent. The rate
+	// limit ones are here so a page can pace its Discogs lookups the same way
+	// a native client does, and Retry-After so it knows how long to wait.
+	h.Set("Access-Control-Expose-Headers",
+		"ETag, Location, Retry-After, RateLimit-Limit, RateLimit-Remaining, RateLimit-Reset")
 }
 
 // routes registers every operation. The paths mirror api/openapi.yaml exactly;
 // the conformance test fails if they stop doing so.
 func (s *Server) routes() {
+	// What this build can do, and whether the caller is allowed to do it.
+	// Capabilities is public: it describes the interface and holds nothing
+	// about the library, and a client needs to know whether a token is
+	// required before it can present one.
+	s.handlePublic("GET /v1/capabilities", s.getCapabilities)
+	s.handle("GET /v1/me", s.getMe)
+
 	// Reading.
 	s.handle("GET /v1/tracks", s.listTracks)
 	s.handle("GET /v1/tracks/{id}", s.getTrack)
 	s.handle("PATCH /v1/tracks/{id}", s.patchTrack)
+	s.handle("GET /v1/tracks/{id}/tags", s.getRawTags)
 	s.handle("GET /v1/albums", s.listAlbums)
 	s.handle("GET /v1/artists", s.listArtists)
+	s.handle("GET /v1/folders", s.listFolders)
+	s.handle("GET /v1/duplicates", s.listDuplicates)
 	s.handle("GET /v1/values/{field}", s.listValues)
 	s.handle("GET /v1/stats", s.getStats)
 	s.handle("GET /v1/tracks/{id}/audio", s.getAudio)
@@ -109,6 +123,7 @@ func (s *Server) routes() {
 	s.handle("DELETE /v1/tracks/{id}/artwork", s.deleteArtwork)
 	s.handle("GET /v1/artwork/summary", s.artworkSummary)
 	s.handle("POST /v1/artwork/batch", s.batchArtwork)
+	s.handle("POST /v1/artwork/export", s.exportArtwork)
 	s.handle("GET /v1/clipboard/artwork", s.getClipboard)
 	s.handle("PUT /v1/clipboard/artwork", s.putClipboard)
 	s.handle("DELETE /v1/clipboard/artwork", s.deleteClipboard)
@@ -123,8 +138,11 @@ func (s *Server) routes() {
 	// Batch and maintenance.
 	s.handle("POST /v1/tracks/batch", s.batchEditTracks)
 	s.handle("POST /v1/tracks/split", s.splitTracks)
+	s.handle("POST /v1/tracks/rename", s.renameTracks)
 	s.handle("POST /v1/strip", s.stripTags)
 	s.handle("GET /v1/backups", s.listBackups)
+	s.handle("GET /v1/backups/{id}", s.getBackup)
+	s.handle("DELETE /v1/backups/{id}", s.deleteBackup)
 	s.handle("POST /v1/restore", s.restoreBackup)
 	s.handle("GET /v1/scans", s.getScanStatus)
 	s.handle("POST /v1/scans", s.startScan)
@@ -133,6 +151,7 @@ func (s *Server) routes() {
 	s.handle("GET /v1/jobs", s.listJobs)
 	s.handle("GET /v1/jobs/{id}", s.getJob)
 	s.handle("DELETE /v1/jobs/{id}", s.cancelJob)
+	s.handle("POST /v1/jobs/{id}/undo", s.undoJob)
 	s.handle("GET /v1/jobs/{id}/events", s.streamJobEvents)
 	s.handle("GET /v1/events", s.streamEvents)
 
@@ -160,6 +179,17 @@ func (s *Server) routes() {
 func (s *Server) handle(pattern string, fn http.HandlerFunc) {
 	s.patterns = append(s.patterns, pattern)
 	s.mux.HandleFunc(pattern, s.authenticate(fn))
+}
+
+// handlePublic registers a route served without a token.
+//
+// It is still recorded as a pattern, so the conformance test holds it to the
+// schema exactly as it holds every other operation. The only thing that
+// differs is the check, and it is only ever skipped for a response that says
+// nothing about the library.
+func (s *Server) handlePublic(pattern string, fn http.HandlerFunc) {
+	s.patterns = append(s.patterns, pattern)
+	s.mux.HandleFunc(pattern, fn)
 }
 
 // Routes returns the registered API patterns, for the conformance test.
@@ -250,7 +280,8 @@ func fail(w http.ResponseWriter, err error) {
 		// Also a 409, but a distinct code: the client's answer is to choose
 		// another name rather than to re-read and retry.
 		writeError(w, http.StatusConflict, "exists", err.Error())
-	case errors.Is(err, library.ErrBadPath):
+	case errors.Is(err, library.ErrBadPath), errors.Is(err, library.ErrBadRequest),
+		errors.Is(err, library.ErrBadTemplate):
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 	case errors.As(err, &mismatch):
 		writeJSON(w, http.StatusConflict, apiError{
@@ -303,4 +334,86 @@ func listParams(r *http.Request) library.ListParams {
 		Limit:  intParam(r, "limit", library.DefaultLimit),
 		Offset: intParam(r, "offset", 0),
 	}
+}
+
+// selectorFromQuery builds a selector from the query string, for the reads
+// that report on a selection rather than changing it.
+//
+// A GET cannot carry a body, so the same selection a POST expresses as JSON is
+// expressed here as parameters. `expectCount` is deliberately not among them:
+// it is a safety rail for a change, and refusing to answer a question because
+// the count moved would be nothing but an obstacle.
+func selectorFromQuery(r *http.Request) library.Selector {
+	q := r.URL.Query()
+	sel := library.Selector{
+		Query:      q.Get("q"),
+		IDs:        listParam(q["ids"]),
+		ExcludeIDs: listParam(q["excludeIds"]),
+		All:        q.Get("all") == "1" || q.Get("all") == "true",
+	}
+	// A read with nothing said about the selection means the whole library,
+	// which is what /artwork/summary has always done with an empty q. The
+	// explicit `all` a write requires exists so "everything" cannot be
+	// reached by accident, and nothing here can be destroyed by accident.
+	if len(sel.IDs) == 0 && sel.Query == "" && !sel.All {
+		sel.All = true
+	}
+	return sel
+}
+
+// listParam accepts a repeated parameter or one comma-separated value, since
+// a client building a URL by hand does one and a form does the other.
+func listParam(values []string) []string {
+	var out []string
+	for _, v := range values {
+		for _, part := range strings.Split(v, ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+	}
+	return out
+}
+
+// notModified answers a conditional request when the client already holds the
+// current version.
+//
+// Covers are the reason this exists: an album grid re-requests the same forty
+// images every time it is opened, and each one is a few hundred kilobytes that
+// have not changed since the last time. The ETag is the track's version, so a
+// tag edit invalidates it and nothing else does.
+func notModified(w http.ResponseWriter, r *http.Request, etag string) bool {
+	if !matchesETag(r.Header.Get("If-None-Match"), etag) {
+		return false
+	}
+	// The header goes out with the 304 as well: a cache is entitled to update
+	// what it holds from it, and leaving it off would make the next request
+	// unconditional again.
+	w.Header().Set("ETag", strconv.Quote(etag))
+	w.WriteHeader(http.StatusNotModified)
+	return true
+}
+
+// matchesETag compares an If-None-Match header against a version.
+//
+// The header may hold several values, may quote them, and may be "*", which
+// matches anything that exists. A weak validator prefix is accepted and
+// ignored: this server issues only strong ones, but a proxy between here and
+// the client may have weakened it in passing, and refusing to recognise our
+// own tag coming back would defeat the caching entirely.
+func matchesETag(header, etag string) bool {
+	if header == "" || etag == "" {
+		return false
+	}
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "*" {
+			return true
+		}
+		part = strings.TrimPrefix(part, "W/")
+		if unquote(part) == etag {
+			return true
+		}
+	}
+	return false
 }

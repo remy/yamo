@@ -1,16 +1,11 @@
 package library
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
-	"strings"
-	"time"
 
 	"github.com/remy/yamo/internal/catalog"
 	"github.com/remy/yamo/internal/tags"
@@ -45,7 +40,6 @@ type StripRequest struct {
 // StripResult reports what a strip did or would do.
 type StripResult struct {
 	BatchResult
-	BackupID string         `json:"backupId,omitempty"`
 	Removed  []StripGroup   `json:"removed"`
 	Skipped  map[string]int `json:"skippedFormats,omitempty"`
 	Upgraded int            `json:"upgradedFromV22,omitempty"`
@@ -110,24 +104,24 @@ func (s *Service) Strip(req StripRequest) (*Job, error) {
 		return nil, err
 	}
 
-	var backup *backupWriter
+	// Asked for outright rather than by default, so a request that cannot be
+	// recorded fails rather than quietly stripping without a way back.
+	var backup *journal
 	if req.Backup && !req.DryRun {
-		if backup, err = s.newBackup(); err != nil {
+		if backup, err = s.openJournal(JournalStrip); err != nil {
 			return nil, err
 		}
 	}
 
-	return s.jobs.Start(JobStrip, func(ctx context.Context, j *Job) (any, error) {
+	return s.jobs.StartWithJournal(JobStrip, backup.ID(), func(ctx context.Context, j *Job) (any, error) {
 		res := StripResult{
 			BatchResult: BatchResult{Matched: len(ids), DryRun: req.DryRun},
 			Keep:        keepNames,
 			Skipped:     map[string]int{},
 			Removed:     []StripGroup{},
 		}
-		if backup != nil {
-			res.BackupID = backup.id
-			defer backup.Close()
-		}
+		res.BackupID = backup.ID()
+		defer backup.Close(j.ID)
 		j.SetProgress(Progress{Total: int64(len(ids))})
 
 		type key struct{ format, name, meaning string }
@@ -193,9 +187,8 @@ func (s *Service) Strip(req StripRequest) (*Job, error) {
 						g.Samples = append(g.Samples, r.Sample)
 					}
 				}
-				if backup != nil {
-					backup.write(path, rep.Removed)
-				}
+				backup.write(journalRecord{Path: path, Frames: rep.Removed})
+				s.bumpRev(path)
 			}
 			if n%32 == 0 || n == len(ids)-1 {
 				j.SetProgress(Progress{Done: int64(n + 1), Total: int64(len(ids))})
@@ -211,53 +204,6 @@ func (s *Service) Strip(req StripRequest) (*Job, error) {
 		}
 		sort.Strings(res.NormalizeFields)
 
-		if len(touched) > 0 {
-			s.refreshTracks(touched)
-			s.events.publish(Event{Type: EventTracksChanged, TrackIDs: touched})
-		}
-		return res, ctx.Err()
-	}), nil
-}
-
-// RestoreRequest puts stripped tags back.
-type RestoreRequest struct {
-	BackupID string `json:"backupId"`
-	DryRun   bool   `json:"dryRun,omitempty"`
-}
-
-// Restore reads a backup and re-adds the tags it holds.
-func (s *Service) Restore(req RestoreRequest) (*Job, error) {
-	records, err := s.readBackup(req.BackupID)
-	if err != nil {
-		return nil, err
-	}
-	return s.jobs.Start(JobRestore, func(ctx context.Context, j *Job) (any, error) {
-		res := BatchResult{Matched: len(records), DryRun: req.DryRun}
-		j.SetProgress(Progress{Total: int64(len(records))})
-
-		var touched []string
-		for n, r := range records {
-			if ctx.Err() != nil {
-				break
-			}
-			if req.DryRun {
-				res.Changed++
-			} else {
-				added, err := tags.RestoreFile(r.Path, r.Frames)
-				switch {
-				case err != nil:
-					res.fail(TrackID(r.Path), r.Path, err)
-				case added > 0:
-					res.Changed++
-					touched = append(touched, TrackID(r.Path))
-				default:
-					res.Skipped++
-				}
-			}
-			if n%32 == 0 || n == len(records)-1 {
-				j.SetProgress(Progress{Done: int64(n + 1), Total: int64(len(records))})
-			}
-		}
 		if len(touched) > 0 {
 			s.refreshTracks(touched)
 			s.events.publish(Event{Type: EventTracksChanged, TrackIDs: touched})
@@ -327,125 +273,6 @@ func (s *Service) refreshTracks(ids []string) {
 
 func formatName(path string) string { return tags.FormatForPath(path).String() }
 
-// --- backups ------------------------------------------------------------
-
-// Backups live server-side and are addressed by id, so that the client that
-// restores need not be the one that stripped.
-
-type backupRecord struct {
-	Path   string            `json:"path"`
-	Frames []tags.RemovedTag `json:"frames"`
-}
-
-// Backup describes a stored backup.
-type Backup struct {
-	ID      string    `json:"id"`
-	Created time.Time `json:"created"`
-	Tracks  int       `json:"tracks"`
-	Bytes   int64     `json:"bytes"`
-}
-
-func defaultBackupDir(catalogPath string) string {
-	if catalogPath == "" {
-		return "backups"
-	}
-	return filepath.Join(filepath.Dir(catalogPath), "backups")
-}
-
-type backupWriter struct {
-	id   string
-	f    *os.File
-	w    *bufio.Writer
-	rows int
-}
-
-func (s *Service) newBackup() (*backupWriter, error) {
-	if s.opts.BackupDir == "" {
-		return nil, errors.New("library: no backup directory configured")
-	}
-	if err := os.MkdirAll(s.opts.BackupDir, 0o755); err != nil {
-		return nil, err
-	}
-	id := newJobID()
-	f, err := os.Create(filepath.Join(s.opts.BackupDir, id+".jsonl"))
-	if err != nil {
-		return nil, err
-	}
-	return &backupWriter{id: id, f: f, w: bufio.NewWriterSize(f, 1<<20)}, nil
-}
-
-func (b *backupWriter) write(path string, frames []tags.RemovedTag) {
-	_ = json.NewEncoder(b.w).Encode(backupRecord{Path: path, Frames: frames})
-	b.rows++
-}
-
-func (b *backupWriter) Close() error {
-	if err := b.w.Flush(); err != nil {
-		b.f.Close()
-		return err
-	}
-	return b.f.Close()
-}
-
-// Backups lists the stored backups, newest first.
-func (s *Service) Backups() ([]Backup, error) {
-	entries, err := os.ReadDir(s.opts.BackupDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []Backup{}, nil
-		}
-		return nil, err
-	}
-	out := []Backup{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		out = append(out, Backup{
-			ID:      strings.TrimSuffix(e.Name(), ".jsonl"),
-			Created: info.ModTime(),
-			Bytes:   info.Size(),
-		})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Created.After(out[j].Created) })
-	return out, nil
-}
-
-// readBackup loads a backup by id.
-func (s *Service) readBackup(id string) ([]backupRecord, error) {
-	if id == "" || strings.ContainsAny(id, `/\.`) {
-		return nil, fmt.Errorf("%w: backup %q", ErrNotFound, id)
-	}
-	f, err := os.Open(filepath.Join(s.opts.BackupDir, id+".jsonl"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	defer f.Close()
-
-	var out []backupRecord
-	sc := bufio.NewScanner(f)
-	// Records hold whole frame payloads, which for cover art run to megabytes.
-	sc.Buffer(make([]byte, 0, 1<<20), 64<<20)
-	for line := 1; sc.Scan(); line++ {
-		if len(sc.Bytes()) == 0 {
-			continue
-		}
-		var r backupRecord
-		if err := json.Unmarshal(sc.Bytes(), &r); err != nil {
-			return nil, fmt.Errorf("backup %s line %d: %w", id, line, err)
-		}
-		out = append(out, r)
-	}
-	return out, sc.Err()
-}
-
 // contains reports membership in a small slice, used to keep the touched list
 // free of duplicates when a track is both stripped and normalised.
 func contains(list []string, v string) bool {
@@ -474,7 +301,11 @@ func (s *Service) normalize(path string, fields []tags.Tag) error {
 	if edit.Empty() {
 		return nil
 	}
-	return s.locks.withPath(path, func() error { return tags.Write(path, edit) })
+	if err := s.locks.withPath(path, func() error { return tags.Write(path, edit) }); err != nil {
+		return err
+	}
+	s.bumpRev(path)
+	return nil
 }
 
 // normalizeEdit re-asserts fields from what the file currently reads as.

@@ -64,6 +64,7 @@ type Service struct {
 	locks   pathLocks
 	clip    *artclip.Store
 	discogs *discogs.Client
+	thumbs  *thumbCache
 
 	events *eventBus
 	jobs   *Jobs
@@ -73,6 +74,12 @@ type Service struct {
 
 	saveMu    sync.Mutex
 	saveDirty bool
+
+	// revsMu guards revs, the per-path write counter that makes a version
+	// change even when the file's size and modification time do not. See
+	// version.go.
+	revsMu sync.Mutex
+	revs   map[string]uint64
 
 	// rescanMu guards nextRescan, which a client reads through Stats while
 	// the rescan loop is writing it.
@@ -92,6 +99,13 @@ var ErrNotFound = errors.New("library: not found")
 
 // ErrConflict means the caller's version no longer matches the file on disk.
 var ErrConflict = errors.New("library: the file changed since it was read")
+
+// ErrBadRequest means the request itself was wrong rather than the server.
+//
+// The API layer maps it to 400. It exists so that a service error can say so
+// outright rather than leaving the mapping to be inferred from the wording of
+// a message, which is a contract nobody can see and every rephrasing breaks.
+var ErrBadRequest = errors.New("library: bad request")
 
 // Open loads the catalogue and starts the service.
 func Open(opts Options) (*Service, error) {
@@ -121,6 +135,7 @@ func Open(opts Options) (*Service, error) {
 		cat:        cat,
 		opts:       opts,
 		clip:       artclip.New(opts.ClipboardDir),
+		thumbs:     newThumbCache(),
 		events:     newEventBus(),
 		done:       make(chan struct{}),
 		saveDone:   make(chan struct{}),
@@ -216,7 +231,7 @@ func (s *Service) Get(id string) (Track, error) {
 	if !ok {
 		return Track{}, ErrNotFound
 	}
-	return toTrack(&s.cat.Tracks[i]), nil
+	return s.toTrack(&s.cat.Tracks[i]), nil
 }
 
 // Path returns the file path for a track id, which several operations need

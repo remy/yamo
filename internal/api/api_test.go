@@ -25,9 +25,18 @@ type harness struct {
 	srv *httptest.Server
 	svc *library.Service
 	dir string
+
+	// token, when set, is sent as the bearer token on every request. Tests
+	// that check what happens without one clear it.
+	token string
 }
 
 func newHarness(t *testing.T, tracks int) *harness {
+	t.Helper()
+	return newHarnessOpts(t, tracks, Options{})
+}
+
+func newHarnessOpts(t *testing.T, tracks int, opts Options) *harness {
 	t.Helper()
 	ff, err := exec.LookPath("ffmpeg")
 	if err != nil {
@@ -60,8 +69,8 @@ func newHarness(t *testing.T, tracks int) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{t: t, svc: svc, dir: dir}
-	h.srv = httptest.NewServer(New(svc, Options{}))
+	h := &harness{t: t, svc: svc, dir: dir, token: opts.Token}
+	h.srv = httptest.NewServer(New(svc, opts))
 	t.Cleanup(func() {
 		h.srv.Close()
 		svc.Close()
@@ -74,12 +83,25 @@ func newHarness(t *testing.T, tracks int) *harness {
 
 func (h *harness) do(t *testing.T, method, path string, body io.Reader, want int) (*http.Response, []byte) {
 	t.Helper()
+	return h.doWith(t, method, path, body, want, nil)
+}
+
+// doWith is do with extra request headers, for the conditional and concurrency
+// checks that are entirely about them.
+func (h *harness) doWith(t *testing.T, method, path string, body io.Reader, want int, headers map[string]string) (*http.Response, []byte) {
+	t.Helper()
 	req, err := http.NewRequest(method, h.srv.URL+path, body)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if h.token != "" {
+		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := h.srv.Client().Do(req)
 	if err != nil {
@@ -710,37 +732,91 @@ func TestScanIsNotConcurrent(t *testing.T) {
 	}
 
 	root := filepath.Join(h.dir, "music")
-	first := h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusAccepted)
+	body := map[string]any{"roots": []string{root}}
 
-	// A second POST while it runs is refused, and names the running job.
-	second := h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusConflict)
-	if second["code"] != "scan_running" {
-		t.Fatalf("second scan gave %v, want scan_running", second)
+	// The window is the whole point, so it has to be observed rather than
+	// assumed: a forty-file scan can finish before the next request lands, and
+	// a test that then reads the second POST's success as the answer would be
+	// asserting nothing. Retry until a scan is genuinely still running when
+	// the second request arrives, and fail if that never happens.
+	var first, second map[string]any
+	for attempt := 0; second == nil; attempt++ {
+		if attempt == 100 {
+			t.Fatal("never caught a scan still running, so the refusal was never exercised")
+		}
+		before := h.scanJobs(t)
+
+		started := h.post(t, "/v1/scans", body, 0)
+		if started["code"] != nil {
+			// A scan from a previous attempt is still going. Let it finish and
+			// start over, so `first` always names the scan `second` collides
+			// with.
+			h.waitScanIdle(t)
+			continue
+		}
+		next := h.post(t, "/v1/scans", body, 0)
+		if next["code"] != "scan_running" {
+			// The first had already finished, so the second was accepted. Let
+			// it finish and try again rather than reading its success as the
+			// answer to a question it was not asked.
+			h.waitJob(t, next["id"].(string))
+			continue
+		}
+		first, second = started, next
+
+		// Counted here, inside the window, rather than by sending a third
+		// request that would race the same way. A finished job stays in the
+		// listing, so only a started one moves this: the refusal has to have
+		// started nothing, or the whole point is lost — two walks of the tree,
+		// two catalogues, and whichever finished last silently winning.
+		if after := h.scanJobs(t); after != before+1 {
+			t.Errorf("%d scan jobs after a refused scan, want %d: the refusal started one",
+				after, before+1)
+		}
 	}
+
 	if second["jobId"] != first["id"] {
 		t.Errorf("the error names job %v, want the running %v", second["jobId"], first["id"])
 	}
 
 	h.waitJob(t, first["id"].(string))
 
-	// Exactly one scan job was created by this test beyond the harness's own.
-	var scans int
-	_, list := h.do(t, http.MethodGet, "/v1/jobs", nil, http.StatusOK)
-	var jobs []map[string]any
-	if err := json.Unmarshal(list, &jobs); err != nil {
+	// And once finished, another is allowed again.
+	again := h.post(t, "/v1/scans", body, http.StatusAccepted)
+	h.waitJob(t, again["id"].(string))
+}
+
+// waitScanIdle blocks until no scan is running.
+func (h *harness) waitScanIdle(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if !h.getJSON(t, "/v1/scans", http.StatusOK)["running"].(bool) {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("a scan never finished")
+}
+
+// scanJobs counts the scan jobs the server is holding, which also exercises
+// the listing's kind filter.
+func (h *harness) scanJobs(t *testing.T) int {
+	t.Helper()
+	_, list := h.do(t, http.MethodGet, "/v1/jobs?kind=scan", nil, http.StatusOK)
+	var page struct {
+		Items []map[string]any `json:"items"`
+		Total int              `json:"total"`
+	}
+	if err := json.Unmarshal(list, &page); err != nil {
 		t.Fatal(err)
 	}
-	for _, j := range jobs {
-		if j["kind"] == "scan" {
-			scans++
+	for _, j := range page.Items {
+		if j["kind"] != "scan" {
+			t.Errorf("?kind=scan returned a %v job", j["kind"])
 		}
 	}
-	if scans != 2 { // the harness's initial scan, plus this one
-		t.Errorf("%d scan jobs exist, want 2", scans)
-	}
-
-	// And once finished, another is allowed again.
-	h.post(t, "/v1/scans", map[string]any{"roots": []string{root}}, http.StatusAccepted)
+	return page.Total
 }
 
 func TestRenameAndDeleteTrack(t *testing.T) {

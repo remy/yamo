@@ -26,8 +26,22 @@ func (s *Server) getTrack(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	if notModified(w, r, t.Version) {
+		return
+	}
 	w.Header().Set("ETag", strconv.Quote(t.Version))
 	writeJSON(w, http.StatusOK, t)
+}
+
+// getRawTags lists what the file actually holds, rather than what the
+// catalogue made of it. It is the pre-flight for a strip.
+func (s *Server) getRawTags(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.svc.RawTags(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, raw)
 }
 
 func (s *Server) patchTrack(w http.ResponseWriter, r *http.Request) {
@@ -120,13 +134,39 @@ func (s *Server) getStats(w http.ResponseWriter, r *http.Request) {
 
 // --- artwork ------------------------------------------------------------
 
+// getArtwork serves a track's cover, optionally scaled down.
+//
+// The ETag is the track's version rather than the image's, so a cover that
+// changed because the file was rewritten invalidates, and the size is folded
+// into it so a grid asking for thumbnails is not served the full-size image
+// out of a cache keyed only by the track.
 func (s *Server) getArtwork(w http.ResponseWriter, r *http.Request) {
-	pic, err := s.svc.Artwork(r.PathValue("id"))
+	id := r.PathValue("id")
+	size := intParam(r, "size", 0)
+
+	etag := ""
+	if t, err := s.svc.Get(id); err == nil {
+		etag = t.Version
+		if size > 0 {
+			etag += "@" + strconv.Itoa(size)
+		}
+		if notModified(w, r, etag) {
+			return
+		}
+	}
+
+	var pic *tags.Picture
+	var err error
+	if size > 0 {
+		pic, err = s.svc.Thumbnail(id, size)
+	} else {
+		pic, err = s.svc.Artwork(id)
+	}
 	if err != nil {
 		fail(w, err)
 		return
 	}
-	writeImage(w, pic)
+	writeImageETag(w, pic, etag)
 }
 
 // getAudio streams the file itself, so a song can be listened to rather than
@@ -168,13 +208,25 @@ func (s *Server) getAudio(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeImage(w http.ResponseWriter, pic *tags.Picture) {
+	writeImageETag(w, pic, "")
+}
+
+// writeImageETag serves an image, preferring a caller-supplied validator.
+//
+// The picture's own tag — its size and dimensions — is a weak identifier: two
+// different covers of the same size would share it. It is used only where
+// there is no better one, which is the clipboard.
+func writeImageETag(w http.ResponseWriter, pic *tags.Picture, etag string) {
 	mime := pic.MIME
 	if mime == "" {
 		mime = "application/octet-stream"
 	}
+	if etag == "" {
+		etag = pictureETag(pic)
+	}
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Content-Length", strconv.Itoa(len(pic.Data)))
-	w.Header().Set("ETag", strconv.Quote(pictureETag(pic)))
+	w.Header().Set("ETag", strconv.Quote(etag))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(pic.Data)
 }
@@ -182,27 +234,49 @@ func writeImage(w http.ResponseWriter, pic *tags.Picture) {
 // maxImageBytes bounds an uploaded cover. Real artwork runs to a few hundred
 // kilobytes; this is generous enough for anything genuine and small enough
 // that a stray upload cannot exhaust memory.
-const maxImageBytes = 32 << 20
+const maxImageBytes = library.MaxImageBytes
+
+// errTooLarge means the upload exceeded the bound.
+var errTooLarge = errors.New("the image is larger than this server accepts")
 
 // readImage reads an uploaded image body.
+//
+// One byte more than the limit is read so that an oversized upload is refused
+// rather than truncated. Reading exactly the limit and stopping would embed
+// the first 32MB of a larger file as if it were the whole image, which is a
+// corrupt cover written into every selected track and no error anywhere.
 func readImage(r *http.Request) (*tags.Picture, error) {
-	data, err := io.ReadAll(io.LimitReader(r.Body, maxImageBytes))
+	data, err := io.ReadAll(io.LimitReader(r.Body, maxImageBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(data) > maxImageBytes {
+		return nil, errTooLarge
 	}
 	// The format comes from the content, not the Content-Type header: a client
 	// that mislabels a PNG as JPEG should still get a working cover.
 	return tags.NewPicture(data)
 }
 
+// failImage answers an upload that could not be read. Too large is its own
+// status because the client's answer is to send a smaller image, not to fix a
+// malformed one.
+func failImage(w http.ResponseWriter, err error) {
+	if errors.Is(err, errTooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, "too_large", err.Error())
+		return
+	}
+	writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+}
+
 func (s *Server) putArtwork(w http.ResponseWriter, r *http.Request) {
 	pic, err := readImage(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		failImage(w, err)
 		return
 	}
 	id := r.PathValue("id")
-	if err := s.svc.SetArtwork(id, pic); err != nil {
+	if err := s.svc.SetArtwork(id, pic, unquote(r.Header.Get("If-Match"))); err != nil {
 		fail(w, err)
 		return
 	}
@@ -211,11 +285,12 @@ func (s *Server) putArtwork(w http.ResponseWriter, r *http.Request) {
 		fail(w, err)
 		return
 	}
+	w.Header().Set("ETag", strconv.Quote(t.Version))
 	writeJSON(w, http.StatusOK, t)
 }
 
 func (s *Server) deleteArtwork(w http.ResponseWriter, r *http.Request) {
-	if err := s.svc.SetArtwork(r.PathValue("id"), nil); err != nil {
+	if err := s.svc.SetArtwork(r.PathValue("id"), nil, unquote(r.Header.Get("If-Match"))); err != nil {
 		fail(w, err)
 		return
 	}
@@ -223,7 +298,28 @@ func (s *Server) deleteArtwork(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) artworkSummary(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.svc.ArtworkSummary(r.URL.Query().Get("q")))
+	rep, err := s.svc.ArtworkSummary(selectorFromQuery(r))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
+// exportArtwork writes each selection's embedded cover out beside the music,
+// which is the direction the folder source does not go.
+func (s *Server) exportArtwork(w http.ResponseWriter, r *http.Request) {
+	var req library.ExportArtworkRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	job, err := s.svc.ExportArtwork(req)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJob(w, job)
 }
 
 // batchArtworkBody mirrors the schema; the image arrives base64 encoded so the
@@ -233,6 +329,7 @@ type batchArtworkBody struct {
 	Source   string           `json:"source"`
 	Image    string           `json:"image,omitempty"`
 	DryRun   bool             `json:"dryRun,omitempty"`
+	Backup   bool             `json:"backup,omitempty"`
 }
 
 func (s *Server) batchArtwork(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +342,7 @@ func (s *Server) batchArtwork(w http.ResponseWriter, r *http.Request) {
 		Selector: body.Selector,
 		Source:   library.ArtworkSource(body.Source),
 		DryRun:   body.DryRun,
+		Backup:   body.Backup,
 	}
 	if body.Image != "" {
 		data, err := base64.StdEncoding.DecodeString(body.Image)
@@ -270,13 +368,16 @@ func (s *Server) getClipboard(w http.ResponseWriter, r *http.Request) {
 		fail(w, library.ErrNotFound)
 		return
 	}
+	if notModified(w, r, pictureETag(&held.Picture)) {
+		return
+	}
 	writeImage(w, &held.Picture)
 }
 
 func (s *Server) putClipboard(w http.ResponseWriter, r *http.Request) {
 	pic, err := readImage(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		failImage(w, err)
 		return
 	}
 	if err := s.svc.Clipboard().Copy(pic, "upload"); err != nil {
@@ -334,7 +435,9 @@ func pictureETag(p *tags.Picture) string {
 
 // splitTracks pulls the artist out of the title across a selection.
 func (s *Server) splitTracks(w http.ResponseWriter, r *http.Request) {
-	var req library.SplitRequest
+	// Journalled unless the client says otherwise, so the absence of the
+	// field means true rather than Go's zero value.
+	req := library.SplitRequest{Backup: true}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -354,7 +457,10 @@ func (s *Server) splitTracks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) batchEditTracks(w http.ResponseWriter, r *http.Request) {
-	var req library.BatchSetRequest
+	// Journalled unless the client says otherwise. This is the operation the
+	// API exists for and the one most likely to be regretted, so the record
+	// that makes it reversible has to be there without being asked for.
+	req := library.BatchSetRequest{Backup: true}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -365,6 +471,79 @@ func (s *Server) batchEditTracks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJob(w, job)
+}
+
+// renameTracks renames a whole selection after the tags each file carries,
+// which is the other direction from a split.
+func (s *Server) renameTracks(w http.ResponseWriter, r *http.Request) {
+	req := library.RenameTracksRequest{Backup: true}
+	if err := decodeJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	job, err := s.svc.RenameTracks(req)
+	if err != nil {
+		if errors.Is(err, library.ErrBadTemplate) {
+			writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+			return
+		}
+		fail(w, err)
+		return
+	}
+	writeJob(w, job)
+}
+
+// listDuplicates groups tracks that look like the same recording.
+func (s *Server) listDuplicates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	writeJSON(w, http.StatusOK, s.svc.Duplicates(library.DuplicateParams{
+		Query:           q.Get("q"),
+		By:              listParam(q["by"]),
+		DurationSeconds: intParam(r, "durationSeconds", 0),
+		Limit:           intParam(r, "limit", library.DefaultLimit),
+		Offset:          intParam(r, "offset", 0),
+	}))
+}
+
+// listFolders lists one level of the directory tree, for browsing a library
+// whose tags are not yet good enough to browse by album.
+func (s *Server) listFolders(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.Folders(library.FolderParams{
+		Path:   r.URL.Query().Get("path"),
+		Query:  r.URL.Query().Get("q"),
+		Limit:  intParam(r, "limit", library.DefaultLimit),
+		Offset: intParam(r, "offset", 0),
+	}))
+}
+
+// getCapabilities describes the server rather than the library, which is why
+// it is the one operation served without a token: a client needs to know
+// whether a token is required before it can present one.
+func (s *Server) getCapabilities(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.Capabilities(s.opts.Token != "", s.opts.AllowCrossOrigin))
+}
+
+// identity is what the server can say about the caller. With a single shared
+// token there is no identity to report, so the useful answer is whether the
+// credentials work at all — which a client otherwise has to discover by
+// making a real request and reading the failure.
+type identity struct {
+	Authenticated bool     `json:"authenticated"`
+	TokenRequired bool     `json:"tokenRequired"`
+	Scopes        []string `json:"scopes"`
+}
+
+func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
+	// Reaching this handler means the token check passed, so the answer is
+	// always yes; the request would have been a 401 otherwise.
+	writeJSON(w, http.StatusOK, identity{
+		Authenticated: true,
+		TokenRequired: s.opts.Token != "",
+		// One token, and it grants everything. Named rather than left implicit
+		// so that a client written against this keeps working if the answer
+		// ever becomes narrower.
+		Scopes: []string{"read", "write"},
+	})
 }
 
 func (s *Server) stripTags(w http.ResponseWriter, r *http.Request) {
@@ -384,12 +563,33 @@ func (s *Server) stripTags(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listBackups(w http.ResponseWriter, r *http.Request) {
-	b, err := s.svc.Backups()
+	b, err := s.svc.Backups(intParam(r, "limit", library.DefaultLimit), intParam(r, "offset", 0))
 	if err != nil {
 		fail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, b)
+}
+
+// getBackup describes what one journal holds, so a client can see what a
+// restore would put back before asking for it.
+func (s *Server) getBackup(w http.ResponseWriter, r *http.Request) {
+	b, err := s.svc.Backup(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, b)
+}
+
+// deleteBackup discards a journal. Nothing expires them, so this is how they
+// stop accumulating.
+func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.DeleteBackup(r.PathValue("id")); err != nil {
+		fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
@@ -434,7 +634,23 @@ func writeJob(w http.ResponseWriter, j *library.Job) {
 }
 
 func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.svc.JobRegistry().List())
+	q := r.URL.Query()
+	writeJSON(w, http.StatusOK, s.svc.JobRegistry().Page(library.JobFilter{
+		Kind:   q.Get("kind"),
+		State:  q.Get("state"),
+		Limit:  intParam(r, "limit", library.DefaultLimit),
+		Offset: intParam(r, "offset", 0),
+	}))
+}
+
+// undoJob reverses a job by restoring the journal it wrote.
+func (s *Server) undoJob(w http.ResponseWriter, r *http.Request) {
+	job, err := s.svc.Undo(r.PathValue("id"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJob(w, job)
 }
 
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
@@ -475,7 +691,27 @@ func (s *Server) discogsSearch(w http.ResponseWriter, r *http.Request) {
 		failDiscogs(w, err)
 		return
 	}
+	setRateLimit(w, res.Limit, res.Remaining)
 	writeJSON(w, http.StatusOK, res)
+}
+
+// setRateLimit reports the Discogs budget in headers as well as in the body.
+//
+// The body carries it because it is worth showing a person, and a header
+// carries it because the code that has to pace itself is often not the code
+// that parses the response — a fetch wrapper, a queue, a retry policy. A 429
+// already answers in headers; answering the same way on success is what lets
+// a client slow down before it gets there rather than after.
+func setRateLimit(w http.ResponseWriter, limit, remaining int) {
+	if limit <= 0 {
+		return
+	}
+	h := w.Header()
+	h.Set("RateLimit-Limit", strconv.Itoa(limit))
+	h.Set("RateLimit-Remaining", strconv.Itoa(max(remaining, 0)))
+	// The budget is per minute, so the window a client should wait out is
+	// never more than one.
+	h.Set("RateLimit-Reset", "60")
 }
 
 func (s *Server) discogsMaster(w http.ResponseWriter, r *http.Request) {
@@ -506,6 +742,7 @@ func (s *Server) discogsAlbum(w http.ResponseWriter, r *http.Request) {
 		failDiscogs(w, err)
 		return
 	}
+	setRateLimit(w, info.Limit, info.Remaining)
 	writeJSON(w, http.StatusOK, info)
 }
 

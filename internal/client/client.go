@@ -355,9 +355,25 @@ func (c *Client) Restore(ctx context.Context, req library.RestoreRequest) (*libr
 	return &out, c.postJSON(ctx, "/v1/restore", req, &out)
 }
 
+// Backups lists the stored undo journals, newest first.
 func (c *Client) Backups(ctx context.Context) ([]library.Backup, error) {
-	var out []library.Backup
-	return out, c.do(ctx, http.MethodGet, "/v1/backups", nil, &out)
+	var out library.BackupPage
+	if err := c.do(ctx, http.MethodGet, "/v1/backups?limit=1000", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// Backup describes what one journal holds, without restoring it.
+func (c *Client) Backup(ctx context.Context, id string) (*library.BackupDetail, error) {
+	var out library.BackupDetail
+	return &out, c.do(ctx, http.MethodGet, "/v1/backups/"+url.PathEscape(id), nil, &out)
+}
+
+// DeleteBackup discards a journal. The change is not undone, only the record
+// that would let it be.
+func (c *Client) DeleteBackup(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/v1/backups/"+url.PathEscape(id), nil, nil)
 }
 
 // --- artwork ------------------------------------------------------------
@@ -365,6 +381,12 @@ func (c *Client) Backups(ctx context.Context) ([]library.Backup, error) {
 // Artwork returns a track's cover and its content type.
 func (c *Client) Artwork(ctx context.Context, id string) ([]byte, string, error) {
 	return c.fetchImage(ctx, "/v1/tracks/"+url.PathEscape(id)+"/artwork")
+}
+
+// Thumbnail returns a track's cover scaled so its longest side is at most size
+// pixels. An image already smaller comes back untouched.
+func (c *Client) Thumbnail(ctx context.Context, id string, size int) ([]byte, string, error) {
+	return c.fetchImage(ctx, "/v1/tracks/"+url.PathEscape(id)+"/artwork?size="+strconv.Itoa(size))
 }
 
 // Clipboard returns the image the server is holding.
@@ -409,6 +431,12 @@ func (c *Client) PutArtwork(ctx context.Context, id string, image []byte) (*libr
 		bytes.NewReader(image), &out, octetStream)
 }
 
+// ExportArtwork writes each selection's embedded cover out beside the music.
+func (c *Client) ExportArtwork(ctx context.Context, req library.ExportArtworkRequest) (*library.Job, error) {
+	var out library.Job
+	return &out, c.postJSON(ctx, "/v1/artwork/export", req, &out)
+}
+
 func (c *Client) DeleteArtwork(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/tracks/"+url.PathEscape(id)+"/artwork", nil, nil)
 }
@@ -439,6 +467,7 @@ type BatchArtworkRequest struct {
 	Source   string           `json:"source"`
 	Image    []byte           `json:"image,omitempty"`
 	DryRun   bool             `json:"dryRun,omitempty"`
+	Backup   bool             `json:"backup,omitempty"`
 }
 
 func (c *Client) BatchArtwork(ctx context.Context, req BatchArtworkRequest) (*library.Job, error) {
@@ -455,6 +484,72 @@ func (c *Client) ArtworkSummary(ctx context.Context, query string) (*library.Art
 	return &out, c.do(ctx, http.MethodGet, "/v1/artwork/summary?"+q.Encode(), nil, &out)
 }
 
+// --- discovery ----------------------------------------------------------
+
+// Capabilities reports what the server can do. It needs no token, so it also
+// answers whether one is required.
+func (c *Client) Capabilities(ctx context.Context) (*library.Capabilities, error) {
+	var out library.Capabilities
+	return &out, c.do(ctx, http.MethodGet, "/v1/capabilities", nil, &out)
+}
+
+// RawTags lists everything one file's metadata holds, which is the pre-flight
+// for a strip.
+func (c *Client) RawTags(ctx context.Context, id string) (*library.RawTags, error) {
+	var out library.RawTags
+	return &out, c.do(ctx, http.MethodGet, "/v1/tracks/"+url.PathEscape(id)+"/tags", nil, &out)
+}
+
+// Folders lists one level of the directory tree. An empty path lists the roots.
+func (c *Client) Folders(ctx context.Context, p library.FolderParams) (*library.FolderPage, error) {
+	q := url.Values{}
+	if p.Path != "" {
+		q.Set("path", p.Path)
+	}
+	if p.Query != "" {
+		q.Set("q", p.Query)
+	}
+	if p.Limit > 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Offset > 0 {
+		q.Set("offset", strconv.Itoa(p.Offset))
+	}
+	var out library.FolderPage
+	return &out, c.do(ctx, http.MethodGet, "/v1/folders?"+q.Encode(), nil, &out)
+}
+
+// Duplicates groups tracks that look like the same recording.
+func (c *Client) Duplicates(ctx context.Context, p library.DuplicateParams) (*library.DuplicatePage, error) {
+	q := url.Values{}
+	if p.Query != "" {
+		q.Set("q", p.Query)
+	}
+	if len(p.By) > 0 {
+		q.Set("by", strings.Join(p.By, ","))
+	}
+	if p.Limit > 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Offset > 0 {
+		q.Set("offset", strconv.Itoa(p.Offset))
+	}
+	var out library.DuplicatePage
+	return &out, c.do(ctx, http.MethodGet, "/v1/duplicates?"+q.Encode(), nil, &out)
+}
+
+// RenameTracks renames a whole selection after the tags each file carries.
+func (c *Client) RenameTracks(ctx context.Context, req library.RenameTracksRequest) (*library.Job, error) {
+	var out library.Job
+	return &out, c.postJSON(ctx, "/v1/tracks/rename", req, &out)
+}
+
+// Split pulls the fields a title carries out into their own tags.
+func (c *Client) Split(ctx context.Context, req library.SplitRequest) (*library.Job, error) {
+	var out library.Job
+	return &out, c.postJSON(ctx, "/v1/tracks/split", req, &out)
+}
+
 // --- jobs ---------------------------------------------------------------
 
 func (c *Client) Job(ctx context.Context, id string) (*library.Job, error) {
@@ -463,8 +558,18 @@ func (c *Client) Job(ctx context.Context, id string) (*library.Job, error) {
 }
 
 func (c *Client) Jobs(ctx context.Context) ([]*library.Job, error) {
-	var out []*library.Job
-	return out, c.do(ctx, http.MethodGet, "/v1/jobs", nil, &out)
+	var out library.JobPage
+	if err := c.do(ctx, http.MethodGet, "/v1/jobs?limit=1000", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// UndoJob reverses a job by restoring the journal it wrote, returning a job of
+// its own to follow.
+func (c *Client) UndoJob(ctx context.Context, id string) (*library.Job, error) {
+	var out library.Job
+	return &out, c.postJSON(ctx, "/v1/jobs/"+url.PathEscape(id)+"/undo", nil, &out)
 }
 
 func (c *Client) CancelJob(ctx context.Context, id string) error {
