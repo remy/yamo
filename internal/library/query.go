@@ -345,6 +345,9 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 	if p.Limit > MaxLimit {
 		p.Limit = MaxLimit
 	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
 
 	s.mu.RLock()
 	hits := s.cat.Index().Search(catalog.ParseQuery(p.Query))
@@ -411,7 +414,11 @@ type albumAgg struct {
 	byArtist      int // tracks whose artist is the one naming this group
 }
 
-// artistField names the field that reselects the whole group.
+func (a *albumAgg) artistField() string {
+	return artistField(a.byAlbumArtist, a.byArtist)
+}
+
+// artistField names the field that reselects a group credited to one artist.
 //
 // Grouping falls back to the artist when a file has no album artist, so a
 // query on albumartist would match none of those files — and in a library
@@ -419,8 +426,8 @@ type albumAgg struct {
 // Neither field can express a group that is genuinely mixed, so the one
 // covering more of it wins, and album artist breaks the tie as the more
 // specific of the two.
-func (a *albumAgg) artistField() string {
-	if a.byAlbumArtist >= a.byArtist {
+func artistField(byAlbumArtist, byArtist int) string {
+	if byAlbumArtist >= byArtist {
 		return "albumartist"
 	}
 	return "artist"
@@ -435,4 +442,118 @@ func albumQuery(field, artist, album string) string {
 	}
 	b.WriteString(`album:"` + strings.ReplaceAll(album, `"`, "") + `"`)
 	return b.String()
+}
+
+// Artist groups the tracks credited to one artist. It is the level above the
+// album grid, and it groups on the same key — the album artist, falling back
+// to the artist — so the names here are exactly the names heading /albums,
+// and a compilation lists once, under Various Artists, rather than once per
+// performer on it.
+type Artist struct {
+	ID         string `json:"id"`
+	Artist     string `json:"artist"`
+	Tracks     int    `json:"tracks"`
+	Albums     int    `json:"albums"`
+	WithArt    int    `json:"withArtwork"`
+	DurationMS int64  `json:"durationMs"`
+	Query      string `json:"query"` // reselects exactly this artist
+}
+
+// ArtistsResult is one page of artists.
+type ArtistsResult struct {
+	Items  []Artist `json:"items"`
+	Total  int      `json:"total"`
+	Limit  int      `json:"limit"`
+	Offset int      `json:"offset"`
+}
+
+// Artists groups matching tracks by the artist credited with them.
+//
+// The query each artist carries has the same limit the album one does: neither
+// field can express a group that is genuinely mixed, so a performer whose solo
+// tracks name no album artist is reselected by artist:, which also matches
+// their appearances on somebody else's compilation.
+func (s *Service) Artists(p ListParams) ArtistsResult {
+	if p.Limit <= 0 {
+		p.Limit = DefaultLimit
+	}
+	if p.Limit > MaxLimit {
+		p.Limit = MaxLimit
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+
+	s.mu.RLock()
+	hits := s.cat.Index().Search(catalog.ParseQuery(p.Query))
+	byKey := map[string]*artistAgg{}
+	for _, i := range hits {
+		t := &s.cat.Tracks[i]
+		artist := t.AlbumArtist
+		if artist == "" {
+			artist = t.Artist
+		}
+		folded := catalog.Fold(artist)
+		a := byKey[folded]
+		if a == nil {
+			a = &artistAgg{Artist: Artist{ID: TrackID(folded), Artist: artist}, albums: map[string]bool{}}
+			byKey[folded] = a
+		}
+		if t.AlbumArtist != "" {
+			a.byAlbumArtist++
+		}
+		if catalog.Fold(t.Artist) == folded {
+			a.byArtist++
+		}
+		a.Tracks++
+		a.DurationMS += int64(t.DurationMS)
+		if t.HasArt {
+			a.WithArt++
+		}
+		if t.Album != "" {
+			a.albums[catalog.Fold(t.Album)] = true
+		}
+	}
+	s.mu.RUnlock()
+
+	items := make([]Artist, 0, len(byKey))
+	for _, a := range byKey {
+		a.Albums = len(a.albums)
+		a.Query = artistQuery(artistField(a.byAlbumArtist, a.byArtist), a.Artist.Artist)
+		items = append(items, a.Artist)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return catalog.Fold(items[i].Artist) < catalog.Fold(items[j].Artist)
+	})
+
+	out := ArtistsResult{Total: len(items), Limit: p.Limit, Offset: p.Offset, Items: []Artist{}}
+	if p.Offset >= len(items) {
+		return out
+	}
+	out.Items = items[p.Offset:min(p.Offset+p.Limit, len(items))]
+	return out
+}
+
+// artistAgg accumulates one group while it is being built. The counters choose
+// the query field, exactly as they do for an album; albums collects the
+// distinct releases the matching tracks sit on.
+type artistAgg struct {
+	Artist
+	albums        map[string]bool // folded album titles seen in this group
+	byAlbumArtist int             // tracks that carry an album artist of their own
+	byArtist      int             // tracks whose artist is the one naming this group
+}
+
+// artistQuery builds a query that selects exactly one artist. Unlike an
+// album's query, which pairs the name with the album title, this one has a
+// single term to be exact with — and an artist's name is routinely a prefix
+// of another's ("Elvis", "Elvis Presley") — so the value is anchored to the
+// whole field rather than left as a substring match. An empty name means the
+// group is the tracks credited to nobody, and both fields being empty is what
+// says so.
+func artistQuery(field, artist string) string {
+	if artist == "" {
+		return "artist: albumartist:"
+	}
+	return field + `:"^` + strings.ReplaceAll(artist, `"`, "") + `$"`
 }

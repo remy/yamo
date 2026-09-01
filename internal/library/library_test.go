@@ -260,6 +260,98 @@ func TestAlbumsGrouping(t *testing.T) {
 	}
 }
 
+func TestArtistsGrouping(t *testing.T) {
+	s := newService(t, 200)
+	res := s.Artists(ListParams{Limit: 100})
+	if res.Total != 4 {
+		t.Fatalf("grouped into %d artists, want 4", res.Total)
+	}
+	for _, a := range res.Items {
+		if a.Tracks != 50 {
+			t.Errorf("artist %q has %d tracks, want 50", a.Artist, a.Tracks)
+		}
+		if a.Albums != 1 {
+			t.Errorf("artist %q has %d albums, want 1", a.Artist, a.Albums)
+		}
+		// The query an artist carries must reselect exactly it.
+		if got := s.Count(a.Query); got != a.Tracks {
+			t.Errorf("artist query %q matched %d, want %d", a.Query, got, a.Tracks)
+		}
+	}
+	// Sorted by folded name, so Björk files under B rather than after Z.
+	if res.Items[0].Artist != "Björk" {
+		t.Errorf("the list starts with %q, want Björk", res.Items[0].Artist)
+	}
+}
+
+// TestArtistQueryReselectsExactly covers the two ways an artist's query can
+// silently select the wrong tracks: the album-artist fallback, mirrored from
+// the album grid, and a name that is a prefix of another's — "Elvis" must not
+// sweep in "Elvis Presley", which is why the query is anchored where an
+// album's is not.
+func TestArtistQueryReselectsExactly(t *testing.T) {
+	dir := t.TempDir()
+	c := catalog.New()
+	add := func(album, artist, albumArtist string, n int) {
+		for i := 0; i < n; i++ {
+			c.Tracks = append(c.Tracks, catalog.Track{
+				Path:        filepath.Join(dir, "music", album, fmt.Sprintf("%02d.mp3", len(c.Tracks))),
+				Title:       fmt.Sprintf("Song %d", i),
+				Artist:      artist,
+				AlbumArtist: albumArtist,
+				Album:       album,
+				Format:      tags.FormatMP3,
+			})
+		}
+	}
+	add("Tagged", "Plan B", "Plan B", 4) // every file has an album artist
+	add("Untagged", "Plan B", "", 4)     // none has one: the fallback
+	add("Partly", "Plan B", "Plan B", 3) // a release tagged halfway through
+	add("Partly", "Plan B", "", 2)
+	add("Debut", "Elvis", "Elvis", 2) // a name that prefixes another's
+	add("Comeback", "Elvis Presley", "Elvis Presley", 3)
+
+	// A compilation, which must list once under its credit rather than once
+	// per performer.
+	for i, artist := range []string{"Ella Fitzgerald", "Nina Simone", "Etta James"} {
+		c.Tracks = append(c.Tracks, catalog.Track{
+			Path:        filepath.Join(dir, "music", "Compilation", fmt.Sprintf("%02d.mp3", i)),
+			Title:       fmt.Sprintf("Song %d", i),
+			Artist:      artist,
+			AlbumArtist: "Various Artists",
+			Album:       "Compilation",
+			Format:      tags.FormatMP3,
+		})
+	}
+	s := openService(t, dir, c)
+
+	res := s.Artists(ListParams{Limit: 100})
+	if res.Total != 4 {
+		t.Fatalf("grouped into %d artists, want 4", res.Total)
+	}
+	want := map[string]struct{ tracks, albums int }{
+		"Plan B":          {13, 3},
+		"Elvis":           {2, 1},
+		"Elvis Presley":   {3, 1},
+		"Various Artists": {3, 1},
+	}
+	for _, a := range res.Items {
+		w, ok := want[a.Artist]
+		if !ok {
+			t.Errorf("unexpected artist %q", a.Artist)
+			continue
+		}
+		if a.Tracks != w.tracks || a.Albums != w.albums {
+			t.Errorf("artist %q has %d tracks on %d albums, want %d on %d",
+				a.Artist, a.Tracks, a.Albums, w.tracks, w.albums)
+		}
+		if got := s.Count(a.Query); got != a.Tracks {
+			t.Errorf("artist %q carries query %q, which matches %d of its %d tracks",
+				a.Artist, a.Query, got, a.Tracks)
+		}
+	}
+}
+
 // TestAlbumQueryWithoutAlbumArtist covers the case that made the album grid
 // useless on a real library: grouping falls back to the artist when a file has
 // no album artist, but the query the album carried always named albumartist,
@@ -412,6 +504,8 @@ func TestConcurrentAccess(t *testing.T) {
 	go worker(func() { s.Stats() })
 	wg.Add(1)
 	go worker(func() { s.Albums(ListParams{Limit: 20}) })
+	wg.Add(1)
+	go worker(func() { s.Artists(ListParams{Limit: 20}) })
 	wg.Add(1)
 	go worker(func() { s.Count("genre:jazz") })
 

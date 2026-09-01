@@ -274,6 +274,21 @@ func (c *Client) Albums(ctx context.Context, p library.ListParams) (*library.Alb
 	return &out, c.do(ctx, http.MethodGet, "/v1/albums?"+q.Encode(), nil, &out)
 }
 
+func (c *Client) Artists(ctx context.Context, p library.ListParams) (*library.ArtistsResult, error) {
+	q := url.Values{}
+	if p.Query != "" {
+		q.Set("q", p.Query)
+	}
+	if p.Limit > 0 {
+		q.Set("limit", strconv.Itoa(p.Limit))
+	}
+	if p.Offset > 0 {
+		q.Set("offset", strconv.Itoa(p.Offset))
+	}
+	var out library.ArtistsResult
+	return &out, c.do(ctx, http.MethodGet, "/v1/artists?"+q.Encode(), nil, &out)
+}
+
 // ValueCount is one distinct field value and how many tracks carry it.
 type ValueCount struct {
 	Value string `json:"value"`
