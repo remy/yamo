@@ -2,144 +2,55 @@
 
 ![yamo — the green music organiser](yamo.jpg)
 
-An API server for a large music library. It catalogues a library fast,
-searches it instantly, and edits tags in place — including across hundreds of
-tracks at once — and every one of those operations is reachable over HTTP,
-described by an OpenAPI schema the server serves itself.
+**An HTTP API for a large music library.** It catalogues a library fast,
+searches it instantly, and edits the tags in the files themselves — including
+across hundreds of thousands of tracks at once. Every one of those operations
+is an endpoint, described by an OpenAPI 3.1 schema the server serves itself.
 
-The terminal browser below ships in the same binary and is the one client
-built so far, not the whole design: anything that can speak HTTP is as
-legitimate a client as it is. See [The API](#the-api).
+The API is the program. The terminal browser and the `scan`/`find`/`art`/
+`strip` commands ship in the same binary and are worth having, but they are
+**samples**: each one is a client of the API below, written against the same
+endpoints anything else can call, and given no access the API does not offer.
+A phone, a web page, a shell script and a cron job are all as legitimate a
+client as the terminal is, and none of them is working around a subset.
 
 Built for a NAS: one static binary, no runtime dependencies, no database
-server, no GUI.
-
-```
-┌─ yamo  /volume1/music ─────────────────────────────────────────────────────┐
-│ / artist:elvis album:"sun sessions"                     12 selected · 12 / 98,412 │
-├──┬───────────────┬──────────────────┬─────────────────────┬────┬────┬────────┤
-│  │Artist         │Album             │Title                │   #│Year│  Time  │
-├──┼───────────────┼──────────────────┼─────────────────────┼────┼────┼────────┤
-│✓•│Elvis Presley  │The Sun Sessions  │Blue Moon of Kentucky│   1│1956│  2:04  │
-│✓•│Elvis Presley  │The Sun Sessions  │I Don't Care         │   2│1956│  2:41  │
-└──┴───────────────┴──────────────────┴─────────────────────┴────┴────┴────────┘
-```
-
-## Why Go
-
-The work here is almost entirely file IO: open a hundred thousand files, read a
-few kilobytes from each, close them. Go gives goroutine-per-file concurrency
-that saturates the IO queue without any async plumbing, cross-compiles to a
-single static binary for the NAS with one environment variable, and has the
-strongest terminal-UI ecosystem going. A faster language would not help,
-because nothing here is CPU-bound.
-
-## Install
+server, no GUI required.
 
 ```sh
-make nas                       # builds dist/yamo-linux-{amd64,arm64}
-scp dist/yamo-linux-amd64 nas:/usr/local/bin/yamo
-```
-
-UGREEN NASync boxes are x86-64, so `yamo-linux-amd64` is the one you want.
-Both binaries are static and depend on nothing on the target.
-
-For local use: `make install` or `go install ./cmd/yamo`.
-
-## Docker
-
-The image is `ghcr.io/remy/yamo`, built by
-[`docker.yml`](.github/workflows/docker.yml) for `linux/amd64` and
-`linux/arm64` on every push to `main` (`:latest`) and every `vX.Y.Z` tag
-(`:X.Y.Z`, `:X.Y`, `:X`). It runs `yamo serve`; the terminal and the rest of
-the client commands are still in the binary if you `docker compose exec` in,
-but the container's job is to be the API server.
-
-```sh
-cp .env.example .env      # fill in YAMO_TOKEN and MUSIC_DIR
-docker compose up -d
-docker compose logs -f    # first run: confirms the initial scan under -root
-```
-
-That's [`docker-compose.yml`](docker-compose.yml) as committed: it binds the
-container's `/data` (the catalogue) and `/music` (the library, read-write —
-the API edits tags in place) to the host, and passes `YAMO_ROOT=/music` so
-the server scans on every start — see `YAMO_ROOT` in the table below for
-what that costs on a restart where nothing changed.
-
-The `user:` line is not decoration. The image is distroless `:nonroot`, so
-its default is uid 65532 — an account that exists inside the container and
-owns nothing on your host — and a bind-mounted `./data` owned by anyone else
-gives that uid no write permission. The symptom is the server starting fine
-and then failing on every save:
-
-```
-yamo: could not save the catalogue: open /data/.yamo-3876691773.tmp: permission denied
-```
-
-Set `PUID`/`PGID` in `.env` to the account that owns the bind-mounted
-directories (`id -u` and `id -g`), which is also the account that has to own
-the music files for tag edits to land. The same uid needs write access to
-`/music`, not just `/data`.
-
-A token is not optional here the way it is for `yamo serve` on a bare
-machine: binding `0.0.0.0` — the only address reachable through Docker's
-port mapping — trips the same "not loopback" check either way, so the
-compose file refuses to start without `YAMO_TOKEN` set (`docker compose up`
-fails fast with a clear error rather than the container looping on a
-generated token nothing outside it can read). Generate one with
-`openssl rand -hex 24`.
-
-### Environment variables
-
-The flags most worth setting without typing them are the ones with an
-environment variable fallback, because a container's configuration is
-environment variables and volumes, not command-line flags typed by a
-person. `YAMO_ROOT` is the one worth calling out for Docker specifically:
-with no one around to run `yamo scan` by hand after `docker compose up`, it
-scans on every start instead — a no-op cost (a stat per file, not a
-re-read) once the library is caught up, which is what makes it safe to
-leave set rather than something to remember to run once.
-
-| Variable | Flag | Used by | Meaning |
-| --- | --- | --- | --- |
-| `YAMO_CATALOG` | `-catalog` | `serve` | Catalogue file path. Defaults to the user cache directory outside Docker; the image sets it to `/data/catalog.db`. |
-| `YAMO_ROOT` | `-root` (repeatable) | `serve` | Comma-separated directories to scan on startup, in the background, without blocking the server from accepting requests. Unset means an empty new catalogue stays empty until something scans it. |
-| `YAMO_TOKEN` | `-token` | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back. |
-| `YAMO_RESCAN_EVERY` | `-rescan-every` | `serve` | Optional. Rescans the catalogue's roots on this interval (`1h`, `30m`) — the same incremental scan, so a stat per file on an unchanged library. Unset, nothing is scanned unless asked: nothing watches the filesystem. A minute is the shortest accepted. |
-| `YAMO_DISCOGS_TOKEN` | `-discogs-token` | `serve` | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower. |
-| `YAMO_SERVER` | `-server` | every client command | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
-| `YAMO_NO_IMAGES` | — (no flag) | the terminal browser | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands. |
-
-## The API
-
-`yamo serve` is the whole program: it owns the catalogue and the music files,
-and everything else — the terminal browser, the `find`/`scan`/`art`/`strip`
-commands, a phone, a script — is a client of it over HTTP. It exposes that
-API as an OpenAPI 3.1 schema, so a mobile web interface, or anything else, can
-be built on the same operations the terminal uses rather than a subset of them.
-
-```sh
-yamo serve                                 # loopback, no token needed
-yamo serve -listen 0.0.0.0:8467            # reachable on the network
-yamo serve -listen unix:///tmp/yamo.sock
-
-curl -O http://127.0.0.1:8467/openapi.yaml   # download the contract
+yamo serve                                   # loopback, no token needed
+curl -O http://127.0.0.1:8467/openapi.yaml   # the contract
 open http://127.0.0.1:8467/docs              # browse it
 ```
 
 The schema is served by the running binary, so it is always the contract that
-build actually implements. `/docs` is a self-contained page with no outbound
-network access required, because a NAS may not have any.
+build actually implements — a test walks the YAML and fails if any operation
+lacks a route or any route is missing from the schema. `/docs` is
+self-contained and needs no outbound network access, because a NAS may not
+have any.
+
+---
+
+## The API
+
+45 operations. Everything below is reachable with `curl`, and everything the
+terminal browser can do is one of these calls.
 
 ### The shape of it
 
-The library runs to six figures and the work is gradual, so three things
-follow. Everything is paged — there is no endpoint that returns the whole
-library. Operations select by **query** rather than by identifier, so setting a
-field on two thousand tracks does not mean uploading two thousand ids. And
-anything that can touch more than one file returns a **job**, even when it
-finishes at once, so a client has one shape to handle.
+The library runs to six figures and the work is gradual — find a few wrong
+things, fix them, carry on. Four things follow from that, and they are the
+whole design.
+
+**Everything is paged.** `GET /v1/tracks` returns a window and a total. There
+is no endpoint that returns the whole library. `total` counts matches before
+paging, and `limit` and `offset` come back as applied — a `limit` above the
+maximum is capped rather than rejected, so read the response rather than
+assuming the request was honoured.
+
+**Operations select by query, not by identifier.** Setting the artist on every
+Elvis track should not mean uploading two thousand ids, so a `Selector`
+carries the same query language the search bar uses.
 
 ```sh
 # the case this exists for: fix a misspelled artist across a whole search
@@ -150,99 +61,23 @@ curl -X POST localhost:8467/v1/tracks/batch -H 'Content-Type: application/json' 
 ```
 
 `expectCount` is a safety rail: the client states how many matches it showed
-someone, and the server refuses if the selection has moved since.
+someone, and the server refuses if the selection has moved since. A selector
+that names nothing is rejected, and `all` must be set explicitly — so
+"everything" can never be reached by accident.
 
-Every track carries a `version`. Send it back as `If-Match` on a `PATCH` and a
-mismatch returns `409`, which is what stops an edit made on a phone silently
-overwriting one made in the terminal a moment earlier. `GET /v1/events` streams
-changes, so several interfaces stay in step without polling.
+**Anything that can touch more than one file returns a job**, even when it
+finishes immediately, so there is one shape to handle rather than a guess about
+which calls block. `GET /v1/jobs/{id}` polls it; `GET /v1/jobs/{id}/events`
+streams its progress.
 
-Edits write through: a `PATCH` writes the tag to the file and returns. There is
-no pending state to commit, and therefore none for a background scan to lose.
+**Anything that writes across a selection can be undone.** Batch edits, splits
+and renames record what they overwrite without being asked; strips and artwork
+pastes do it on request. See [Undo](#undo).
 
-`GET /v1/tracks/{id}/audio` serves the file itself, ranges and all, so a client
-can play a track to check it is the one its tags describe rather than only read
-about it.
+### Finding things
 
-### Access
-
-Loopback by default, where no token is needed. Binding anywhere else requires
-one — generated on first run, printed once, kept beside the catalogue.
-
-Cross-origin browser requests are only permitted when a token is set. A server
-on loopback with permissive headers could be driven by any web page you
-happened to visit, and this API rewrites music files.
-
-## The bundled clients
-
-The rest of this document covers the terminal browser and the scriptable
-commands (`scan`, `find`, `art`, `strip`, …) that ship in the same binary as
-the server. They are clients like any other — built against the API above,
-not given any access it doesn't offer.
-
-```sh
-yamo serve                   # the API server; everything else is a client
-yamo scan /volume1/music     # build the catalogue
-yamo                         # browse and edit, in the terminal
-yamo find artist:elvis       # query from a script
-yamo info                    # what is in the library
-yamo help                    # usage; `yamo help scan` for one command
-```
-
-The server owns the catalogue and the music files; nothing else opens them.
-Start it before anything else, or from a systemd unit or launchd plist so it
-comes up with the machine.
-
-Every command takes `-h`, and `yamo help <command>` prints the same thing.
-Usage goes to stdout so it pipes into a pager; errors go to stderr.
-
-The catalogue lives in your cache directory (`yamo info` prints the path).
-Override it with `-catalog PATH` or `YAMO_CATALOG`.
-
-### Scanning
-
-`yamo scan` walks the given directories and extracts tags. Re-running it
-without `-full` reuses every entry whose size and modification time are
-unchanged, so a refresh costs a stat per file rather than a read.
-
-```sh
-yamo scan -status                     # is one running?
-yamo scan /volume1/music              # first run, or refresh
-yamo scan                             # refresh whatever the catalogue covers
-yamo scan -full /volume1/music        # ignore the cache, re-read everything
-yamo scan -exclude Podcasts /volume1/music
-```
-
-Deleted files disappear from the catalogue on the next scan. Directories that
-never hold music (`@eaDir`, `#recycle`, `lost+found`, dot-directories) are
-skipped, as are AppleDouble `._` sidecars.
-
-#### Keeping up with the files
-
-Nothing watches the filesystem. Music added or edited by anything other than
-this server — an album copied over SMB, tags changed in another program — is
-invisible until a scan is asked for.
-
-`-rescan-every` puts that on a timer:
-
-```sh
-yamo serve -root /volume1/music -rescan-every 1h
-```
-
-It runs the same incremental scan, so an unchanged library costs a stat per
-file rather than a re-read; an hour is a sensible starting point, and a
-minute is the shortest interval accepted. A tick that arrives while a scan is
-still running is skipped rather than queued, and the roots it scans are the
-catalogue's own — the same ones `yamo scan` with no arguments would use.
-
-`GET /v1/stats` reports the interval and when the next one is due, so a
-client can say how current its numbers are; `yamo info` prints the same line.
-Unset (the default) it never scans on its own, which is the behaviour to
-assume unless the stats say otherwise.
-
-### Searching
-
-The same query language works in the search bar and on the command line.
+The query language is the same in every endpoint that takes a `q` or a
+`Selector`, in the search bar, and on the command line.
 
 | Query | Matches |
 | --- | --- |
@@ -274,65 +109,132 @@ that merely files itself under "Presley, Elvis".
 field in order — `~elvpres` finds Elvis Presley — or within a bounded number of
 typos: an insertion, a deletion, a substitution, or two letters swapped, so
 both `~presly` and `~prelsey` land. Each result carries a score between 0 and
-1, and a query containing a `~` comes back ranked by it, best first, unless you
-pass a `-sort` of your own.
+1, and a query containing a `~` comes back ranked by it, best first, unless a
+`sort` of your own says otherwise.
 
 It is opt-in rather than automatic, and only the terms that carry it are
 loosened:
 
-```sh
-yamo find 'artist:~presly year:>1960 -genre:live'
+```
+artist:~presly year:>1960 -genre:live
 ```
 
 is strict about the year and the genre and forgiving only about the artist —
-which is what lets `find -format path` still be trustworthy as a playlist.
+which is what lets a query still be trustworthy as the definition of a set.
 `~` and the anchors combine, in that order: `artist:~^presly` is "starts with
 something close to this".
 
-On the command line a query starting with `-` needs `--` first, so the flag
-parser leaves it alone:
+#### Four ways in
+
+A query returns tracks, but a track is rarely the unit of work. Four endpoints
+group them, and which one is useful depends on how good the tags already are.
 
 ```sh
-yamo find -- -genre:live artist:elvis
+curl 'localhost:8467/v1/albums?q=elvis&sort=-year'
+curl 'localhost:8467/v1/artists?sort=-tracks'
+curl 'localhost:8467/v1/folders?path=/volume1/music/Elvis%20Presley'
+curl 'localhost:8467/v1/duplicates?by=artist,title'
 ```
+
+**`/v1/albums` and `/v1/artists`** group the tracks a query matched — the query
+filters tracks, and the matching tracks are then grouped. That is deliberate
+and worth reading twice: `?q=cat` returns an album whose composer is "Jamie
+Catto", because a bare term matches every text field of every track. It is how
+you find the album with that one song on it. Scope the term (`?q=album:cat`) to
+search titles alone. Both take a `sort` over the group's own values — an
+album's `year` is the earliest of its tracks', its `duration` their total — and
+both carry a `sampleTrackId`, so a grid can fetch a cover without first listing
+an album's tracks to find one.
+
+**`/v1/folders`** is the one for a library whose tags are not good enough yet.
+An album grid built from broken tags shows "Unknown Album" four thousand times
+and throws away the one thing still correct: that these forty files sit in a
+directory together, and whoever ripped them meant them as a record. This lists
+one level of the tree at a time, the way a file browser does. `tracks` counts
+what is directly in a folder and `descendants` what is below it too, so one
+album and one artist says the folder is a record and several says it is a
+shelf — or that the tags are wrong, which is why you are looking.
+
+**`/v1/duplicates`** finds the same recording more than once. A library merged
+from a few sources has them, and they are invisible from a search: the copies
+sort next to each other, look identical, and nothing counts them. What counts
+as the same recording is yours to say, because it depends on what went wrong —
+two rips of one album duplicate on artist and title, a compilation that also
+appears as its own album duplicates on those but not on album, a file copied
+twice duplicates on `size` too — so `by` is a field list rather than a rule.
+Nothing is deleted: one copy is usually the better rip, so this offers the
+grouping and the evidence, and `wasted` says what keeping one of each would
+free.
+
+Every group from every one of these carries a `query` that reselects exactly
+it, so going from a result to an operation on it is one more call rather than a
+list of ids.
+
+`GET /v1/values/{field}` is the exception to paging: a capped list of the
+most-used values of one field, for autocomplete, most-used first.
+`GET /v1/stats` reports the totals and — the useful part for maintenance — how
+many tracks are missing each field, which is where the work is.
 
 ### Editing
 
-The browser is a client of the server, so it can run on your laptop against
-the NAS rather than only over SSH. It holds a window of the library rather than
-all of it, fetches pages as you scroll, and search is debounced so a keystroke
-does not mean a round trip.
+A `PATCH` is sparse: fields absent from the body are left alone, and fields
+present with `null` are cleared. Setting a field to the value it already has
+does not rewrite the file, so a repeated request is free rather than churning
+the library.
 
-Press `?` in the browser for the full key list. The short version:
+```sh
+curl -X PATCH localhost:8467/v1/tracks/$ID \
+  -H 'If-Match: 5518755346f5ca46' -H 'Content-Type: application/json' \
+  -d '{"artist": "Elvis Presley", "comment": null}'
+```
 
-- `/` search, updating as you type
-- `space` mark a track, `v` mark a range, `a` mark everything matching
-- `e` open the editor for the marked tracks, or for the one under the cursor
-- `tab` move between fields, `⏎` edit the focused one
-- typing offers completions drawn from values already in your library; `tab`
-  accepts the highlighted one
-- `⏎` commits the field to **every** marked track at once
-- `u` / `^r` undo and redo, one step per edit no matter how many tracks it hit
-- `^s` write every change back to disk
-- `R` refresh after editing has made the view stale
+Edits write through: a `PATCH` writes the tag to the file and returns. There is
+no pending state to commit, and therefore none for a background scan to lose.
 
-Nothing touches disk until `^s`. Changed tracks carry a `•` until then, and
-marking everything with `a` selects by query rather than by listing tracks, so
-it costs the same whether it matches ten or a hundred thousand.
+Edits are applied per field, so saving a track writes only the fields that
+actually changed and leaves every other tag in the file exactly as it was.
+Where a format reserves padding for this (ID3v2, FLAC, MP4 `free` atoms) the
+tag is rewritten in place without moving the audio, so correcting a title in a
+40 MB FLAC writes a few kilobytes rather than 40 MB. When the tag has to grow
+beyond its padding the file is rebuilt alongside the original and renamed over
+it, so an interrupted write cannot leave a damaged track.
 
-Each save sends the version the track was read at. If something else changed
-the same file in between — a phone, another terminal — that edit is reported
-and kept pending rather than overwriting the other one.
+#### Editing safely from more than one place
 
-Edits are applied per field: saving a track writes only the fields you actually
-changed and leaves every other tag in the file exactly as it was. Where a
-format reserves padding for this (ID3v2, FLAC, MP4 `free` atoms) the tag is
-rewritten in place without moving the audio, so correcting a title in a 40 MB
-FLAC writes a few kilobytes rather than 40 MB. When the tag has to grow beyond
-its padding the file is rebuilt alongside the original and renamed over it, so
-an interrupted write cannot leave a damaged track.
+Every track carries a `version`. Send it back as `If-Match` and a mismatch
+returns `409`, which is what stops an edit made on a phone silently
+overwriting one made in the terminal a moment earlier. It is honoured on
+`PATCH`, on `DELETE`, on a rename, and on the artwork writes — a cover is a
+write to the file like any other.
 
-#### Pulling the artist out of a title
+The version has to be a real one for that to mean anything, and file size and
+modification time alone are not. Every tag format reserves padding, so
+replacing a value with one of a different length — or a 7 KB cover with a
+1.5 KB one — routinely leaves the file exactly as long as it was, and the
+modification time is recorded in whole seconds. Two writes inside one second
+that leave the same length are indistinguishable from those two facts. So the
+version also carries a count of the writes this server has made to that path,
+which covers the case the guarantee is about: both clients are talking to this
+server. A file changed by another program on the machine is still only visible
+through size and time, and a scan is what reconciles that.
+
+The same version is the `ETag`, so a conditional `GET` works on a track and on
+its cover:
+
+```sh
+curl -H 'If-None-Match: "5518755346f5ca46"' localhost:8467/v1/tracks/$ID  # 304
+```
+
+#### What is actually in the file
+
+`GET /v1/tracks/{id}/tags` lists a file's raw metadata rather than the
+catalogue's reading of it: the native keys, what each one means, its size, and
+whether a strip would keep it. It is the pre-flight for `POST /v1/strip` — the
+question there is not what the track says but what is *in* it, which is where
+the iTunes purchase account and the 300 KB of ratings a ripper left behind
+turn up.
+
+### Pulling the artist out of a title
 
 A compilation says Various Artists in the artist tag, because that is what the
 album is, and then has nowhere to put the performer except the title:
@@ -351,37 +253,140 @@ first one that fits, so `Jay-Z - 99 Problems` splits after the surname and
 template does not fit is counted as `unmatched` and left alone.
 
 Run it with `dryRun` first. The result carries worked examples and the count
-that did not fit, which together say whether the template is right — and unlike
-a strip, an edit takes no backup.
+that did not fit, which together say whether the template is right. It journals
+by default, so a run that turns out wrong is one `POST /v1/jobs/{id}/undo`
+away.
 
-In the browser this is the **Split** button beside the title, which appears
-only when the artist reads Various Artists. For one song it fills the fields in
-and waits for you to save; for a selection it runs as a job.
+### Renaming files from their tags
+
+`POST /v1/tracks/rename` is the other half of the split. A split reads a
+filename's worth of information out of a title; this writes the tags back out
+into the name, and it is what a library looks like once the tags are right:
+`01 Blue Suede Shoes.mp3` under `Elvis Presley/The Sun Sessions`, rather than
+`track01.mp3` under `unsorted`.
+
+```sh
+curl -X POST localhost:8467/v1/tracks/rename -H 'Content-Type: application/json' -d '{
+  "selector": {"all": true},
+  "template": "$albumartist/$album/$track $title",
+  "dryRun": true
+}'
+```
+
+The template is the destination path, resolved against the **library root** the
+track sits under rather than the track's own directory — so a template that
+files by artist and album can rescue a track from the wrong folder rather than
+nesting the right one inside it. Missing directories are created. The extension
+is never part of it: a rename may not change a file's container, so the one the
+file has is appended to whatever the template produces.
+
+Three things happen automatically, because a template that had to express them
+would be unreadable:
+
+- **`$track` and `$disc` are padded to two digits.** Without that a directory
+  listing puts track 10 before track 2, and putting the number first stops
+  meaning anything.
+- **A separator inside a value is replaced.** An artist of "AC/DC" under
+  `$artist/$album` would otherwise file the album under "DC" inside a folder
+  called "AC".
+- **The characters Windows refuses are replaced too.** A library on a NAS is
+  read over SMB as often as not, and a name it cannot represent is a file that
+  does not appear.
+
+`$albumartist` falls back to the artist, because that is the key `/v1/albums`,
+`/v1/artists` and `/v1/folders` all group on — filing by album artist is that
+grouping written to disk, and in a library where most files never had one, a
+stricter reading would call most of it incomplete.
+
+A track missing a field the template names is counted in `incomplete` and left
+alone: that is the number that says whether the tags are ready. Two tracks
+wanting the same destination are counted in `collisions`, whose answer is a
+better template — usually one carrying `$disc` or `$track` — rather than a
+retry.
+
+**Run it with `dryRun` first.** `samples` shows what it would do to real files,
+which is the only way to tell a good template from one that moves everything
+somewhere wrong. It journals by default, so a bad run can be undone — but a
+rename undone is a second pass over the library, which is why the dry run
+matters more here than anywhere else.
+
+### Undo
+
+A strip has always been recoverable, because tags removed from a file cannot be
+got back from anywhere else. Everything else that wrote across a selection had
+the same problem and no answer: a batch edit that set the artist on two
+thousand files wrote them and forgot what they said, so a mistake made from a
+phone was unrecoverable from anywhere.
+
+A **journal** is the answer, and it is one mechanism in every case: before a
+file is written, record what it held. What is recorded differs — removed frames
+for a strip, previous values for an edit, the old cover for an artwork paste,
+the old path for a rename — but the file, the addressing and the restore are
+one thing.
+
+```sh
+JOB=$(curl -sX POST localhost:8467/v1/tracks/batch -H 'Content-Type: application/json' \
+  -d '{"selector":{"all":true},"set":{"genre":"Rockabilly"}}' | jq -r .id)
+
+curl -X POST localhost:8467/v1/jobs/$JOB/undo     # put it all back
+```
+
+| Operation | Journals |
+| --- | --- |
+| `POST /v1/tracks/batch` | by default |
+| `POST /v1/tracks/split` | by default |
+| `POST /v1/tracks/rename` | by default |
+| `POST /v1/strip` | on `"backup": true` |
+| `POST /v1/artwork/batch` | on `"backup": true` |
+
+The two defaults differ because the costs do. An edit's journal is a line of
+text per changed file, and a batch edit is the ordinary way to work here, so
+the recovery has to be there without being asked for. An artwork journal holds
+the images it replaced, so undoing a paste across ten thousand tracks is worth
+the space and doing it every time is not.
+
+A job that journalled carries a `backupId`, and its presence is what says the
+job can be undone. What was already done is what gets undone: a job cancelled
+halfway is still undoable for the files it reached. `GET /v1/backups` lists the
+journals, `GET /v1/backups/{id}` describes what one holds without applying it,
+and `DELETE /v1/backups/{id}` discards it — nothing expires them, because
+expiring the record of a change nobody has noticed yet is the wrong default.
+
+This is not a stack. Undoing an undo is possible, since the undo is a restore
+rather than a journalled edit, which is also why redo is not offered. What it
+is is the answer to "that was the wrong two thousand files".
 
 ### Cover art
 
-Art is moved around with a clipboard: copy one image, then paste it onto as
-many tracks as you like. The clipboard is on disk, so a cover copied in the
-browser can be pasted from the command line and the other way round.
+Art is moved around with a **server-side clipboard**: copy one image, then
+paste it onto as many tracks as you like. It lives on disk rather than in a
+client, which is the point — a cover copied in the terminal can be pasted from
+a phone and the other way round.
 
 ```sh
-yamo art                                   # what art the library has
-yamo art -copy cover.jpg                   # put an image on the clipboard
-yamo art -copy "01 track.flac"             # ...or lift one off a track
-yamo art -paste artist:elvis -apply        # write it to matching tracks
-yamo art -from-folder -apply               # embed the folder.jpg beside each track
-yamo art -export ~/covers                  # write covers out as files
-yamo art -remove 'album:demos' -apply      # take art off
+curl -X PUT --data-binary @cover.jpg localhost:8467/v1/clipboard/artwork
+curl -X PUT localhost:8467/v1/clipboard/artwork/from-track/$ID
+
+curl -X POST localhost:8467/v1/artwork/batch -H 'Content-Type: application/json' -d '{
+  "selector": {"query": "album:\"sun sessions\""},
+  "source": "clipboard"
+}'
 ```
 
-In the browser: `y` copies the cover under the cursor, `p` pastes it onto the
-marked tracks, and `A` opens the art panel — which draws the cover as an actual
-image in iTerm2, Kitty, WezTerm and Ghostty, and falls back to text everywhere
-else. Unlike tag edits, artwork is written straight to disk rather than held
-for `^s`: holding several hundred covers in memory to write later would cost
-more than the library itself.
+`source` is `clipboard`, `upload`, `folder` or `remove`. **`folder` is usually
+the one you want**: it embeds the `cover.jpg` or `folder.jpg` sitting beside
+each track, which is how a downloaded library normally stores art and the usual
+reason none of it appears on a phone. Each directory is read once, not once per
+track.
 
-`yamo art` with no other flag reports what is there, grouped by image:
+`POST /v1/artwork/export` goes the other way, writing the embedded covers back
+out beside the music — for the media server poster, the file browser thumbnail
+and everything else that reads a directory rather than a tag. One image per
+directory, since an album's tracks carry the same cover, and the extension
+follows the image rather than the request: a PNG asked for as `cover.jpg` is
+written as `cover.png`.
+
+`GET /v1/artwork/summary` reports what is there, grouped by image:
 
 ```
   tracks  image                           embedded  example album
@@ -390,24 +395,30 @@ more than the library itself.
 
 That grouping is the useful part. Measured on a real library, **85% of
 embedded artwork is duplicate bytes** — the same cover repeated once per track.
+It takes a full selector rather than only a query, because it is the report you
+read before deciding what to change, and the thing you then change is named by
+a selector.
+
+`GET /v1/tracks/{id}/artwork?size=N` returns a scaled copy. An album grid is
+what it is for: embedded covers run to 1500×1500 and half a megabyte, so forty
+tiles is twenty megabytes to draw forty postage stamps.
 
 Two things to know:
 
 - **Embedding art rewrites the file.** A cover is far larger than the padding
   any format reserves, so unlike every other edit the audio has to move. Tracks
   whose art already matches are skipped, which makes a repeated run free.
-- **`-from-folder` is usually what you want.** It looks beside each track for
-  `cover.jpg`, `folder.jpg`, `front.jpg` and the like — how a downloaded
-  library normally stores art, and the usual reason none of it appears on a
-  phone. The directory is scanned once per album, not once per track.
+- **Artwork writes straight through**, and is not held pending the way a
+  client may hold field edits: several hundred covers kept in memory to write
+  later would cost more than the library itself.
 
 #### Finding covers on Discogs
 
-When a library has no art to move around, the browser's Artwork tab can search
-Discogs for it. It searches **masters** — a master is the album, one entry
+When a library has no art to move around, `GET /v1/discogs/search` finds some.
+It searches **masters** — a master is the album, one entry
 covering every pressing and reissue, so a release search would offer the same
-sleeve twenty times. Picking a cover embeds it in whatever is selected, and a
-release with more than one picture can be opened to reach the back cover, the
+sleeve twenty times. `GET /v1/discogs/masters/{id}` returns every
+picture on one, so a release with more than one reaches the back cover, the
 inner sleeve and the disc.
 
 No account is needed. Three facts about the public API shape the whole thing,
@@ -419,8 +430,9 @@ and they are worth knowing before changing any of it:
   per candidate.
 - **The rate limit is 25 a minute, per IP.** With the point above, one search
   spends nine of them. That is why candidates are capped, why masters are
-  cached, and why the panel shows what is left rather than failing silently a
-  minute later. `-discogs-token` raises it to 60 and puts covers in the search
+  cached, and why `rateRemaining` — in the body and in a `RateLimit-Remaining`
+  header — is reported rather than letting a client fail silently a minute
+  later. `-discogs-token` raises it to 60 and puts covers in the search
   response itself, making a search cost one request.
 - **The image host sends no CORS header.** A browser can display one of those
   URLs in an `<img>` but cannot read its bytes, so the download happens on the
@@ -433,28 +445,27 @@ applying it to one track or to an album reuses the paste that already exists.
 `-no-discogs` turns the lookup off, leaving the server making no outbound
 requests at all.
 
-The Details tab asks Discogs a cheaper question. **Populate from Discogs**, the
-button beside the year field, is enabled once a song has both an album and an
-artist, and fills in the genre and
-the year from the leading match. Only images are missing from an unauthenticated
+`GET /v1/discogs/album` asks a cheaper question: the year and the genre of an
+album, from the leading match. Only images are missing from an unauthenticated
 search, so this costs one request rather than nine, and it reads the master for
-a second only when the hit came back with neither field. It fills the fields in
-rather than writing them: nothing is saved until OK.
+a second only when the hit came back with neither field. It returns them rather than
+writing them; applying them is an ordinary batch edit.
 
 ### Stripping
 
-`yamo strip` removes every tag that is not on a keep list, leaving a uniform
-set of metadata across the library.
+`POST /v1/strip` removes every tag that is not on a keep list, leaving a
+uniform set of metadata across the library.
 
 ```sh
-yamo strip                                    # dry run over everything
-yamo strip artist:elvis                       # dry run over a subset
-yamo strip -list                              # print the keep list
-yamo strip -backup ~/strip.jsonl -apply       # do it, reversibly
-yamo restore -backup ~/strip.jsonl -apply     # put it all back
+curl -X POST localhost:8467/v1/strip -H 'Content-Type: application/json' -d '{
+  "selector": {"all": true},
+  "dryRun": false,
+  "backup": true
+}'
 ```
 
-It is a **dry run unless `-apply` is given**, and the dry run reports exactly
+It **defaults to a dry run**: an operation that permanently discards data
+across a library should have to be asked for twice. The dry run reports exactly
 what would go, grouped by format and key, with sample values:
 
 ```
@@ -510,22 +521,24 @@ namespace whose name is not recognised as something else. The namespace alone
 cannot decide, because Picard writes MusicBrainz tags there too.
 
 Note that `apID` holds the Apple ID that bought the file, which is an email
-address. Drop it on its own with `-keep` minus `itunes`, or keep the rest and
-accept it.
+address. Drop it on its own with a `keep` list minus `itunes`, or keep the rest
+and accept it.
 
 The date is written to `TDRL` as well as the year frame. ID3 separates when a
 recording was made from when it was released and MP4 does not, so an MP3
 carrying only a year frame reports no release date at all while an M4A of the
 same song reports one. Writing both makes the two formats agree.
 
-Change the list with `-keep`, extend it with `-also`. Names may be canonical
+Replace the list with `keep`, extend it with `also`. Names may be canonical
 (`albumartist`) or native to any format (`TPE2`, `ALBUMARTIST`, `aART`) — you
-should not have to translate a list you already have. `yamo strip -list`
-prints the full vocabulary.
+should not have to translate a list you already have.
+`capabilities.defaultKeepTags` is the starting point, and
+`GET /v1/tracks/{id}/tags` shows what one file actually carries and which of it
+the default list would keep.
 
 #### Putting values where they belong
 
-`-normalize` additionally rewrites kept fields a file does not hold the way
+`normalize` additionally rewrites kept fields a file does not hold the way
 this tool writes them: an ID3v2.2 frame, a genre stored as `(19)`, an MP4
 `gnre` atom, a Vorbis `PERFORMER`, a year with no `TDRL` beside it, a date
 carrying more than the year. The values do not change, only the form they are
@@ -549,9 +562,9 @@ and external identifiers. Two consequences are worth knowing beforehand:
   gapless data in `COMM:iTunSMPB` is kept while an ordinary comment beside it,
   under the same frame id, goes. Volume normalisation (`iTunNORM`) is dropped —
   ReplayGain has superseded it and it can be recomputed. Keep it with
-  `-also soundcheck`.
+  `"also": ["soundcheck"]`.
 - **MusicBrainz and AcoustID identifiers are not regenerable** from the audio.
-  `-also musicbrainz,acoustid` keeps them.
+  `"also": ["musicbrainz", "acoustid"]` keeps them.
 
 Because the metadata only ever shrinks, the rewrite happens inside the padding
 each format reserves: verified on real files, tag and file sizes come out
@@ -564,6 +577,357 @@ artist and kept.
 
 WMA, WAV and AIFF are read but not written, so they are counted and skipped
 rather than silently ignored.
+
+### Keeping several clients in step
+
+`GET /v1/events` is a `text/event-stream` of every change. An edit made on a
+phone pushes `tracks.changed`, and the terminal drops those rows from its cache
+instead of polling for them.
+
+```sh
+curl -N localhost:8467/v1/events
+```
+
+Every event carries an `id:` line of `<epoch>:<seq>`, which a browser's
+`EventSource` sends back as `Last-Event-ID` when it reconnects by itself.
+Anything else can send that header by hand, or pass `?lastEventId=`. A resumed
+stream replays what was missed before anything new; when it cannot — the events
+have aged out of the window, or the server has restarted — the first event is a
+`stream.gap` instead, and a client that gets one should refetch rather than
+trust its cache. The epoch is why the id is not a bare number: a sequence
+resets when the process does, so event 12 from this run and event 12 from the
+last are different events.
+
+A subscriber that falls behind *while connected* still loses events rather than
+blocking the write that produced one. Resuming covers a dropped connection, not
+a client that cannot keep up.
+
+### Access and discovery
+
+Loopback by default, where no token is needed. Binding anywhere else requires
+one — generated on first run, printed once, kept beside the catalogue.
+
+`GET /v1/capabilities` is the one operation served **without** a token, and
+`authRequired` is why: a client needs to know whether credentials are required
+before it has any to present. Nothing in it describes the library — no roots,
+no counts, nothing that says what music is on the machine — which is what makes
+that safe.
+
+```sh
+curl -s localhost:8467/v1/capabilities | jq '{version, authRequired, features, limits}'
+```
+
+It answers three things nothing else can. **Which formats this build writes** —
+`Track.writable` says a particular file cannot be written, but only once you
+have found it, so warning before an edit rather than after it needs this.
+**Whether the Discogs lookup is configured**, which otherwise takes a search
+and a `503` to establish. **What `limit` is capped to**, which the paging rules
+otherwise leave you to discover by reading a response back. It also carries the
+field, sort and job-kind vocabularies, so a client builds its pickers from the
+server rather than from a copy of this document that will fall behind.
+
+`GET /v1/me` says whether the token you are holding works — a question a client
+otherwise has to provoke a real failure to ask.
+
+Cross-origin browser requests are only permitted when a token is set. A server
+on loopback with permissive headers could be driven by any web page you
+happened to visit, and this API rewrites music files.
+
+### Errors
+
+Every failure is a JSON body with a `code` a client can branch on, and the
+codes are distinct where the right response differs. A rename onto an existing
+name is `exists` rather than `conflict`, because the answer is "choose another
+name" rather than "re-read and retry". A `count_mismatch` carries `expected`
+and `actual`. A `scan_running` names the job already going.
+
+| Status | When |
+| --- | --- |
+| `400` | The request was malformed, or named an unknown field |
+| `401` | No bearer token, or the wrong one |
+| `404` | No such track, job, backup or resource |
+| `409` | `conflict`, `exists`, `count_mismatch` or `scan_running` |
+| `413` | An uploaded cover above `limits.maxImageBytes` — refused, never truncated |
+| `422` | `unwritable`: this build reads the format but cannot write it |
+| `429` | The Discogs per-minute budget is spent; `Retry-After` says how long |
+| `503` | The Discogs lookup is turned off on this server |
+
+### Endpoint reference
+
+The schema at `/openapi.yaml` is authoritative and carries the full description
+of every parameter. This is the map.
+
+| | |
+| --- | --- |
+| **Server** | |
+| `GET /v1/capabilities` | What this build can do. No token required |
+| `GET /v1/me` | Whether the token works |
+| **Tracks** | |
+| `GET /v1/tracks` | Search, sort and page |
+| `GET /v1/tracks/{id}` | One track. `ETag`, `If-None-Match` |
+| `PATCH /v1/tracks/{id}` | Edit fields. `If-Match` |
+| `DELETE /v1/tracks/{id}` | Delete the file. `If-Match` |
+| `GET /v1/tracks/{id}/tags` | The file's raw metadata |
+| `GET /v1/tracks/{id}/audio` | The audio itself, ranges and all |
+| `POST /v1/tracks/{id}/rename` | Move one file |
+| **Browse** | |
+| `GET /v1/albums` | Albums, sorted and paged |
+| `GET /v1/artists` | Artists, sorted and paged |
+| `GET /v1/folders` | One level of the directory tree |
+| `GET /v1/duplicates` | The same recording more than once |
+| `GET /v1/values/{field}` | Distinct values, for autocomplete |
+| `GET /v1/stats` | Counts, totals, and what is missing |
+| **Batch** | |
+| `POST /v1/tracks/batch` | One set of changes across a selection |
+| `POST /v1/tracks/split` | Pull the fields a title carries into their own tags |
+| `POST /v1/tracks/rename` | Rename a selection after its tags |
+| `POST /v1/strip` | Remove every tag not on a keep list |
+| `GET /v1/backups` | The undo journals |
+| `GET /v1/backups/{id}` | What one journal holds |
+| `DELETE /v1/backups/{id}` | Discard a journal |
+| `POST /v1/restore` | Put a journal back |
+| **Artwork** | |
+| `GET /v1/tracks/{id}/artwork` | The cover, optionally scaled with `?size=` |
+| `PUT /v1/tracks/{id}/artwork` | Replace it. `If-Match` |
+| `DELETE /v1/tracks/{id}/artwork` | Remove it. `If-Match` |
+| `POST /v1/artwork/batch` | Set or clear art across a selection |
+| `POST /v1/artwork/export` | Write embedded covers out as `cover.jpg` |
+| `GET /v1/artwork/summary` | Group identical covers across a selection |
+| `GET·PUT·DELETE /v1/clipboard/artwork` | The server-side clipboard |
+| `PUT /v1/clipboard/artwork/from-track/{id}` | Copy a track's cover to it |
+| `PUT /v1/clipboard/artwork/from-url` | Copy a Discogs cover to it |
+| **Discogs** | |
+| `GET /v1/discogs/search` | Find album covers |
+| `GET /v1/discogs/masters/{id}` | Every image on a master |
+| `GET /v1/discogs/album` | Look an album up for its year and genre |
+| **Jobs and scanning** | |
+| `GET /v1/jobs` | Filtered, paged |
+| `GET /v1/jobs/{id}` | One job |
+| `DELETE /v1/jobs/{id}` | Cancel it |
+| `POST /v1/jobs/{id}/undo` | Reverse it |
+| `GET /v1/jobs/{id}/events` | Stream its progress |
+| `GET /v1/events` | Stream every change. Resumable |
+| `GET /v1/scans` | Whether a scan is running |
+| `POST /v1/scans` | Bring the catalogue up to date |
+
+Outside `/v1`, and outside the schema: `GET /healthz`, `GET /openapi.yaml`,
+`GET /openapi.json` and `GET /docs`, none of which require a token and none of
+which say anything about the library.
+
+## Running the server
+
+`yamo serve` owns the catalogue and the music files; nothing else opens them.
+
+```sh
+yamo serve                                 # loopback, no token needed
+yamo serve -listen 0.0.0.0:8467            # reachable on the network
+yamo serve -listen unix:///tmp/yamo.sock
+yamo serve -root /volume1/music -rescan-every 1h
+```
+
+### Keeping up with the files
+
+Nothing watches the filesystem. Music added or edited by anything other than
+this server — an album copied over SMB, tags changed in another program — is
+invisible until a scan is asked for. `POST /v1/scans` asks for one; a scan
+reuses every entry whose size and modification time are unchanged, so a refresh
+costs a stat per file rather than a read.
+
+`-rescan-every` puts that on a timer. It runs the same incremental scan, so an
+unchanged library costs a stat per file; an hour is a sensible starting point,
+and a minute is the shortest accepted. A tick arriving while a scan is still
+running is skipped rather than queued, and the roots it scans are the
+catalogue's own.
+
+`GET /v1/stats` reports the interval and when the next one is due, so a client
+can say how current its numbers are; `capabilities.features.rescan` says
+whether the timer is on at all. Unset — the default — nothing is scanned unless
+asked, which is the behaviour to assume unless the stats say otherwise.
+
+Posting a second scan while one runs fails with `409` and `scan_running` rather
+than returning the running job: two concurrent scans would each walk the tree,
+each build a whole catalogue, and whichever finished last would silently win.
+The running job's id is in the error.
+
+Deleted files disappear from the catalogue on the next scan. Directories that
+never hold music (`@eaDir`, `#recycle`, `lost+found`, dot-directories) are
+skipped, as are AppleDouble `._` sidecars.
+
+### Install
+
+```sh
+make nas                       # builds dist/yamo-linux-{amd64,arm64}
+scp dist/yamo-linux-amd64 nas:/usr/local/bin/yamo
+```
+
+UGREEN NASync boxes are x86-64, so `yamo-linux-amd64` is the one you want.
+Both binaries are static and depend on nothing on the target.
+
+For local use: `make install` or `go install ./cmd/yamo`.
+
+### Docker
+
+The image is `ghcr.io/remy/yamo`, built by
+[`docker.yml`](.github/workflows/docker.yml) for `linux/amd64` and
+`linux/arm64` on every push to `main` (`:latest`) and every `vX.Y.Z` tag
+(`:X.Y.Z`, `:X.Y`, `:X`). It runs `yamo serve`; the terminal and the rest of
+the client commands are still in the binary if you `docker compose exec` in,
+but the container's job is to be the API server.
+
+```sh
+cp .env.example .env      # fill in YAMO_TOKEN and MUSIC_DIR
+docker compose up -d
+docker compose logs -f    # first run: confirms the initial scan under -root
+```
+
+That's [`docker-compose.yml`](docker-compose.yml) as committed: it binds the
+container's `/data` (the catalogue) and `/music` (the library, read-write —
+the API edits tags in place) to the host, and passes `YAMO_ROOT=/music` so
+the server scans on every start — see `YAMO_ROOT` in the table below for
+what that costs on a restart where nothing changed.
+
+The `user:` line is not decoration. The image is distroless `:nonroot`, so
+its default is uid 65532 — an account that exists inside the container and
+owns nothing on your host — and a bind-mounted `./data` owned by anyone else
+gives that uid no write permission. The symptom is the server starting fine
+and then failing on every save:
+
+```
+yamo: could not save the catalogue: open /data/.yamo-3876691773.tmp: permission denied
+```
+
+Set `PUID`/`PGID` in `.env` to the account that owns the bind-mounted
+directories (`id -u` and `id -g`), which is also the account that has to own
+the music files for tag edits to land. The same uid needs write access to
+`/music`, not just `/data`.
+
+A token is not optional here the way it is for `yamo serve` on a bare
+machine: binding `0.0.0.0` — the only address reachable through Docker's
+port mapping — trips the same "not loopback" check either way, so the
+compose file refuses to start without `YAMO_TOKEN` set (`docker compose up`
+fails fast with a clear error rather than the container looping on a
+generated token nothing outside it can read). Generate one with
+`openssl rand -hex 24`.
+
+#### Environment variables
+
+The flags most worth setting without typing them are the ones with an
+environment variable fallback, because a container's configuration is
+environment variables and volumes, not command-line flags typed by a
+person. `YAMO_ROOT` is the one worth calling out for Docker specifically:
+with no one around to run `yamo scan` by hand after `docker compose up`, it
+scans on every start instead — a no-op cost (a stat per file, not a
+re-read) once the library is caught up, which is what makes it safe to
+leave set rather than something to remember to run once.
+
+| Variable | Flag | Used by | Meaning |
+| --- | --- | --- | --- |
+| `YAMO_CATALOG` | `-catalog` | `serve` | Catalogue file path. Defaults to the user cache directory outside Docker; the image sets it to `/data/catalog.db`. |
+| `YAMO_ROOT` | `-root` (repeatable) | `serve` | Comma-separated directories to scan on startup, in the background, without blocking the server from accepting requests. Unset means an empty new catalogue stays empty until something scans it. |
+| `YAMO_TOKEN` | `-token` | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back. |
+| `YAMO_RESCAN_EVERY` | `-rescan-every` | `serve` | Optional. Rescans the catalogue's roots on this interval (`1h`, `30m`) — the same incremental scan, so a stat per file on an unchanged library. Unset, nothing is scanned unless asked: nothing watches the filesystem. A minute is the shortest accepted. |
+| `YAMO_DISCOGS_TOKEN` | `-discogs-token` | `serve` | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower. |
+| `YAMO_SERVER` | `-server` | every client command | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
+| `YAMO_NO_IMAGES` | — (no flag) | the terminal browser | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands. |
+
+## Sample clients
+
+Everything from here down is a **client of the API above**. None of it is
+privileged: the terminal browser opens no files and touches no catalogue, and
+neither does `yamo find`. They exist to show the API being used, and because
+they are genuinely the fastest way to work on a library over SSH.
+
+```sh
+yamo serve                   # the API server; everything else is a client
+yamo scan /volume1/music     # build the catalogue
+yamo                         # browse and edit, in the terminal
+yamo find artist:elvis       # query from a script
+yamo info                    # what is in the library
+yamo help                    # usage; `yamo help scan` for one command
+```
+
+Start the server first, or from a systemd unit or launchd plist so it comes up
+with the machine. Every command takes `-h`, and `yamo help <command>` prints
+the same thing. Usage goes to stdout so it pipes into a pager; errors go to
+stderr.
+
+### The terminal browser
+
+```
+┌─ yamo  /volume1/music ─────────────────────────────────────────────────────┐
+│ / artist:elvis album:"sun sessions"                     12 selected · 12 / 98,412 │
+├──┬───────────────┬──────────────────┬─────────────────────┬────┬────┬────────┤
+│  │Artist         │Album             │Title                │   #│Year│  Time  │
+├──┼───────────────┼──────────────────┼─────────────────────┼────┼────┼────────┤
+│✓•│Elvis Presley  │The Sun Sessions  │Blue Moon of Kentucky│   1│1956│  2:04  │
+│✓•│Elvis Presley  │The Sun Sessions  │I Don't Care         │   2│1956│  2:41  │
+└──┴───────────────┴──────────────────┴─────────────────────┴────┴────┴────────┘
+```
+
+Because it is an HTTP client it runs on your laptop against the NAS rather than
+only over SSH. It holds a window of the library rather than all of it, fetching
+pages as you scroll, and search is debounced so a keystroke does not mean a
+round trip.
+
+Press `?` for the full key list. The short version:
+
+- `/` search, updating as you type
+- `space` mark a track, `v` mark a range, `a` mark everything matching
+- `e` open the editor for the marked tracks, or for the one under the cursor
+- `tab` move between fields, `⏎` edit the focused one
+- typing offers completions from `GET /v1/values/{field}` — values already in
+  your library; `tab` accepts the highlighted one
+- `⏎` commits the field to **every** marked track at once
+- `u` / `^r` undo and redo, one step per edit no matter how many tracks it hit
+- `^s` write every change back to disk
+- `y` copy the cover under the cursor, `p` paste it onto the marked tracks
+- `A` the art panel, which draws the cover as an actual image in iTerm2, Kitty,
+  WezTerm and Ghostty and falls back to text elsewhere
+- `R` refresh after editing has made the view stale
+
+Nothing touches disk until `^s`. Changed tracks carry a `•` until then, and
+marking everything with `a` selects by query rather than by listing tracks — so
+it costs the same whether it matches ten tracks or a hundred thousand, for
+exactly the reason a `Selector` does.
+
+Each save sends the version the track was read at, so if something else changed
+the same file in between — a phone, another terminal — that edit is reported and
+kept pending rather than overwriting the other one. The browser's `u` is its
+own in-memory stack, which is a different thing from `POST /v1/jobs/{id}/undo`:
+one is a client convenience for edits it made itself, the other is on the
+server and works from anywhere.
+
+The **Split** button beside the title appears only when the artist reads
+Various Artists. For one song it fills the fields in and waits for you to save;
+for a selection it runs as a job. The **Artwork** tab searches Discogs, and
+**Populate from Discogs** beside the year fills in the year and genre.
+
+### The command line
+
+```sh
+yamo scan -status                     # is one running?
+yamo scan /volume1/music              # first run, or refresh
+yamo scan                             # refresh whatever the catalogue covers
+yamo scan -full /volume1/music        # ignore the cache, re-read everything
+yamo scan -exclude Podcasts /volume1/music
+
+yamo find artist:elvis                # query from a script
+yamo find -format path artist:elvis   # ...as a playlist
+yamo find -- -genre:live artist:elvis # a query starting with - needs --
+
+yamo art                              # what art the library has
+yamo art -copy cover.jpg              # put an image on the clipboard
+yamo art -paste artist:elvis -apply   # write it to matching tracks
+yamo art -from-folder -apply          # embed the folder.jpg beside each track
+yamo art -export ~/covers             # write covers out as files
+
+yamo strip                                    # dry run over everything
+yamo strip -backup ~/strip.jsonl -apply       # do it, reversibly
+yamo restore -backup ~/strip.jsonl -apply     # put it all back
+```
+
+The catalogue lives in your cache directory (`yamo info` prints the path).
+Override it with `-catalog PATH` or `YAMO_CATALOG`.
 
 ## Format support
 
@@ -624,6 +988,13 @@ tools/genlib/      synthetic library generator, for benchmarking
 tools/tuidrive/    drives the interface in a pty, for testing the rendering
 ```
 
+`internal/library` is where the operations live, one file per idea:
+`journal.go` and `restore.go` are the undo mechanism, `renametmpl.go` the
+filename templates, `duplicates.go` and `folders.go` the two browse views,
+`rawtags.go` the pre-strip listing, `thumb.go` the scaler, `capabilities.go`
+what the build can do, and `version.go` the note on why a version is more than
+a size and a timestamp.
+
 ## Development
 
 ```sh
@@ -648,6 +1019,15 @@ To look at the interface without a terminal:
 python3 -m venv .venv && ./.venv/bin/pip install pyte
 ./.venv/bin/python tools/tuidrive/drive.py "./dist/yamo" 120x30 '/artist:elvis<enter>' 'e'
 ```
+
+## Why Go
+
+The work here is almost entirely file IO: open a hundred thousand files, read a
+few kilobytes from each, close them. Go gives goroutine-per-file concurrency
+that saturates the IO queue without any async plumbing, cross-compiles to a
+single static binary for the NAS with one environment variable, and has the
+strongest terminal-UI ecosystem going. A faster language would not help,
+because nothing here is CPU-bound.
 
 ## Limitations
 
