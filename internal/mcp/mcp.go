@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/library"
 )
 
@@ -153,15 +154,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) dispatch(ctx context.Context, method string, params json.RawMessage) (any, *rpcError) {
+	// The role rides on the context, put there by whatever authenticated the
+	// request. Nothing recorded means nothing to restrict — a server with no
+	// token configured, which is the loopback default.
+	role := auth.RoleOf(ctx)
+
 	switch method {
 	case "initialize":
-		return s.initialize(params), nil
+		return s.initialize(params, role), nil
 	case "ping":
 		return map[string]any{}, nil
 	case "tools/list":
-		return s.listTools(), nil
+		return s.listTools(role), nil
 	case "tools/call":
-		return s.callTool(ctx, params)
+		return s.callTool(ctx, role, params)
 	}
 	return nil, &rpcError{codeMethodNotFound, fmt.Sprintf("unknown method %q", method)}
 }
@@ -173,7 +179,7 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 // not been told writes are dry runs by default will report work it has not
 // done — so both are said here, once, rather than repeated into twenty tool
 // descriptions.
-func (s *Server) initialize(params json.RawMessage) map[string]any {
+func (s *Server) initialize(params json.RawMessage, role auth.Role) map[string]any {
 	var p struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
@@ -184,6 +190,11 @@ func (s *Server) initialize(params json.RawMessage) map[string]any {
 		version = p.ProtocolVersion
 	}
 
+	guidance := instructions
+	if !role.CanWrite() {
+		guidance += readOnlyNote
+	}
+
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
@@ -192,7 +203,7 @@ func (s *Server) initialize(params json.RawMessage) map[string]any {
 			"title":   "YAMO music library",
 			"version": library.Version,
 		},
-		"instructions": instructions,
+		"instructions": guidance,
 	}
 }
 
@@ -231,10 +242,31 @@ running when the wait is up they return the job id, and get_job polls it.
 The library is only as current as its last scan — nothing watches the
 filesystem. library_stats says when it was scanned; scan_library refreshes it.`
 
+// readOnlyNote is appended for a caller holding the read-only token.
+//
+// The tool list it is given already omits everything it cannot call, so this
+// is not a rule it has to remember — it is the explanation for why the tools
+// it might expect are missing, so that it says "I can only read here" rather
+// than casting about for a tool that was never offered.
+const readOnlyNote = `
+
+This token may only read. The writing tools — editing, splitting, renaming,
+stripping, artwork, scanning and undo — are not offered to it and are absent
+from the tool list. Report what you find and what you would change; somebody
+holding the full token has to make the change.`
+
 // listTools renders the tool table for the client.
-func (s *Server) listTools() map[string]any {
+//
+// A read-only caller is shown the read-only tools and no others. Listing what
+// it cannot call and refusing it afterwards would be worse than useless: a
+// model plans with the list it was given, and half of that plan failing at the
+// last step is how it ends up reporting work it never did.
+func (s *Server) listTools(role auth.Role) map[string]any {
 	out := make([]map[string]any, 0, len(s.tools))
 	for _, t := range s.tools {
+		if !t.ReadOnly && !role.CanWrite() {
+			continue
+		}
 		out = append(out, map[string]any{
 			"name":        t.Name,
 			"title":       t.Title,
@@ -252,7 +284,7 @@ func (s *Server) listTools() map[string]any {
 // isError, which is the protocol's own distinction and the right one: a bad
 // query or a count that has moved is something the model should read and
 // correct, not a transport fault it should retry blindly.
-func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, *rpcError) {
+func (s *Server) callTool(ctx context.Context, role auth.Role, params json.RawMessage) (any, *rpcError) {
 	var p struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
@@ -263,6 +295,16 @@ func (s *Server) callTool(ctx context.Context, params json.RawMessage) (any, *rp
 	t, ok := s.byName[p.Name]
 	if !ok {
 		return nil, &rpcError{codeInvalidParams, fmt.Sprintf("unknown tool %q", p.Name)}
+	}
+
+	// A writing tool called by a read-only caller was never in the list it was
+	// given, so this is a stale plan rather than a bad request. It comes back
+	// as a tool error rather than a protocol one for that reason: a model can
+	// read it, understand why, and carry on with what it can do, where a
+	// transport failure is something it can only retry.
+	if !t.ReadOnly && !role.CanWrite() {
+		return toolResult("this token may only read, so "+t.Name+
+			" is not available to it; the tools you can call are the ones tools/list returned", true), nil
 	}
 
 	result, err := t.Call(ctx, s.svc, s.opts, p.Arguments)

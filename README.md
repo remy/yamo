@@ -607,6 +607,47 @@ a client that cannot keep up.
 Loopback by default, where no token is needed. Binding anywhere else requires
 one — generated on first run, printed once, kept beside the catalogue.
 
+The token goes in either of two headers. `Authorization: Bearer <token>` is the
+correct one and what the schema documents; `X-Api-Key: <token>` is accepted
+because a good deal of software that would make a fine client of this API can
+set an arbitrary header and cannot construct an `Authorization` one — several
+MCP clients among them. Refusing it on principle would make nothing safer,
+since the secret and what it unlocks are identical either way. `Authorization`
+wins when both are sent, so a header a proxy added cannot replace one a client
+chose.
+
+```sh
+curl -H 'Authorization: Bearer '"$YAMO_TOKEN" localhost:8467/v1/me
+curl -H "X-Api-Key: $YAMO_TOKEN"              localhost:8467/v1/me
+```
+
+#### A read-only token
+
+`-read-token`, or `YAMO_READ_TOKEN`, is a second credential that may read and
+nothing else: every `GET`, and none of the operations that write. It is what to
+hand to something that should look without touching — an assistant, a
+dashboard, a phone you have not decided to trust yet.
+
+```sh
+yamo serve -listen 0.0.0.0:8467 -token "$FULL" -read-token "$(openssl rand -hex 24)"
+```
+
+There is no default and none is generated: a credential nobody asked for is one
+nobody is keeping track of. It also needs `-token` to mean anything, and is
+refused without it — a server that lets an unauthenticated caller write cannot
+be made safer by also handing out a key that cannot.
+
+The rule it enforces is "`GET` and nothing else", which works because this API
+says what it does in the method: every read is a `GET` and nothing else is. A
+write attempted with it is `403` and `read_only`. `GET /v1/me` reports
+`scopes`, so a client can find out which token it is holding without provoking
+that.
+
+```sh
+curl -s -H "X-Api-Key: $READ" localhost:8467/v1/me | jq .scopes
+# ["read"]
+```
+
 `GET /v1/capabilities` is the one operation served **without** a token, and
 `authRequired` is why: a client needs to know whether credentials are required
 before it has any to present. Nothing in it describes the library — no roots,
@@ -626,8 +667,8 @@ otherwise leave you to discover by reading a response back. It also carries the
 field, sort and job-kind vocabularies, so a client builds its pickers from the
 server rather than from a copy of this document that will fall behind.
 
-`GET /v1/me` says whether the token you are holding works — a question a client
-otherwise has to provoke a real failure to ask.
+`GET /v1/me` says whether the token you are holding works, and what it may do —
+questions a client otherwise has to provoke a real failure to ask.
 
 Cross-origin browser requests are only permitted when a token is set. A server
 on loopback with permissive headers could be driven by any web page you
@@ -644,7 +685,8 @@ and `actual`. A `scan_running` names the job already going.
 | Status | When |
 | --- | --- |
 | `400` | The request was malformed, or named an unknown field |
-| `401` | No bearer token, or the wrong one |
+| `401` | No token, or the wrong one |
+| `403` | `read_only`: the token is good but may not write |
 | `404` | No such track, job, backup or resource |
 | `409` | `conflict`, `exists`, `count_mismatch` or `scan_running` |
 | `413` | An uploaded cover above `limits.maxImageBytes` — refused, never truncated |
@@ -1077,10 +1119,12 @@ From Claude Code, on the machine running the server:
 claude mcp add --transport http yamo http://127.0.0.1:8467/mcp
 ```
 
-Over the network the server requires a token, and it goes in a header:
+Over the network the server requires a token, and it goes in a header. Either
+header works — use `X-Api-Key` for the many clients that can set an arbitrary
+header and cannot construct an `Authorization` one:
 
 ```bash
-claude mcp add --transport http yamo http://nas.local:8467/mcp --header "Authorization: Bearer $YAMO_TOKEN"
+claude mcp add --transport http yamo http://nas.local:8467/mcp --header "X-Api-Key: $YAMO_TOKEN"
 ```
 
 Clients configured by file — Claude Desktop, Cursor, and most of the rest —
@@ -1092,7 +1136,7 @@ take the same three things:
     "yamo": {
       "type": "http",
       "url": "http://127.0.0.1:8467/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
+      "headers": { "X-Api-Key": "<token>" }
     }
   }
 }
@@ -1102,6 +1146,27 @@ Drop the `headers` entry on loopback, where no token is required. A client that
 speaks only stdio can be bridged with `npx -y mcp-remote http://127.0.0.1:8467/mcp`
 as its command.
 
+### Letting it look without touching
+
+Give it the [read-only token](#a-read-only-token) instead and it is offered
+twelve of the twenty tools and no others — the ten under **Reading** below,
+plus `get_job` and `list_backups`, which only look at what a job did. The
+writing ones are absent from `tools/list`
+rather than refused afterwards, which is the part that matters: a model plans
+with the list it was given, and half of that plan failing at the last step is
+how it ends up reporting work it never did. The handshake tells it why, so it
+says "I can only read here" rather than casting about for a tool that was never
+offered.
+
+```bash
+claude mcp add --transport http yamo http://nas.local:8467/mcp --header "X-Api-Key: $YAMO_READ_TOKEN"
+```
+
+It is a good default for an assistant. Reading is where most of the value is —
+finding the misspelled artists, the albums missing covers, the duplicates —
+and it can report all of it and let you make the change.
+
+`library_stats` reports which token the caller is holding, and
 `GET /v1/capabilities` reports `features.mcp`, which is how a client finds out
 the endpoint is there: it is JSON-RPC rather than REST, so it is not in the
 OpenAPI schema and cannot be discovered from it.
@@ -1111,6 +1176,9 @@ OpenAPI schema and cannot be discovered from it.
 Twenty, over forty-five endpoints, and the arithmetic is the design. A model
 choosing between forty-five near-identical operations chooses badly, and the
 endpoints that move bytes it cannot read are no use to it at all.
+
+Everything under **Reading**, plus `get_job` and `list_backups`, is what a
+read-only token is offered. The other eight need the full one.
 
 | Tool | |
 | --- | --- |

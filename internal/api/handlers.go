@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/discogs"
 	"github.com/remy/yamo/internal/library"
 	"github.com/remy/yamo/internal/tags"
@@ -540,13 +541,15 @@ type identity struct {
 func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
 	// Reaching this handler means the token check passed, so the answer is
 	// always yes; the request would have been a 401 otherwise.
+	//
+	// The scopes are the answer that has become narrower, which is what they
+	// were named for: a read-only token gets ["read"], and a client can find
+	// out what it is holding here rather than by attempting a write and
+	// reading the 403.
 	writeJSON(w, http.StatusOK, identity{
 		Authenticated: true,
 		TokenRequired: s.opts.Token != "",
-		// One token, and it grants everything. Named rather than left implicit
-		// so that a client written against this keeps working if the answer
-		// ever becomes narrower.
-		Scopes: []string{"read", "write"},
+		Scopes:        auth.RoleOf(r.Context()).Scopes(),
 	})
 }
 

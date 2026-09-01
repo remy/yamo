@@ -80,6 +80,7 @@ servers:
 
 security:
   - bearerAuth: []
+  - apiKeyAuth: []
 
 tags:
   - name: server
@@ -255,6 +256,7 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '422': { $ref: '#/components/responses/Unwritable' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [tracks]
@@ -284,6 +286,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/tags:
@@ -392,6 +395,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/RenameConflict' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/artwork:
@@ -472,6 +476,7 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '422': { $ref: '#/components/responses/Unwritable' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [artwork]
@@ -484,6 +489,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /albums:
@@ -759,6 +765,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/split:
@@ -799,6 +806,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/rename:
@@ -865,6 +873,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /artwork/batch:
@@ -891,6 +900,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /artwork/export:
@@ -936,6 +946,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /clipboard/artwork:
@@ -973,6 +984,7 @@ paths:
               schema: { $ref: '#/components/schemas/Picture' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
     delete:
       tags: [artwork]
@@ -981,6 +993,7 @@ paths:
       responses:
         '204': { description: Emptied. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /clipboard/artwork/from-track/{id}:
@@ -998,6 +1011,7 @@ paths:
               schema: { $ref: '#/components/schemas/Picture' }
         '404': { $ref: '#/components/responses/NotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /clipboard/artwork/from-url:
@@ -1038,6 +1052,7 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/LookupUnavailable' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/audio:
@@ -1259,6 +1274,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '409': { $ref: '#/components/responses/CountMismatch' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /backups:
@@ -1329,6 +1345,7 @@ paths:
         '204': { description: The journal was deleted. }
         '404': { $ref: '#/components/responses/NotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /restore:
@@ -1356,6 +1373,7 @@ paths:
         '202': { $ref: '#/components/responses/JobAccepted' }
         '404': { $ref: '#/components/responses/NotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /scans:
@@ -1410,6 +1428,7 @@ paths:
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /jobs:
@@ -1478,6 +1497,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The job has already finished. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /jobs/{id}/undo:
@@ -1518,6 +1538,7 @@ paths:
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/ServerError' }
 
   /jobs/{id}/events:
@@ -1602,6 +1623,17 @@ components:
       description: |
         Required whenever the server is bound to anything other than loopback.
         The token is generated on first run and printed once.
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        The same token, in a header a client that cannot construct an
+        `Authorization` one is still able to set — which several kinds of
+        software that would otherwise be fine clients of this API cannot. The
+        secret and what it unlocks are identical either way.
+
+        `Authorization` wins when both are present.
 
   headers:
     ETag:
@@ -1752,13 +1784,27 @@ components:
         ETag: { $ref: '#/components/headers/ETag' }
     Unauthorized:
       description: |
-        No bearer token, or the wrong one. A token is required whenever the
-        server is bound to anything other than loopback; `GET /capabilities`
-        answers whether this one requires it, and is itself exempt.
+        No token, or the wrong one. A token is required whenever the server is
+        bound to anything other than loopback; `GET /capabilities` answers
+        whether this one requires it, and is itself exempt.
+
+        It may be presented as `Authorization: Bearer <token>` or as
+        `X-Api-Key: <token>`. Authorization wins when both are sent, so a
+        header a proxy added cannot replace one a client chose.
       headers:
         WWW-Authenticate:
           description: The scheme and realm, always `Bearer realm="yamo"`.
           schema: { type: string }
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    Forbidden:
+      description: |
+        The token is good but may not do this: `read_only`. A server may be
+        started with a second token that reads and nothing else, and this is
+        every operation that is not a `GET`.
+
+        `GET /me` reports what the token in hand may do, which is how to find
+        out without provoking this.
       content:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
     TooLarge:
@@ -2804,9 +2850,9 @@ components:
           type: array
           items: { type: string }
           description: >-
-            One token grants everything, so this is always `["read","write"]`.
-            Named rather than left implicit so a client written against it
-            keeps working if the answer ever becomes narrower.
+            What the token in hand may do: `["read","write"]`, or `["read"]`
+            for a server's read-only token. This is how to find out which one
+            you are holding without attempting a write and reading the `403`.
 
     Capabilities:
       type: object

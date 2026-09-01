@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/library"
 )
 
@@ -229,8 +230,9 @@ var libraryStats = &Tool{
 	Title: "Library and server summary",
 	Description: "What the library holds — track, artist and album counts, formats, total size " +
 		"and duration, and how many tracks are missing each field — together with when it was " +
-		"last scanned and what this build can do (editable field names, page limits, whether " +
-		"undo journals and the Discogs lookup are available). Worth reading first: the " +
+		"last scanned, what this build can do (editable field names, page limits, whether " +
+		"undo journals and the Discogs lookup are available), and whether your token may " +
+		"write. Worth reading first: the " +
 		"missing-field counts are usually where the work is, and nothing watches the " +
 		"filesystem, so the scan time says how current these numbers are.",
 	ReadOnly: true,
@@ -243,6 +245,10 @@ var libraryStats = &Tool{
 		return map[string]any{
 			"library": svc.Stats(),
 			"scan":    svc.ScanStatus(),
+			// What this caller may do, rather than what the server can. A
+			// read-only token is shown only the read-only tools, and this is
+			// where it can find out why.
+			"access": auth.RoleOf(ctx),
 			"server": svc.Capabilities(library.Serving{
 				AuthRequired: opts.AuthRequired,
 				CrossOrigin:  opts.CrossOrigin,

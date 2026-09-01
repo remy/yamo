@@ -76,7 +76,17 @@ Access:
   It binds to loopback by default, where no token is needed. Binding to
   anything else requires one: it is generated on first run, printed once,
   and kept in the config directory. Pass it back with -token or
-  YAMO_TOKEN.
+  YAMO_TOKEN, in an Authorization: Bearer header or in X-Api-Key.
+
+  -read-token, or YAMO_READ_TOKEN, is a second credential that may read and
+  nothing else: every GET, and none of the operations that write. It is what
+  to hand to something that should look without touching — an assistant, a
+  dashboard, a phone you have not decided to trust yet. There is no default;
+  generate one with "openssl rand -hex 24".
+
+  It needs -token to mean anything, and is refused without it: a server that
+  lets an unauthenticated caller write cannot be made safer by also handing
+  out a key that cannot.
 
   Cross-origin browser requests are only allowed when a token is set. A
   server on loopback with no token and permissive headers could be driven
@@ -93,6 +103,10 @@ Tools for an assistant:
   can carry the count the client expected, so a model that has lost track of
   what it is about to change is refused rather than obeyed. It is off by
   default, and behind the same token as the rest of the API.
+
+  A client holding -read-token is offered the twelve tools that only read and
+  no others: the writing ones are absent from the list rather than refused
+  afterwards, so nothing it plans can fail at the last step.
 
 Album art from Discogs:
   The browser's Get Info sheet can search Discogs for cover art. It needs no
@@ -125,7 +139,8 @@ func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	catalogPath := catalogFlag(fs)
 	listen := fs.String("listen", DefaultListen, "address to bind, or unix:///path/to.sock")
-	token := fs.String("token", os.Getenv("YAMO_TOKEN"), "bearer token required for non-loopback binds")
+	token := fs.String("token", os.Getenv("YAMO_TOKEN"), "token required for non-loopback binds; Authorization: Bearer or X-Api-Key")
+	readToken := fs.String("read-token", os.Getenv("YAMO_READ_TOKEN"), "a second token that may read and nothing else")
 	noAuth := fs.Bool("no-auth", false, "serve without a token even when not on loopback")
 	saveEvery := fs.Duration("save-every", 5*time.Second, "how often to write the catalogue snapshot")
 	web := fs.String("web", ".", "directory of a web front end to serve at / (ignored if it has no index.html)")
@@ -152,6 +167,11 @@ func cmdServe(args []string) error {
 	// file even when nothing has changed.
 	if *rescanEvery > 0 && *rescanEvery < time.Minute {
 		return fmt.Errorf("-rescan-every %s is too short; a minute is the shortest useful interval", *rescanEvery)
+	}
+
+	if *readToken != "" && *readToken == *token {
+		return errors.New("-read-token and -token are the same value, which would make " +
+			"the read-only one grant everything")
 	}
 
 	if *catalogPath == "" {
@@ -192,6 +212,17 @@ func cmdServe(args []string) error {
 		fmt.Fprintf(os.Stderr, "  bound to %s; no token needed from this machine\n", addr)
 	}
 
+	// Checked here rather than with the other flags, because a non-loopback
+	// bind has just generated a token and the answer changes. A read-only key
+	// is a promise about what its holder can do, and it is worth nothing next
+	// to a door with no lock: where no credential is required, a caller
+	// presenting none already has everything.
+	if *readToken != "" && *token == "" {
+		return errors.New("-read-token needs a token to sit beside: this server requires " +
+			"none, so a caller presenting nothing at all already has full access\n" +
+			"       pass -token, or drop -read-token")
+	}
+
 	// Only serve a front end if the directory actually holds one, so running
 	// the server from an arbitrary directory does not publish it.
 	webRoot := ""
@@ -215,7 +246,8 @@ func cmdServe(args []string) error {
 	}
 
 	srv := api.New(svc, api.Options{
-		Token: *token,
+		Token:         *token,
+		ReadOnlyToken: *readToken,
 		// Only opened up when a token gates it; see the note above.
 		AllowCrossOrigin: *token != "",
 		WebRoot:          webRoot,
@@ -251,6 +283,9 @@ func cmdServe(args []string) error {
 	fmt.Fprintf(os.Stderr, "  docs: %s/docs\n", shown)
 	if *withMCP {
 		fmt.Fprintf(os.Stderr, "  mcp:  %s/mcp\n", shown)
+	}
+	if *readToken != "" {
+		fmt.Fprintln(os.Stderr, "  a read-only token is configured; it may GET and nothing else")
 	}
 
 	// -root/YAMO_ROOT exists for unattended starts — a container has no one

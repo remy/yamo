@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/library"
 )
 
@@ -31,13 +32,22 @@ func newHarness(t *testing.T) *Server {
 // call posts one JSON-RPC message and returns the decoded response.
 func call(t *testing.T, s *Server, method string, params any) map[string]any {
 	t.Helper()
+	return callAs(t, s, auth.Full, method, params)
+}
+
+// callAs posts one message as a caller holding a particular role, the way the
+// authenticating wrapper in package api records it.
+func callAs(t *testing.T, s *Server, role auth.Role, method string, params any) map[string]any {
+	t.Helper()
 	body := map[string]any{"jsonrpc": "2.0", "id": 1, "method": method}
 	if params != nil {
 		body["params"] = params
 	}
 	buf, _ := json.Marshal(body)
 	rec := httptest.NewRecorder()
-	s.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(buf)))
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(buf))
+	req = req.WithContext(auth.WithRole(req.Context(), role))
+	s.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("%s: status %d, body %s", method, rec.Code, rec.Body.String())
 	}
@@ -52,7 +62,12 @@ func call(t *testing.T, s *Server, method string, params any) map[string]any {
 // call was reported as an error.
 func callTool(t *testing.T, s *Server, name string, args map[string]any) (string, bool) {
 	t.Helper()
-	resp := call(t, s, "tools/call", map[string]any{"name": name, "arguments": args})
+	return callToolAs(t, s, auth.Full, name, args)
+}
+
+func callToolAs(t *testing.T, s *Server, role auth.Role, name string, args map[string]any) (string, bool) {
+	t.Helper()
+	resp := callAs(t, s, role, "tools/call", map[string]any{"name": name, "arguments": args})
 	if e, ok := resp["error"]; ok {
 		t.Fatalf("%s: protocol error %v", name, e)
 	}
@@ -142,6 +157,87 @@ func TestWritingToolsAreMarkedDestructive(t *testing.T) {
 		if tool.Destructive {
 			t.Errorf("%s does not write but is marked destructive", tool.Name)
 		}
+	}
+}
+
+// toolNames returns what tools/list offers a caller with this role.
+func toolNames(t *testing.T, s *Server, role auth.Role) []string {
+	t.Helper()
+	result := callAs(t, s, role, "tools/list", nil)["result"].(map[string]any)
+	list, _ := result["tools"].([]any)
+	var out []string
+	for _, item := range list {
+		name, _ := item.(map[string]any)["name"].(string)
+		out = append(out, name)
+	}
+	return out
+}
+
+// A read-only caller must not be shown a tool it cannot call. Listing one and
+// refusing it afterwards is how a model ends up planning around a step that
+// fails at the end of the plan.
+func TestReadOnlySeesOnlyReadingTools(t *testing.T) {
+	s := newHarness(t)
+
+	full := toolNames(t, s, auth.Full)
+	if len(full) != len(tools()) {
+		t.Fatalf("a full token was offered %d tools, the table holds %d", len(full), len(tools()))
+	}
+
+	readable := map[string]bool{}
+	for _, tool := range tools() {
+		if tool.ReadOnly {
+			readable[tool.Name] = true
+		}
+	}
+	got := toolNames(t, s, auth.ReadOnly)
+	if len(got) != len(readable) {
+		t.Errorf("a read-only token was offered %d tools, %d are marked read-only", len(got), len(readable))
+	}
+	for _, name := range got {
+		if !readable[name] {
+			t.Errorf("%s was offered to a read-only token but writes", name)
+		}
+	}
+}
+
+// A stale plan reaching for a writing tool has to be told why, in something a
+// model can read and carry on from.
+func TestReadOnlyCannotCallAWritingTool(t *testing.T) {
+	s := newHarness(t)
+	resp := callAs(t, s, auth.ReadOnly, "tools/call", map[string]any{
+		"name":      "edit_tracks",
+		"arguments": map[string]any{"all": true, "set": map[string]any{"genre": "Rock"}},
+	})
+	if resp["error"] != nil {
+		t.Fatalf("expected a tool error a model can read, got a protocol error: %v", resp["error"])
+	}
+	result := resp["result"].(map[string]any)
+	if isErr, _ := result["isError"].(bool); !isErr {
+		t.Fatal("a read-only token was allowed to edit")
+	}
+	text, _ := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "read") {
+		t.Errorf("the refusal should say why, got %q", text)
+	}
+
+	// Reading still works, or the token would be useless.
+	if _, isErr := callToolAs(t, s, auth.ReadOnly, "search_tracks", map[string]any{}); isErr {
+		t.Error("a read-only token could not search")
+	}
+}
+
+// The handshake has to explain the missing tools, or the model casts about for
+// something that was never offered.
+func TestReadOnlyInstructionsSaySo(t *testing.T) {
+	s := newHarness(t)
+	full := call(t, s, "initialize", map[string]any{})["result"].(map[string]any)
+	if strings.Contains(full["instructions"].(string), "may only read") {
+		t.Error("a full token was told it may only read")
+	}
+	limited := callAs(t, s, auth.ReadOnly, "initialize", map[string]any{})["result"].(map[string]any)
+	if !strings.Contains(limited["instructions"].(string), "may only read") {
+		t.Error("a read-only token was not told what it is holding")
 	}
 }
 

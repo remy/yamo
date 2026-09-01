@@ -18,15 +18,25 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/library"
 	"github.com/remy/yamo/internal/tags"
 )
 
 // Options configures the HTTP server.
 type Options struct {
-	// Token, when set, must be presented as a bearer token on every /v1
-	// request. The server requires one whenever it is not bound to loopback.
+	// Token, when set, must be presented on every /v1 request, as a bearer
+	// token or in X-Api-Key. The server requires one whenever it is not bound
+	// to loopback.
 	Token string
+
+	// ReadOnlyToken is a second credential that may read and nothing else.
+	// It is empty unless asked for, and it means nothing without Token: a
+	// server that lets an unauthenticated caller write cannot be made safer
+	// by also handing out a key that cannot. The serve command refuses that
+	// combination rather than accepting a setting that does not do what it
+	// looks like it does.
+	ReadOnlyToken string
 
 	// AllowCrossOrigin permits browser requests from other origins.
 	//
@@ -88,7 +98,7 @@ func (s *Server) setCORS(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("Access-Control-Allow-Origin", "*")
 	h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-	h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-Match, If-None-Match, Last-Event-ID")
+	h.Set("Access-Control-Allow-Headers", "Authorization, X-Api-Key, Content-Type, If-Match, If-None-Match, Last-Event-ID")
 	// A header a browser cannot read may as well not have been sent. The rate
 	// limit ones are here so a page can pace its Discogs lookups the same way
 	// a native client does, and Retry-After so it knows how long to wait.
@@ -167,6 +177,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /openapi.yaml", s.serveSpecYAML)
 	s.mux.HandleFunc("GET /openapi.json", s.serveSpecJSON)
 	s.mux.HandleFunc("GET /docs", s.serveDocs)
+	// Both paths, because the docs page asks for one and a browser asks for
+	// the other on its own. A front end served at the root that wants its own
+	// icon should link it from its HTML, which wins over /favicon.ico anyway.
+	s.mux.HandleFunc("GET /favicon.png", s.serveFavicon)
+	s.mux.HandleFunc("GET /favicon.ico", s.serveFavicon)
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -180,7 +195,7 @@ func (s *Server) routes() {
 	//
 	// The token guards it like anything else: these tools rewrite music files.
 	if s.opts.MCP != nil {
-		s.mux.HandleFunc("/mcp", s.authenticate(s.opts.MCP.ServeHTTP))
+		s.mux.HandleFunc("/mcp", s.authenticateRPC(s.opts.MCP.ServeHTTP))
 	}
 	// The front end, when there is one, is served unauthenticated: it has to
 	// load before it can present a token, and it contains none of the library.
@@ -218,34 +233,63 @@ func (s *Server) Routes() []string {
 	return out
 }
 
-// authenticate enforces the bearer token when one is configured.
+// authorize checks the credential and reports what it may do. It writes the
+// 401 itself, so a caller that gets false has nothing left to do.
+func (s *Server) authorize(w http.ResponseWriter, r *http.Request) (auth.Role, bool) {
+	role, ok := auth.Check(auth.TokenFrom(r), s.opts.Token, s.opts.ReadOnlyToken)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="yamo"`)
+		writeError(w, http.StatusUnauthorized, "unauthorized",
+			"a token is required, as Authorization: Bearer or X-Api-Key")
+		return "", false
+	}
+	return role, true
+}
+
+// authenticate enforces the token, and the read-only role, on a /v1 route.
+//
+// The method is what decides here, and it can be, because this API says what
+// it does in the method: every read is a GET and nothing else is. The rule is
+// only as good as that stays true, so a test walks every registered route and
+// checks that a read-only token is refused on each one that is not a GET —
+// which catches a write route that slipped through, though nothing can catch a
+// read that is given a POST on purpose.
 func (s *Server) authenticate(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.opts.Token == "" {
-			next(w, r)
+		role, ok := s.authorize(w, r)
+		if !ok {
 			return
 		}
-		const prefix = "Bearer "
-		got := r.Header.Get("Authorization")
-		if !strings.HasPrefix(got, prefix) || !constantTimeEqual(got[len(prefix):], s.opts.Token) {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="yamo"`)
-			writeError(w, http.StatusUnauthorized, "unauthorized", "a bearer token is required")
+		if !role.CanWrite() && !isRead(r.Method) {
+			writeError(w, http.StatusForbidden, "read_only",
+				"this token may only read; "+r.Method+" is not available to it")
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(auth.WithRole(r.Context(), role)))
 	}
 }
 
-// constantTimeEqual compares without leaking length or position through timing.
-func constantTimeEqual(a, b string) bool {
-	if len(a) != len(b) {
-		return false
+// authenticateRPC enforces the token on a route whose handler decides for
+// itself what the role permits.
+//
+// The MCP endpoint is POST for every call it will ever serve — a search and a
+// batch edit arrive identically — so the method says nothing here and the
+// endpoint applies the role per tool instead. The token check is the same one,
+// deliberately: two front ends disagreeing about who is allowed in is exactly
+// the bug this shape avoids.
+func (s *Server) authenticateRPC(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		role, ok := s.authorize(w, r)
+		if !ok {
+			return
+		}
+		next(w, r.WithContext(auth.WithRole(r.Context(), role)))
 	}
-	var diff byte
-	for i := 0; i < len(a); i++ {
-		diff |= a[i] ^ b[i]
-	}
-	return diff == 0
+}
+
+// isRead reports whether a method only reads.
+func isRead(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
 }
 
 // --- responses ----------------------------------------------------------
