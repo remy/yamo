@@ -4,91 +4,346 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   :root {
-    --bg: #fbfbfd; --panel: #fff; --ink: #1f2430; --dim: #6c7086;
-    --line: #e2e4ec; --accent: #1e66f5; --get: #2f9e44; --post: #1971c2;
-    --patch: #e8590c; --put: #6741d9; --delete: #c92a2a; --code: #f1f3f8;
+    --bg: #fbfbfd;
+    --panel: #fff;
+    --ink: #1f2430;
+    --dim: #6c7086;
+    --line: #e2e4ec;
+    --accent: #1e66f5;
+    --get: #2f9e44;
+    --post: #1971c2;
+    --patch: #e8590c;
+    --put: #6741d9;
+    --delete: #c92a2a;
+    --code: #f1f3f8;
   }
+
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #11111b; --panel: #181825; --ink: #cdd6f4; --dim: #9399b2;
-      --line: #313244; --accent: #89b4fa; --get: #a6e3a1; --post: #89b4fa;
-      --patch: #fab387; --put: #cba6f7; --delete: #f38ba8; --code: #1e1e2e;
+      --bg: #11111b;
+      --panel: #181825;
+      --ink: #cdd6f4;
+      --dim: #9399b2;
+      --line: #313244;
+      --accent: #89b4fa;
+      --get: #a6e3a1;
+      --post: #89b4fa;
+      --patch: #fab387;
+      --put: #cba6f7;
+      --delete: #f38ba8;
+      --code: #1e1e2e;
     }
   }
-  * { box-sizing: border-box }
+
+  * {
+    box-sizing: border-box
+  }
+
   body {
-    margin: 0; background: var(--bg); color: var(--ink);
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
     font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
-  header { padding: 2rem 1.5rem 1rem; border-bottom: 1px solid var(--line) }
-  header h1 { margin: 0 0 .25rem; font-size: 1.5rem }
-  header p { margin: .25rem 0; color: var(--dim) }
-  .wrap { display: flex; align-items: flex-start; gap: 2rem; padding: 1.5rem; max-width: 1100px; margin: 0 auto }
-  nav { position: sticky; top: 1.5rem; flex: 0 0 12rem; font-size: .9rem }
-  nav a { display: block; padding: .2rem 0; color: var(--dim); text-decoration: none }
-  nav a:hover { color: var(--accent) }
-  main { flex: 1; min-width: 0 }
-  h2 { margin: 2rem 0 .75rem; font-size: 1.1rem; text-transform: lowercase; letter-spacing: .03em }
+
+  header {
+    padding: 2rem 1.5rem 1rem;
+    border-bottom: 1px solid var(--line)
+  }
+
+  header h1 {
+    margin: 0 0 .25rem;
+    font-size: 1.5rem
+  }
+
+  header p {
+    margin: .25rem 0;
+    color: var(--dim)
+  }
+
+  .wrap {
+    display: flex;
+    align-items: flex-start;
+    gap: 2rem;
+    padding: 1.5rem;
+    max-width: 1100px;
+    margin: 0 auto
+  }
+
+  nav {
+    position: sticky;
+    top: 1.5rem;
+    flex: 0 0 12rem;
+    font-size: .9rem
+  }
+
+  nav a {
+    display: block;
+    padding: .2rem 0;
+    color: var(--dim);
+    text-decoration: none
+  }
+
+  nav a:hover {
+    color: var(--accent)
+  }
+
+  main {
+    flex: 1;
+    min-width: 0
+  }
+
+  h2 {
+    margin: 2rem 0 .75rem;
+    font-size: 1.1rem;
+    text-transform: lowercase;
+    letter-spacing: .03em
+  }
+
   .op {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-    margin-bottom: .75rem; overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    margin-bottom: .75rem;
+    overflow: hidden;
   }
-  .op > summary {
-    padding: .7rem .9rem; cursor: pointer; display: flex; gap: .7rem;
-    align-items: baseline; list-style: none; flex-wrap: wrap;
+
+  .op>summary {
+    padding: .7rem .9rem;
+    cursor: pointer;
+    display: flex;
+    gap: .7rem;
+    align-items: baseline;
+    list-style: none;
+    flex-wrap: wrap;
   }
-  .op > summary::-webkit-details-marker { display: none }
+
+  .op>summary::-webkit-details-marker {
+    display: none
+  }
+
   .m {
-    font: 600 .72rem ui-monospace, monospace; letter-spacing: .05em;
-    padding: .15rem .45rem; border-radius: 4px; border: 1px solid currentColor;
+    font: 600 .72rem ui-monospace, monospace;
+    letter-spacing: .05em;
+    padding: .15rem .45rem;
+    border-radius: 4px;
+    border: 1px solid currentColor;
   }
-  .m.get { color: var(--get) } .m.post { color: var(--post) }
-  .m.patch { color: var(--patch) } .m.put { color: var(--put) }
-  .m.delete { color: var(--delete) }
-  .path { font: .92rem ui-monospace, monospace; overflow-wrap: anywhere }
-  .sum { color: var(--dim); flex: 1 1 100% }
-  @media (min-width: 700px) { .sum { flex: 1 } }
-  .body { padding: 0 .9rem .9rem; border-top: 1px solid var(--line) }
-  .desc { color: var(--ink) }
-  .desc p { margin: .5rem 0 }
-  .desc ul { margin: .5rem 0; padding-left: 1.2rem }
-  .desc li { margin: .15rem 0 }
-  .desc table { margin: .5rem 0 }
-  h4.mdh { margin: 1.1rem 0 .3rem; font-size: .95rem; text-transform: none; letter-spacing: 0; color: var(--ink) }
-  .desc code, code.inline { background: var(--code); padding: .1rem .3rem; border-radius: 3px; font-size: .88em }
-  h4 { margin: 1rem 0 .35rem; font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--dim) }
-  table { border-collapse: collapse; width: 100%; font-size: .88rem }
-  td, th { text-align: left; padding: .3rem .5rem .3rem 0; vertical-align: top; border-bottom: 1px solid var(--line) }
-  th { color: var(--dim); font-weight: 500 }
-  pre { background: var(--code); padding: .7rem .8rem; border-radius: 6px; overflow-x: auto; font-size: .84rem; margin: .4rem 0 }
-  .req { color: var(--delete); font-size: .75rem }
-  .type { color: var(--dim); font: .84rem ui-monospace, monospace }
-  a { color: var(--accent) }
-  footer { padding: 2rem 1.5rem; color: var(--dim); font-size: .85rem; text-align: center }
+
+  .m.get {
+    color: var(--get)
+  }
+
+  .m.post {
+    color: var(--post)
+  }
+
+  .m.patch {
+    color: var(--patch)
+  }
+
+  .m.put {
+    color: var(--put)
+  }
+
+  .m.delete {
+    color: var(--delete)
+  }
+
+  .path {
+    font: .92rem ui-monospace, monospace;
+    overflow-wrap: anywhere
+  }
+
+  .sum {
+    color: var(--dim);
+    flex: 1 1 100%
+  }
+
+  @media (min-width: 700px) {
+    .sum {
+      flex: 1
+    }
+  }
+
+  .body {
+    padding: 0 .9rem .9rem;
+    border-top: 1px solid var(--line)
+  }
+
+  .desc {
+    color: var(--ink)
+  }
+
+  .desc p {
+    margin: .5rem 0
+  }
+
+  .desc ul {
+    margin: .5rem 0;
+    padding-left: 1.2rem
+  }
+
+  .desc li {
+    margin: .15rem 0
+  }
+
+  .desc table {
+    margin: .5rem 0
+  }
+
+  h4.mdh {
+    margin: 1.1rem 0 .3rem;
+    font-size: .95rem;
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink)
+  }
+
+  .desc code,
+  code.inline {
+    background: var(--code);
+    padding: .1rem .3rem;
+    border-radius: 3px;
+    font-size: .88em
+  }
+
+  h4 {
+    margin: 1rem 0 .35rem;
+    font-size: .78rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--dim)
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .88rem
+  }
+
+  td,
+  th {
+    text-align: left;
+    padding: .3rem .5rem .3rem 0;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line)
+  }
+
+  th {
+    color: var(--dim);
+    font-weight: 500
+  }
+
+  pre {
+    background: var(--code);
+    padding: .7rem .8rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: .84rem;
+    margin: .4rem 0
+  }
+
+  .req {
+    color: var(--delete);
+    font-size: .75rem
+  }
+
+  .type {
+    color: var(--dim);
+    font: .84rem ui-monospace, monospace;
+    line-height: 1.4rem;
+  }
+
+  a {
+    color: var(--accent)
+  }
+
+  footer {
+    padding: 2rem 1.5rem;
+    color: var(--dim);
+    font-size: .85rem;
+    text-align: center
+  }
 
   /* Narrow: the sidebar becomes a row of links above the content, and the
      generated tables scroll sideways rather than forcing the page to. */
   @media (max-width: 700px) {
-    .wrap { flex-direction: column; align-items: stretch; gap: 1rem; padding: 1rem }
-    nav {
-      position: static; flex: none; width: 100%; display: flex; flex-wrap: wrap;
-      gap: 0 .9rem; padding-bottom: .75rem; border-bottom: 1px solid var(--line);
+    .wrap {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 1rem;
+      padding: 1rem
     }
-    header { padding: 1.5rem 1rem .75rem }
-    footer { padding: 1.5rem 1rem }
-    h2 { margin-top: 1.5rem }
-    table { display: block; overflow-x: auto }
+
+    nav {
+      position: static;
+      flex: none;
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0 .9rem;
+      padding-bottom: .75rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    header {
+      padding: 1.5rem 1rem .75rem
+    }
+
+    footer {
+      padding: 1.5rem 1rem
+    }
+
+    h2 {
+      margin-top: 1.5rem
+    }
+
+    table {
+      display: block;
+      overflow-x: auto
+    }
   }
+
   @media (max-width: 420px) {
-    body { font-size: 14px }
-    header { padding: 1.1rem .75rem .6rem }
-    header h1 { font-size: 1.25rem }
-    .wrap { padding: .75rem }
-    .op > summary { padding: .6rem .7rem; gap: .5rem }
-    .body { padding: 0 .7rem .7rem }
-    footer { padding: 1.25rem .75rem }
-    td, th { padding-right: .4rem }
-    .desc code, code.inline { overflow-wrap: anywhere }
+    body {
+      font-size: 14px
+    }
+
+    header {
+      padding: 1.1rem .75rem .6rem
+    }
+
+    header h1 {
+      font-size: 1.25rem
+    }
+
+    .wrap {
+      padding: .75rem
+    }
+
+    .op>summary {
+      padding: .6rem .7rem;
+      gap: .5rem
+    }
+
+    .body {
+      padding: 0 .7rem .7rem
+    }
+
+    footer {
+      padding: 1.25rem .75rem
+    }
+
+    td,
+    th {
+      padding-right: .4rem
+    }
+
+    .desc code,
+    code.inline {
+      overflow-wrap: anywhere
+    }
   }
 </style>
 <header>
@@ -100,216 +355,219 @@
     generate a client with any OpenAPI 3.1 tool
   </p>
 </header>
-<div class="wrap"><nav id="nav"></nav><main id="main"></main></div>
+<div class="wrap">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
 <footer>Served by the running YAMO instance, so this is the contract it actually implements.</footer>
 <script>
-const el = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n };
+  const el = (t, cls, txt) => { const n = document.createElement(t); if (cls) n.className = cls; if (txt != null) n.textContent = txt; return n };
 
-// A small block-level Markdown renderer: fenced code, headings, tables,
-// lists and inline code. Enough for the prose in the schema, with no
-// dependency, so this page still works on a machine with no network.
-function inline(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
-          .replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
-          .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-}
+  // A small block-level Markdown renderer: fenced code, headings, tables,
+  // lists and inline code. Enough for the prose in the schema, with no
+  // dependency, so this page still works on a machine with no network.
+  function inline(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  }
 
-function md(s) {
-  if (!s) return '';
-  const lines = s.split('\n');
-  const out = [];
-  let i = 0, para = [], list = [], table = [];
+  function md(s) {
+    if (!s) return '';
+    const lines = s.split('\n');
+    const out = [];
+    let i = 0, para = [], list = [], table = [];
 
-  const flushPara = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };
-  const flushList = () => { if (list.length) { out.push('<ul>' + list.map(l => '<li>' + inline(l) + '</li>').join('') + '</ul>'); list = []; } };
-  const flushTable = () => {
-    if (!table.length) return;
-    const cells = row => row.split('|').slice(1, -1).map(c => c.trim());
-    const head = cells(table[0]);
-    const body = table.slice(2).map(cells); // row 1 is the separator
-    out.push('<table><tr>' + head.map(h => '<th>' + inline(h) + '</th>').join('') + '</tr>' +
-      body.map(r => '<tr>' + r.map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</table>');
-    table = [];
-  };
-  const flushAll = () => { flushPara(); flushList(); flushTable(); };
+    const flushPara = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };
+    const flushList = () => { if (list.length) { out.push('<ul>' + list.map(l => '<li>' + inline(l) + '</li>').join('') + '</ul>'); list = []; } };
+    const flushTable = () => {
+      if (!table.length) return;
+      const cells = row => row.split('|').slice(1, -1).map(c => c.trim());
+      const head = cells(table[0]);
+      const body = table.slice(2).map(cells); // row 1 is the separator
+      out.push('<table><tr>' + head.map(h => '<th>' + inline(h) + '</th>').join('') + '</tr>' +
+        body.map(r => '<tr>' + r.map(c => '<td>' + inline(c) + '</td>').join('') + '</tr>').join('') + '</table>');
+      table = [];
+    };
+    const flushAll = () => { flushPara(); flushList(); flushTable(); };
 
-  while (i < lines.length) {
-    const line = lines[i];
-    if (line.trim().startsWith('```')) {
-      flushAll();
-      const buf = [];
-      for (i++; i < lines.length && !lines[i].trim().startsWith('```'); i++) buf.push(lines[i]);
-      i++;
-      out.push('<pre>' + buf.join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>');
-      continue;
-    }
-    if (/^#{2,4}\s/.test(line)) {
-      flushAll();
-      out.push('<h4 class="mdh">' + inline(line.replace(/^#+\s*/, '')) + '</h4>');
-      i++; continue;
-    }
-    if (line.trim().startsWith('|')) { flushPara(); flushList(); table.push(line.trim()); i++; continue; }
-    if (/^\s*[-*]\s/.test(line)) {
-      flushPara(); flushTable();
-      let item = line.replace(/^\s*[-*]\s/, '');
-      // Continuation lines of the same bullet are indented.
-      while (i + 1 < lines.length && /^\s{2,}\S/.test(lines[i + 1]) && !/^\s*[-*]\s/.test(lines[i + 1])) {
-        item += ' ' + lines[++i].trim();
+    while (i < lines.length) {
+      const line = lines[i];
+      if (line.trim().startsWith('```')) {
+        flushAll();
+        const buf = [];
+        for (i++; i < lines.length && !lines[i].trim().startsWith('```'); i++) buf.push(lines[i]);
+        i++;
+        out.push('<pre>' + buf.join('\n').replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</pre>');
+        continue;
       }
-      list.push(item); i++; continue;
-    }
-    if (line.trim() === '') { flushAll(); i++; continue; }
-    flushList(); flushTable();
-    para.push(line.trim()); i++;
-  }
-  flushAll();
-  return out.join('');
-}
-
-function typeOf(schema, spec) {
-  if (!schema) return '';
-  if (schema.$ref) return schema.$ref.split('/').pop();
-  if (schema.type === 'array') return typeOf(schema.items, spec) + '[]';
-  if (Array.isArray(schema.type)) return schema.type.join(' | ');
-  if (schema.enum) return schema.enum.join(' | ');
-  return schema.type || (schema.oneOf ? schema.oneOf.map(s => typeOf(s, spec)).join(' | ') : 'object');
-}
-
-function resolve(spec, node) {
-  if (node && node.$ref) {
-    return node.$ref.replace('#/', '').split('/').reduce((o, k) => o && o[k], spec);
-  }
-  return node;
-}
-
-function renderSchema(spec, schema, depth = 0) {
-  schema = resolve(spec, schema);
-  if (!schema || depth > 2) return null;
-  const props = schema.properties || (schema.allOf || []).reduce(
-    (acc, s) => Object.assign(acc, (resolve(spec, s) || {}).properties), {});
-  if (!Object.keys(props).length) return null;
-
-  const table = el('table');
-  const req = new Set(schema.required || []);
-  for (const [name, p] of Object.entries(props)) {
-    const tr = el('tr');
-    const nameCell = el('td');
-    nameCell.appendChild(el('code', 'inline', name));
-    if (req.has(name)) nameCell.appendChild(el('span', 'req', ' required'));
-    tr.appendChild(nameCell);
-    tr.appendChild(el('td', 'type', typeOf(p, spec)));
-    const d = el('td'); d.innerHTML = md((resolve(spec, p) || {}).description || '');
-    tr.appendChild(d);
-    table.appendChild(tr);
-  }
-  return table;
-}
-
-fetch('/openapi.json').then(r => r.json()).then(spec => {
-  document.getElementById('blurb').textContent = spec.info.summary || spec.info.title;
-  const nav = document.getElementById('nav'), main = document.getElementById('main');
-
-  const intro = el('div', 'desc');
-  intro.innerHTML = md(spec.info.description || '');
-  main.appendChild(intro);
-
-  const byTag = new Map((spec.tags || []).map(t => [t.name, []]));
-  for (const [path, ops] of Object.entries(spec.paths)) {
-    for (const [method, op] of Object.entries(ops)) {
-      if (!['get', 'post', 'put', 'patch', 'delete'].includes(method)) continue;
-      for (const tag of op.tags || ['other']) {
-        if (!byTag.has(tag)) byTag.set(tag, []);
-        byTag.get(tag).push({ path, method, op, params: ops.parameters || [] });
+      if (/^#{2,4}\s/.test(line)) {
+        flushAll();
+        out.push('<h4 class="mdh">' + inline(line.replace(/^#+\s*/, '')) + '</h4>');
+        i++; continue;
       }
-    }
-  }
-
-  for (const [tag, ops] of byTag) {
-    if (!ops.length) continue;
-    const id = 'tag-' + tag;
-    const link = el('a', null, tag); link.href = '#' + id; nav.appendChild(link);
-
-    const h = el('h2', null, tag); h.id = id; main.appendChild(h);
-    const tagDesc = (spec.tags || []).find(t => t.name === tag);
-    if (tagDesc && tagDesc.description) {
-      const p = el('p', 'sum', tagDesc.description); main.appendChild(p);
-    }
-
-    for (const { path, method, op, params } of ops) {
-      const d = el('details', 'op');
-      const s = el('summary');
-      s.appendChild(el('span', 'm ' + method, method.toUpperCase()));
-      s.appendChild(el('span', 'path', path));
-      s.appendChild(el('span', 'sum', op.summary || ''));
-      d.appendChild(s);
-
-      const body = el('div', 'body');
-      if (op.description) { const p = el('div', 'desc'); p.innerHTML = md(op.description); body.appendChild(p); }
-
-      const all = [...params, ...(op.parameters || [])].map(p => resolve(spec, p));
-      if (all.length) {
-        body.appendChild(el('h4', null, 'parameters'));
-        const t = el('table');
-        for (const p of all) {
-          const tr = el('tr');
-          const c = el('td'); c.appendChild(el('code', 'inline', p.name));
-          if (p.required) c.appendChild(el('span', 'req', ' required'));
-          tr.appendChild(c);
-          tr.appendChild(el('td', 'type', p.in + ' · ' + typeOf(p.schema, spec)));
-          const dd = el('td'); dd.innerHTML = md(p.description || ''); tr.appendChild(dd);
-          t.appendChild(tr);
+      if (line.trim().startsWith('|')) { flushPara(); flushList(); table.push(line.trim()); i++; continue; }
+      if (/^\s*[-*]\s/.test(line)) {
+        flushPara(); flushTable();
+        let item = line.replace(/^\s*[-*]\s/, '');
+        // Continuation lines of the same bullet are indented.
+        while (i + 1 < lines.length && /^\s{2,}\S/.test(lines[i + 1]) && !/^\s*[-*]\s/.test(lines[i + 1])) {
+          item += ' ' + lines[++i].trim();
         }
-        body.appendChild(t);
+        list.push(item); i++; continue;
+      }
+      if (line.trim() === '') { flushAll(); i++; continue; }
+      flushList(); flushTable();
+      para.push(line.trim()); i++;
+    }
+    flushAll();
+    return out.join('');
+  }
+
+  function typeOf(schema, spec) {
+    if (!schema) return '';
+    if (schema.$ref) return schema.$ref.split('/').pop();
+    if (schema.type === 'array') return typeOf(schema.items, spec) + '[]';
+    if (Array.isArray(schema.type)) return schema.type.join(' | ');
+    if (schema.enum) return schema.enum.join(' | ');
+    return schema.type || (schema.oneOf ? schema.oneOf.map(s => typeOf(s, spec)).join(' | ') : 'object');
+  }
+
+  function resolve(spec, node) {
+    if (node && node.$ref) {
+      return node.$ref.replace('#/', '').split('/').reduce((o, k) => o && o[k], spec);
+    }
+    return node;
+  }
+
+  function renderSchema(spec, schema, depth = 0) {
+    schema = resolve(spec, schema);
+    if (!schema || depth > 2) return null;
+    const props = schema.properties || (schema.allOf || []).reduce(
+      (acc, s) => Object.assign(acc, (resolve(spec, s) || {}).properties), {});
+    if (!Object.keys(props).length) return null;
+
+    const table = el('table');
+    const req = new Set(schema.required || []);
+    for (const [name, p] of Object.entries(props)) {
+      const tr = el('tr');
+      const nameCell = el('td');
+      nameCell.appendChild(el('code', 'inline', name));
+      if (req.has(name)) nameCell.appendChild(el('span', 'req', ' required'));
+      tr.appendChild(nameCell);
+      tr.appendChild(el('td', 'type', typeOf(p, spec)));
+      const d = el('td'); d.innerHTML = md((resolve(spec, p) || {}).description || '');
+      tr.appendChild(d);
+      table.appendChild(tr);
+    }
+    return table;
+  }
+
+  fetch('/openapi.json').then(r => r.json()).then(spec => {
+    document.getElementById('blurb').textContent = spec.info.summary || spec.info.title;
+    const nav = document.getElementById('nav'), main = document.getElementById('main');
+
+    const intro = el('div', 'desc');
+    intro.innerHTML = md(spec.info.description || '');
+    main.appendChild(intro);
+
+    const byTag = new Map((spec.tags || []).map(t => [t.name, []]));
+    for (const [path, ops] of Object.entries(spec.paths)) {
+      for (const [method, op] of Object.entries(ops)) {
+        if (!['get', 'post', 'put', 'patch', 'delete'].includes(method)) continue;
+        for (const tag of op.tags || ['other']) {
+          if (!byTag.has(tag)) byTag.set(tag, []);
+          byTag.get(tag).push({ path, method, op, params: ops.parameters || [] });
+        }
+      }
+    }
+
+    for (const [tag, ops] of byTag) {
+      if (!ops.length) continue;
+      const id = 'tag-' + tag;
+      const link = el('a', null, tag); link.href = '#' + id; nav.appendChild(link);
+
+      const h = el('h2', null, tag); h.id = id; main.appendChild(h);
+      const tagDesc = (spec.tags || []).find(t => t.name === tag);
+      if (tagDesc && tagDesc.description) {
+        const p = el('p', 'sum', tagDesc.description); main.appendChild(p);
       }
 
-      const rb = resolve(spec, op.requestBody);
-      if (rb) {
-        body.appendChild(el('h4', null, 'request body'));
-        for (const [ct, media] of Object.entries(rb.content || {})) {
-          body.appendChild(el('div', 'type', ct));
-          const tbl = renderSchema(spec, media.schema);
-          if (tbl) body.appendChild(tbl);
-          for (const ex of Object.values(media.examples || {})) {
-            body.appendChild(el('div', 'type', ex.summary || 'example'));
-            body.appendChild(el('pre', null, JSON.stringify(ex.value, null, 2)));
+      for (const { path, method, op, params } of ops) {
+        const d = el('details', 'op');
+        const s = el('summary');
+        s.appendChild(el('span', 'm ' + method, method.toUpperCase()));
+        s.appendChild(el('span', 'path', path));
+        s.appendChild(el('span', 'sum', op.summary || ''));
+        d.appendChild(s);
+
+        const body = el('div', 'body');
+        if (op.description) { const p = el('div', 'desc'); p.innerHTML = md(op.description); body.appendChild(p); }
+
+        const all = [...params, ...(op.parameters || [])].map(p => resolve(spec, p));
+        if (all.length) {
+          body.appendChild(el('h4', null, 'parameters'));
+          const t = el('table');
+          for (const p of all) {
+            const tr = el('tr');
+            const c = el('td'); c.appendChild(el('code', 'inline', p.name));
+            if (p.required) c.appendChild(el('span', 'req', ' required'));
+            tr.appendChild(c);
+            tr.appendChild(el('td', 'type', p.in + ' · ' + typeOf(p.schema, spec)));
+            const dd = el('td'); dd.innerHTML = md(p.description || ''); tr.appendChild(dd);
+            t.appendChild(tr);
+          }
+          body.appendChild(t);
+        }
+
+        const rb = resolve(spec, op.requestBody);
+        if (rb) {
+          body.appendChild(el('h4', null, 'request body'));
+          for (const [ct, media] of Object.entries(rb.content || {})) {
+            body.appendChild(el('div', 'type', ct));
+            const tbl = renderSchema(spec, media.schema);
+            if (tbl) body.appendChild(tbl);
+            for (const ex of Object.values(media.examples || {})) {
+              body.appendChild(el('div', 'type', ex.summary || 'example'));
+              body.appendChild(el('pre', null, JSON.stringify(ex.value, null, 2)));
+            }
           }
         }
-      }
 
-      body.appendChild(el('h4', null, 'responses'));
-      const rt = el('table');
-      for (const [code, resp] of Object.entries(op.responses || {})) {
-        const r = resolve(spec, resp) || {};
-        const tr = el('tr');
-        tr.appendChild(el('td', null, code));
-        const schema = Object.values(r.content || {})[0];
-        tr.appendChild(el('td', 'type', schema ? typeOf(schema.schema, spec) : ''));
-        tr.appendChild(el('td', null, r.description || ''));
-        rt.appendChild(tr);
-      }
-      body.appendChild(rt);
+        body.appendChild(el('h4', null, 'responses'));
+        const rt = el('table');
+        for (const [code, resp] of Object.entries(op.responses || {})) {
+          const r = resolve(spec, resp) || {};
+          const tr = el('tr');
+          tr.appendChild(el('td', null, code));
+          const schema = Object.values(r.content || {})[0];
+          tr.appendChild(el('td', 'type', schema ? typeOf(schema.schema, spec) : ''));
+          tr.appendChild(el('td', null, r.description || ''));
+          rt.appendChild(tr);
+        }
+        body.appendChild(rt);
 
+        d.appendChild(body);
+        main.appendChild(d);
+      }
+    }
+
+    const sl = el('a', null, 'schemas'); sl.href = '#schemas'; nav.appendChild(sl);
+    const sh = el('h2', null, 'schemas'); sh.id = 'schemas'; main.appendChild(sh);
+    for (const [name, schema] of Object.entries(spec.components.schemas)) {
+      const d = el('details', 'op');
+      const s = el('summary');
+      s.appendChild(el('span', 'path', name));
+      s.appendChild(el('span', 'sum', (schema.description || '').split('\n')[0]));
+      d.appendChild(s);
+      const body = el('div', 'body');
+      if (schema.description) { const p = el('div', 'desc'); p.innerHTML = md(schema.description); body.appendChild(p); }
+      const t = renderSchema(spec, schema);
+      if (t) body.appendChild(t);
       d.appendChild(body);
       main.appendChild(d);
     }
-  }
-
-  const sl = el('a', null, 'schemas'); sl.href = '#schemas'; nav.appendChild(sl);
-  const sh = el('h2', null, 'schemas'); sh.id = 'schemas'; main.appendChild(sh);
-  for (const [name, schema] of Object.entries(spec.components.schemas)) {
-    const d = el('details', 'op');
-    const s = el('summary');
-    s.appendChild(el('span', 'path', name));
-    s.appendChild(el('span', 'sum', (schema.description || '').split('\n')[0]));
-    d.appendChild(s);
-    const body = el('div', 'body');
-    if (schema.description) { const p = el('div', 'desc'); p.innerHTML = md(schema.description); body.appendChild(p); }
-    const t = renderSchema(spec, schema);
-    if (t) body.appendChild(t);
-    d.appendChild(body);
-    main.appendChild(d);
-  }
-}).catch(e => {
-  document.getElementById('blurb').textContent = 'Could not load the schema: ' + e;
-});
+  }).catch(e => {
+    document.getElementById('blurb').textContent = 'Could not load the schema: ' + e;
+  });
 </script>
