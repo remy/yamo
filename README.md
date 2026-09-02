@@ -103,6 +103,58 @@ fields but not the file path or the sort fields; use `path:`, `artistsort:` and
 the rest for those. Searching for `presley` should not also return every track
 that merely files itself under "Presley, Elvis".
 
+#### The fields
+
+Seventeen, and one name each: the same word is the query prefix, the `sort`
+key, the `$field` in a rename or split template, and the key in the body of an
+edit. The short forms exist because the search bar is typed into live; the
+canonical name is the one to use from a script.
+
+| Field | Also | Matches |
+| --- | --- | --- |
+| `title` | `t`, `name` | the track title |
+| `artist` | `a`, `ar` | the performer |
+| `albumartist` | `aa`, `band` | the album's artist — what `/v1/albums` and `/v1/artists` group on |
+| `album` | `al`, `b` | the album title |
+| `genre` | `g` | the genre |
+| `composer` | `c` | the composer |
+| `comment` | | the free-text comment |
+| `year` | `y`, `date` | *numeric.* The year, parsed out of a fuller date if the file carries one |
+| `track` | `trackno`, `n` | *numeric.* The track number |
+| `disc` | `d` | *numeric.* The disc number |
+| `compilation` | `comp`, `va` | *numeric.* The Various Artists flag: `1` set, `0` not |
+| `path` | `p`, `file` | the full path of the file on disk |
+| `titlesort` | `ts` | the sort form of the title |
+| `artistsort` | `as` | the sort form of the artist |
+| `albumsort` | `als` | the sort form of the album |
+| `albumartistsort` | `aas` | the sort form of the album artist |
+| `composersort` | `cs` | the sort form of the composer |
+
+The four numeric fields are the ones that take `>`, `<`, `>=`, `<=` and
+`1970-1979`; on them `~` and the anchors are ignored, since there is nothing
+about an exact number for a typo allowance to loosen. Every other field is
+text, and takes the anchors, the fuzzy marker and the empty form.
+
+An unqualified term searches the seven display fields — `title`, `artist`,
+`albumartist`, `album`, `genre`, `composer` and `comment` — and stops there.
+`path` and the five sort fields are searchable only when named, which is the
+point: `presley` should find the tracks by him, not every track that files
+itself under "Presley, Elvis".
+
+A prefix that is not one of these names is not treated as one, which is what
+keeps `AC:DC` and a running time of `3:04` searching as the literal text they
+read as. An edit naming a field that does not exist is `400` instead, because
+in a body there is nothing else it could have meant.
+
+A few names live either side of this list. `sort` also takes `duration`
+(`time`, `length`), `size`, `bitrate`, `modified` (`modtime`) and `format` —
+read off the file rather than its tags, so they can be ordered by but not
+searched on — and `score`, which is the fuzzy ranking below. An edit also takes
+`tracktotal` and `disctotal`, the "of 12" half of a track and disc number,
+which are written to the file but not indexed. `path` goes the other way: it is
+searchable and sortable but not editable, because moving a file is
+`POST /v1/tracks/rename` rather than an edit to a field.
+
 #### Fuzzy terms
 
 `~` loosens one term. It matches the value literally, or spread through the
