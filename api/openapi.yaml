@@ -1108,17 +1108,23 @@ paths:
         '200':
           description: The whole file.
           headers:
-            ETag:
-              description: With `as`, identifies the rendition. Absent otherwise.
-              schema: { type: string }
-            Content-Disposition:
-              description: With `as`, a filename for the result.
-              schema: { type: string, examples: ['attachment; filename="01 Blue Moon.m4a"'] }
+            Content-Length: { $ref: '#/components/headers/AudioContentLength' }
+            Accept-Ranges: { $ref: '#/components/headers/AcceptRanges' }
+            ETag: { $ref: '#/components/headers/RenditionETag' }
+            Content-Disposition: { $ref: '#/components/headers/RenditionDisposition' }
           content:
             audio/*:
               schema: { type: string, format: binary }
         '206':
           description: The requested byte range.
+          headers:
+            Content-Length:
+              description: The length of this range, not of the whole file.
+              schema: { type: integer, format: int64 }
+            Content-Range: { $ref: '#/components/headers/ContentRange' }
+            Accept-Ranges: { $ref: '#/components/headers/AcceptRanges' }
+            ETag: { $ref: '#/components/headers/RenditionETag' }
+            Content-Disposition: { $ref: '#/components/headers/RenditionDisposition' }
           content:
             audio/*:
               schema: { type: string, format: binary }
@@ -1680,6 +1686,27 @@ components:
     ETag:
       description: The track's `version`, for use as `If-Match` on a later edit.
       schema: { type: string }
+    AudioContentLength:
+      description: >-
+        The size of the whole file in bytes. Always sent, including when
+        transcoding: the encode is finished before the response starts, so
+        a client can show progress or check the space on a device before
+        copying.
+      schema: { type: integer, format: int64 }
+    AcceptRanges:
+      description: Always `bytes`, since ranges are answered.
+      schema: { type: string, enum: [bytes] }
+    ContentRange:
+      description: Which bytes this is, out of the whole file's length.
+      schema: { type: string, examples: ["bytes 0-63/7472767"] }
+    RenditionETag:
+      description: >-
+        With `as`, identifies the rendition — the track's `version` plus the
+        settings — for use as `If-None-Match`. Absent otherwise.
+      schema: { type: string, examples: ['"ff0dd39b52839cdc-aac256"'] }
+    RenditionDisposition:
+      description: With `as`, a filename for the result. Absent otherwise.
+      schema: { type: string, examples: ['attachment; filename="01 Blue Moon.m4a"'] }
     RateLimitLimit:
       description: Discogs requests a minute allowed — 25 without a token, 60 with one.
       schema: { type: integer }

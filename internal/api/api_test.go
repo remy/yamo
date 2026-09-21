@@ -378,6 +378,9 @@ func TestAudioEndpoint(t *testing.T) {
 	if res.Header.Get("Accept-Ranges") != "bytes" {
 		t.Error("the response does not advertise ranges")
 	}
+	if res.Header.Get("Content-Length") != strconv.Itoa(len(want)) {
+		t.Errorf("Content-Length %q, want the file's %d", res.Header.Get("Content-Length"), len(want))
+	}
 	req, err := http.NewRequest(http.MethodGet, h.srv.URL+"/v1/tracks/"+id+"/audio", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -394,6 +397,12 @@ func TestAudioEndpoint(t *testing.T) {
 	chunk, _ := io.ReadAll(part.Body)
 	if !bytes.Equal(chunk, want[:64]) {
 		t.Errorf("the range returned %d bytes, want the first 64 of the file", len(chunk))
+	}
+	if part.Header.Get("Content-Length") != "64" {
+		t.Errorf("a range's Content-Length is %q, want 64", part.Header.Get("Content-Length"))
+	}
+	if cr, wantCR := part.Header.Get("Content-Range"), fmt.Sprintf("bytes 0-63/%d", len(want)); cr != wantCR {
+		t.Errorf("Content-Range %q, want %q", cr, wantCR)
 	}
 
 	h.do(t, http.MethodGet, "/v1/tracks/nosuchtrack/audio", nil, http.StatusNotFound)
@@ -434,6 +443,16 @@ func TestAudioTranscoded(t *testing.T) {
 	etag := res.Header.Get("ETag")
 	if !strings.Contains(etag, track["version"].(string)) {
 		t.Errorf("ETag %s does not carry the track's version %s", etag, track["version"])
+	}
+
+	// A range of a rendition still names it, so a client resuming a copy
+	// knows what it is resuming.
+	part, _ := h.doWith(t, http.MethodGet, url, nil, http.StatusPartialContent, map[string]string{"Range": "bytes=0-15"})
+	if part.Header.Get("Content-Length") != "16" || part.Header.Get("Content-Range") != fmt.Sprintf("bytes 0-15/%d", len(body)) {
+		t.Errorf("range headers: length %q, range %q", part.Header.Get("Content-Length"), part.Header.Get("Content-Range"))
+	}
+	if part.Header.Get("ETag") == "" || part.Header.Get("Content-Disposition") == "" {
+		t.Error("a range of a rendition lost its ETag or filename")
 	}
 
 	// The same rendition again is a 304, and a different bitrate is not.

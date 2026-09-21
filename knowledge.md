@@ -131,7 +131,7 @@ person there to do that.
 
 | Path | Lines | Responsibility |
 | --- | --- | --- |
-| `api/` | 42 | `openapi.yaml` (3,163 lines) plus the Go embed. **The contract.** |
+| `api/` | 42 | `openapi.yaml` (3190 lines) plus the Go embed. **The contract.** |
 | `internal/tags/` | 6,196 | Format parsers and writers. No third-party tag library. |
 | `internal/catalog/` | 1,810 | In-memory library, binary snapshot, search index, query language. |
 | `internal/scan/` | 438 | Parallel directory walk and tag extraction. |
