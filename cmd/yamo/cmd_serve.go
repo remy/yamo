@@ -121,6 +121,17 @@ Album art from Discogs:
   -no-discogs turns the lookup off, leaving the server making no outbound
   requests at all.
 
+Transcoding for a device:
+  GET /v1/tracks/{id}/audio?as=aac returns the track as AAC in an .m4a,
+  tagged and with its cover, for a device such as an iPod that cannot play
+  FLAC. It is encoded on request into a temporary file and nothing is kept,
+  so the library is never duplicated in a second format.
+
+  It needs ffmpeg with an AAC encoder. The one on the PATH is used if there
+  is one; -ffmpeg or YAMO_FFMPEG names another. Without one the server runs
+  as normal and the endpoint answers 503. Naming one that cannot encode AAC
+  is refused at startup rather than on every request.
+
 Examples:
   yamo serve                                just this machine
   yamo serve -root /volume1/music           ...and scan it on startup
@@ -148,6 +159,7 @@ func cmdServe(args []string) error {
 	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup, so the server makes no outbound requests")
 	rescanEvery := fs.Duration("rescan-every", 0, "rescan the roots on this interval (e.g. 1h); 0 never rescans")
 	withMCP := fs.Bool("mcp", envBool("YAMO_MCP"), "mount the Model Context Protocol endpoint at /mcp")
+	ffmpeg := fs.String("ffmpeg", os.Getenv("YAMO_FFMPEG"), "ffmpeg to transcode with; found on the PATH if not given")
 	roots := stringList(splitEnvList("YAMO_ROOT"))
 	fs.Var(&roots, "root", "directory to scan on startup (repeatable, or comma-separated in YAMO_ROOT)")
 	if err := parseFlags(fs, args, serveSummary, ""); err != nil {
@@ -185,12 +197,21 @@ func cmdServe(args []string) error {
 		*catalogPath = abs
 	}
 
+	// An ffmpeg that was asked for by name has to work. One that was merely
+	// looked for on the PATH is optional: without it, transcoding is off and
+	// everything else is unaffected.
+	ffmpegPath, ffmpegErr := library.CheckFFmpeg(*ffmpeg)
+	if ffmpegErr != nil && *ffmpeg != "" {
+		return fmt.Errorf("-ffmpeg: %w", ffmpegErr)
+	}
+
 	svc, err := library.Open(library.Options{
 		CatalogPath:    *catalogPath,
 		SaveInterval:   *saveEvery,
 		DiscogsToken:   *discogsToken,
 		NoDiscogs:      *noDiscogs,
 		RescanInterval: *rescanEvery,
+		FFmpeg:         ffmpegPath,
 	})
 	if err != nil {
 		return err
@@ -286,6 +307,11 @@ func cmdServe(args []string) error {
 	}
 	if *readToken != "" {
 		fmt.Fprintln(os.Stderr, "  a read-only token is configured; it may GET and nothing else")
+	}
+	if ffmpegPath != "" {
+		fmt.Fprintf(os.Stderr, "  transcode: aac, with %s\n", ffmpegPath)
+	} else {
+		fmt.Fprintf(os.Stderr, "  transcode: off (%v)\n", ffmpegErr)
 	}
 
 	// -root/YAMO_ROOT exists for unattended starts — a container has no one

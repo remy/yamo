@@ -1058,7 +1058,7 @@ paths:
   /tracks/{id}/audio:
     get:
       tags: [tracks]
-      summary: The audio itself
+      summary: The audio itself, or the audio in another format
       description: |
         Streams the file, so a player can confirm that the song in front of you
         is the one the tags describe.
@@ -1071,12 +1071,49 @@ paths:
         page and the server are different origins: the element sends no
         `Authorization` header and a token is required cross-origin. Fetch it
         and play the blob instead, as the bundled web app does.
+
+        **Transcoding.** With `as=aac` the track comes back as AAC in an
+        `.m4a` instead, for a device such as an iPod that cannot play the
+        original. The file is tagged from the source — every field, the
+        compilation flag, the sort fields and the front cover — and suggests
+        a filename in `Content-Disposition`. Hi-res sources are brought down
+        to 44.1kHz and surround to stereo, which is what an iPod plays.
+
+        It is encoded on request and nothing is kept, so each request costs
+        an encode: seconds for a song, not milliseconds. Fetch the whole file
+        rather than in ranges, and do not ask for tracks the device already
+        holds — the `ETag` is the track's `version` plus the settings, so a
+        client that sends it back as `If-None-Match` gets `304` without
+        anything being encoded. Asking for a format the device plays anyway
+        (MP3, or an `.m4a` that is already AAC) only loses quality; fetch
+        those as they are. `transcodeFormats` in `/capabilities` says whether
+        this server can do it at all.
       operationId: getAudio
       parameters:
         - $ref: '#/components/parameters/TrackId'
+        - name: as
+          in: query
+          description: >-
+            A format to transcode into, from `transcodeFormats` in
+            `/capabilities`. Absent serves the file as it is.
+          schema: { type: string, enum: [aac] }
+        - name: bitrate
+          in: query
+          description: >-
+            The AAC bitrate in kbps, with `as`. 256 is transparent for nearly
+            everyone; 128 or 192 fits more on a small device.
+          schema: { type: integer, minimum: 96, maximum: 320, default: 256 }
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The whole file.
+          headers:
+            ETag:
+              description: With `as`, identifies the rendition. Absent otherwise.
+              schema: { type: string }
+            Content-Disposition:
+              description: With `as`, a filename for the result.
+              schema: { type: string, examples: ['attachment; filename="01 Blue Moon.m4a"'] }
           content:
             audio/*:
               schema: { type: string, format: binary }
@@ -1085,8 +1122,12 @@ paths:
           content:
             audio/*:
               schema: { type: string, format: binary }
+        '304': { $ref: '#/components/responses/NotModified' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '404':
           $ref: '#/components/responses/NotFound'
+        '422': { $ref: '#/components/responses/Untranscodable' }
+        '503': { $ref: '#/components/responses/TranscodeUnavailable' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/ServerError' }
 
@@ -1876,6 +1917,18 @@ components:
       description: The Discogs lookup is turned off on this server.
       content:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    TranscodeUnavailable:
+      description: >-
+        Transcoding is off on this server, which found no ffmpeg with an AAC
+        encoder. Code `unavailable`.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
+    Untranscodable:
+      description: >-
+        The encoder could not make sense of the file. A property of the file,
+        so retrying will not help. Code `untranscodable`.
+      content:
+        application/json: { schema: { $ref: '#/components/schemas/Error' } }
 
   schemas:
     Error:
@@ -1887,7 +1940,8 @@ components:
           type: string
           description: A stable identifier for the failure.
           enum: [not_found, bad_request, conflict, exists, count_mismatch, scan_running,
-                 unwritable, too_large, rate_limited, unavailable, unauthorized, internal]
+                 unwritable, untranscodable, too_large, rate_limited, unavailable,
+                 unauthorized, internal]
         jobId: { type: string, description: "For scan_running, the scan already in progress." }
         expected: { type: integer, description: "For count_mismatch, the count the client sent." }
         actual: { type: integer, description: "For count_mismatch, the count the server found." }
@@ -2879,6 +2933,12 @@ components:
         duplicateFields: { type: array, items: { type: string } }
         jobKinds: { type: array, items: { type: string } }
         artworkSources: { type: array, items: { type: string } }
+        transcodeFormats:
+          type: array
+          items: { type: string, examples: ["aac"] }
+          description: >-
+            What `GET /tracks/{id}/audio?as=` accepts. Empty when transcoding
+            is off.
         defaultKeepTags:
           type: array
           items: { type: string }

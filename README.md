@@ -630,6 +630,40 @@ artist and kept.
 WMA, WAV and AIFF are read but not written, so they are counted and skipped
 rather than silently ignored.
 
+### Audio for a device that cannot play it
+
+An iPod plays AAC and MP3 and none of FLAC, Ogg or Opus. Rather than keep a
+second copy of the library in another format, the server encodes a track when
+it is asked for:
+
+```sh
+curl -OJ 'localhost:8467/v1/tracks/5f0c…/audio?as=aac'            # 256 kbps
+curl -OJ 'localhost:8467/v1/tracks/5f0c…/audio?as=aac&bitrate=192'
+```
+
+What comes back is a finished `.m4a`: AAC, tagged from the source — every
+field, the compilation flag, the sort fields and the front cover — with a
+filename in `Content-Disposition`. A hi-res source is brought down to 44.1kHz
+and surround to stereo, which is what an iPod plays.
+
+Nothing is cached. Each request is an encode, a few seconds for a song, into a
+temporary file that is deleted once the response is sent. That suits a sync,
+which reads each track once, and it means a syncing client should:
+
+- fetch MP3s, and `.m4a` files that are already AAC, as they are — asking for
+  those as AAC only loses quality;
+- keep the `ETag` it was given and send it back as `If-None-Match`. It is the
+  track's `version` plus the settings, so a track that has not changed is a
+  `304` and nothing is encoded;
+- fetch whole files rather than ranges, since every range would be its own
+  encode.
+
+Encodes run at most one per two cores at a time, and a request beyond that
+waits its turn. It needs `ffmpeg` with an AAC encoder: the one on the `PATH`
+is used, or `-ffmpeg` / `YAMO_FFMPEG` names another.
+`capabilities.transcodeFormats` says whether this server can do it; without an
+ffmpeg the endpoint answers `503` and everything else is unaffected.
+
 ### Keeping several clients in step
 
 `GET /v1/events` is a `text/event-stream` of every change. An edit made on a
@@ -742,9 +776,9 @@ and `actual`. A `scan_running` names the job already going.
 | `404` | No such track, job, backup or resource |
 | `409` | `conflict`, `exists`, `count_mismatch` or `scan_running` |
 | `413` | An uploaded cover above `limits.maxImageBytes` — refused, never truncated |
-| `422` | `unwritable`: this build reads the format but cannot write it |
+| `422` | `unwritable`: this build reads the format but cannot write it; `untranscodable`: ffmpeg could not decode the file |
 | `429` | The Discogs per-minute budget is spent; `Retry-After` says how long |
-| `503` | The Discogs lookup is turned off on this server |
+| `503` | The Discogs lookup is turned off on this server, or transcoding is (no ffmpeg) |
 
 ### Endpoint reference
 
@@ -762,7 +796,7 @@ of every parameter. This is the map.
 | `PATCH /v1/tracks/{id}` | Edit fields. `If-Match` |
 | `DELETE /v1/tracks/{id}` | Delete the file. `If-Match` |
 | `GET /v1/tracks/{id}/tags` | The file's raw metadata |
-| `GET /v1/tracks/{id}/audio` | The audio itself, ranges and all |
+| `GET /v1/tracks/{id}/audio` | The audio itself, ranges and all. `?as=aac` transcodes |
 | `POST /v1/tracks/{id}/rename` | Move one file |
 | **Browse** | |
 | `GET /v1/albums` | Albums, sorted and paged |
@@ -923,6 +957,7 @@ leave set rather than something to remember to run once.
 | `YAMO_TOKEN` | `-token` | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back. |
 | `YAMO_RESCAN_EVERY` | `-rescan-every` | `serve` | Optional. Rescans the catalogue's roots on this interval (`1h`, `30m`) — the same incremental scan, so a stat per file on an unchanged library. Unset, nothing is scanned unless asked: nothing watches the filesystem. A minute is the shortest accepted. |
 | `YAMO_DISCOGS_TOKEN` | `-discogs-token` | `serve` | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower. |
+| `YAMO_FFMPEG` | `-ffmpeg` | `serve` | Optional. The ffmpeg that transcodes audio for a device (`?as=aac`). Unset, the one on the `PATH` is used if it has an AAC encoder, and transcoding is off if not. Set, it must work or the server refuses to start. The Docker image has no ffmpeg: mount a static build in and point this at it. |
 | `YAMO_SERVER` | `-server` | every client command | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
 | `YAMO_NO_IMAGES` | — (no flag) | the terminal browser | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands. |
 
@@ -1135,6 +1170,9 @@ because nothing here is CPU-bound.
   happen. Run `yamo scan` after adding music, or start the server with
   `-rescan-every` to have it rescan on a timer.
 - One catalogue at a time; use `-catalog` to keep several.
+- Transcoding produces AAC only, and does not carry ReplayGain or Sound Check
+  values across. The Docker image ships without ffmpeg, so it is off there
+  unless one is mounted in.
 - The MCP tools cannot upload an image, read audio, or use the artwork
   clipboard; those need the HTTP API.
 

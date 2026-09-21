@@ -5,11 +5,13 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/discogs"
@@ -177,6 +179,10 @@ func (s *Server) getArtwork(w http.ResponseWriter, r *http.Request) {
 // what makes a player able to seek without pulling the whole file, and it
 // handles conditional requests from the modification time for free.
 func (s *Server) getAudio(w http.ResponseWriter, r *http.Request) {
+	if as := r.URL.Query().Get("as"); as != "" {
+		s.getTranscoded(w, r, as)
+		return
+	}
 	path, mime, err := s.svc.Audio(r.PathValue("id"))
 	if err != nil {
 		fail(w, err)
@@ -206,6 +212,61 @@ func (s *Server) getAudio(w http.ResponseWriter, r *http.Request) {
 	// catalogue already knows.
 	w.Header().Set("Content-Type", mime)
 	http.ServeContent(w, r, filepath.Base(path), fi.ModTime(), f)
+}
+
+// getTranscoded serves a track encoded into another format, for a device that
+// cannot play the original. The encode lands in a temporary file that is
+// removed once the response is written; see library/transcode.go for why it
+// is neither piped nor cached.
+func (s *Server) getTranscoded(w http.ResponseWriter, r *http.Request, as string) {
+	bitrate := 0
+	if v := r.URL.Query().Get("bitrate"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "bitrate must be a whole number of kbps")
+			return
+		}
+		bitrate = n
+	}
+	id, req := r.PathValue("id"), library.TranscodeRequest{As: as, Bitrate: bitrate}
+
+	// A client that already holds this rendition is answered before anything
+	// is encoded, which is the whole cost of the request.
+	etag, err := s.svc.TranscodeETag(id, req)
+	if err != nil {
+		failTranscode(w, r, err)
+		return
+	}
+	if notModified(w, r, etag) {
+		return
+	}
+
+	out, err := s.svc.Transcode(r.Context(), id, req)
+	if err != nil {
+		failTranscode(w, r, err)
+		return
+	}
+	defer out.Close()
+
+	w.Header().Set("Content-Type", out.MIME)
+	w.Header().Set("ETag", strconv.Quote(out.ETag))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": out.Name}))
+	// No modification time: the ETag names the rendition, and the source's
+	// time would let If-Modified-Since match a different bitrate of it.
+	http.ServeContent(w, r, out.Name, time.Time{}, out.File)
+}
+
+func failTranscode(w http.ResponseWriter, r *http.Request, err error) {
+	switch {
+	case r.Context().Err() != nil:
+		// The client went away; there is nobody to tell.
+	case errors.Is(err, library.ErrNoTranscode):
+		writeError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
+	case errors.Is(err, library.ErrUntranscodable):
+		writeError(w, http.StatusUnprocessableEntity, "untranscodable", err.Error())
+	default:
+		fail(w, err)
+	}
 }
 
 func writeImage(w http.ResponseWriter, pic *tags.Picture) {

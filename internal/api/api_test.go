@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,9 +63,13 @@ func newHarnessOpts(t *testing.T, tracks int, opts Options) *harness {
 		}
 	}
 
+	// Transcoding is on wherever this ffmpeg can do it, which is the case
+	// the transcoding tests need and changes nothing for the rest.
+	transcoder, _ := library.CheckFFmpeg(ff)
 	svc, err := library.Open(library.Options{
 		CatalogPath:  filepath.Join(dir, "catalog.db"),
 		SaveInterval: 50 * time.Millisecond,
+		FFmpeg:       transcoder,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -399,6 +404,72 @@ func TestAudioEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.do(t, http.MethodGet, "/v1/tracks/"+id+"/audio", nil, http.StatusNotFound)
+}
+
+// ?as=aac is the audio endpoint for a device that cannot play the original:
+// a tagged .m4a with a filename, and a 304 for a rendition the client already
+// holds, answered without encoding anything.
+func TestAudioTranscoded(t *testing.T) {
+	h := newHarness(t, 1)
+	if !h.svc.Capabilities(library.Serving{}).Features.Transcode {
+		t.Skip("this ffmpeg has no aac encoder")
+	}
+	track := h.firstTrack(t)
+	id := track["id"].(string)
+	url := "/v1/tracks/" + id + "/audio?as=aac&bitrate=128"
+
+	res, body := h.do(t, http.MethodGet, url, nil, http.StatusOK)
+	if ct := res.Header.Get("Content-Type"); ct != "audio/mp4" {
+		t.Errorf("Content-Type = %q, want audio/mp4", ct)
+	}
+	if cd := res.Header.Get("Content-Disposition"); cd != `attachment; filename="01 track.m4a"` {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	if res.Header.Get("Content-Length") != strconv.Itoa(len(body)) {
+		t.Errorf("Content-Length %q for %d bytes", res.Header.Get("Content-Length"), len(body))
+	}
+	if len(body) < 8 || string(body[4:8]) != "ftyp" {
+		t.Fatalf("the body is not an MP4: % x", body[:min(len(body), 16)])
+	}
+	etag := res.Header.Get("ETag")
+	if !strings.Contains(etag, track["version"].(string)) {
+		t.Errorf("ETag %s does not carry the track's version %s", etag, track["version"])
+	}
+
+	// The same rendition again is a 304, and a different bitrate is not.
+	h.doWith(t, http.MethodGet, url, nil, http.StatusNotModified, map[string]string{"If-None-Match": etag})
+	h.doWith(t, http.MethodGet, "/v1/tracks/"+id+"/audio?as=aac&bitrate=192", nil, http.StatusOK,
+		map[string]string{"If-None-Match": etag})
+
+	for _, q := range []string{"as=wav", "as=aac&bitrate=lots", "as=aac&bitrate=1000"} {
+		h.do(t, http.MethodGet, "/v1/tracks/"+id+"/audio?"+q, nil, http.StatusBadRequest)
+	}
+	h.do(t, http.MethodGet, "/v1/tracks/nosuchtrack/audio?as=aac", nil, http.StatusNotFound)
+
+	caps := h.getJSON(t, "/v1/capabilities", http.StatusOK)
+	if f, _ := caps["transcodeFormats"].([]any); len(f) != 1 || f[0] != "aac" {
+		t.Errorf("transcodeFormats = %v", caps["transcodeFormats"])
+	}
+}
+
+// Without an ffmpeg the endpoint says transcoding is off, rather than
+// failing as though the file were at fault.
+func TestAudioTranscodeUnavailable(t *testing.T) {
+	svc, err := library.Open(library.Options{CatalogPath: filepath.Join(t.TempDir(), "catalog.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(New(svc, Options{}))
+	defer func() { srv.Close(); svc.Close() }()
+
+	res, err := http.Get(srv.URL + "/v1/tracks/anything/audio?as=aac")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("status %d, want 503", res.StatusCode)
+	}
 }
 
 func TestArtworkEndpoints(t *testing.T) {

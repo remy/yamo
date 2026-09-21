@@ -47,6 +47,10 @@ type Options struct {
 	// is asked for. A rescan is incremental, so an unchanged library costs a
 	// stat per file rather than a re-read.
 	RescanInterval time.Duration
+
+	// FFmpeg is the encoder Transcode runs, already checked by CheckFFmpeg.
+	// Empty turns transcoding off, and the endpoint answers 503.
+	FFmpeg string
 }
 
 // Service owns the catalogue and performs every operation on it.
@@ -65,6 +69,9 @@ type Service struct {
 	clip    *artclip.Store
 	discogs *discogs.Client
 	thumbs  *thumbCache
+
+	// transcodes holds a token per encode in progress; see transcodeSlots.
+	transcodes chan struct{}
 
 	events *eventBus
 	jobs   *Jobs
@@ -136,6 +143,7 @@ func Open(opts Options) (*Service, error) {
 		opts:       opts,
 		clip:       artclip.New(opts.ClipboardDir),
 		thumbs:     newThumbCache(),
+		transcodes: make(chan struct{}, transcodeSlots()),
 		events:     newEventBus(),
 		done:       make(chan struct{}),
 		saveDone:   make(chan struct{}),

@@ -23,8 +23,8 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 102 tests, all clean under
-`-race`.
+contract, terminal browser, and command line. 278 test functions, all clean
+under `-race`.
 
 ---
 
@@ -131,22 +131,30 @@ person there to do that.
 
 | Path | Lines | Responsibility |
 | --- | --- | --- |
-| `api/` | 42 | `openapi.yaml` (966 lines) plus the Go embed. **The contract.** |
-| `internal/tags/` | 7,536 | Format parsers and writers. No third-party tag library. |
-| `internal/catalog/` | 1,410 | In-memory library, binary snapshot, search index, query language. |
-| `internal/scan/` | 694 | Parallel directory walk and tag extraction. |
-| `internal/library/` | 3,136 | **The service.** Owns the catalogue, all operations, jobs, events. |
-| `internal/api/` | 1,492 | **The server.** HTTP handlers over the service, SSE, docs page. |
-| `internal/client/` | 889 | Go client for the API. Everything below is built on it. |
-| `internal/ui/` | 4,296 | The terminal browser — a client, same as the command line. |
+| `api/` | 42 | `openapi.yaml` (3,163 lines) plus the Go embed. **The contract.** |
+| `internal/tags/` | 6,196 | Format parsers and writers. No third-party tag library. |
+| `internal/catalog/` | 1,810 | In-memory library, binary snapshot, search index, query language. |
+| `internal/scan/` | 438 | Parallel directory walk and tag extraction. |
+| `internal/library/` | 7,001 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
+| `internal/api/` | 1,539 | **The server.** HTTP handlers over the service, SSE, docs page. |
+| `internal/auth/` | 116 | How a request presents a credential and what that credential may do. Shared by the API and MCP. |
+| `internal/mcp/` | 1,180 | The Model Context Protocol endpoint at `/mcp`, over the service. |
+| `internal/discogs/` | 573 | Read-only Discogs client for the cover and album lookup. |
+| `internal/client/` | 687 | Go client for the API. Everything below is built on it. |
+| `internal/ui/` | 3,634 | The terminal browser — a client, same as the command line. |
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
-| `cmd/yamo/` | 1,431 | `serve`, plus the client commands. |
+| `cmd/yamo/` | 1,848 | `serve`, plus the client commands. |
 | `tools/genlib/` | 173 | Synthetic library generator, for benchmarking. |
 | `tools/tuidrive/` | — | Python: drives the terminal in a pty. Not shipped. |
 
 Direct dependencies are only `bubbletea`, `lipgloss`, `go-runewidth` and
 `yaml.v3`. Everything else — tag parsing, the search index, the HTTP layer,
 the API client — is written here.
+
+The one thing the binary runs rather than contains is `ffmpeg`, for
+transcoding, and it is optional: without it the server does everything else and
+the transcoding endpoint answers `503`. See §5, "Transcoding happens on
+request, into a temporary file, and is never cached".
 
 ---
 
@@ -302,6 +310,66 @@ that number is going to move on its own, and absence is a clear "no".
 Even when it finishes at once, so a client has one shape to handle rather than
 guessing which calls block. Progress streams over SSE.
 
+### Transcoding happens on request, into a temporary file, and is never cached
+
+`GET /v1/tracks/{id}/audio?as=aac` exists for a phone app that syncs an iPod
+connected to it. An iPod plays AAC and MP3 and none of FLAC, Ogg or Opus. The
+owner asked for this without a second copy of the library: one library is the
+point of the program. The code is `internal/library/transcode.go`. Four
+decisions in it look odd without the reasoning.
+
+**No cache.** The obvious alternative was a transcoded mirror, or a bounded
+cache of encodes on disk. Either one is a second copy of the music by another
+name, and a sync does not need one. A sync reads each track once, start to
+finish, and the client knows what is already on the device. The ETag is the
+track's `version` plus the settings (`<version>-aac256`), and
+`Service.TranscodeETag` works it out without encoding. So a client that sends
+it back as `If-None-Match` gets `304` before any encoder starts. Not
+re-encoding unchanged tracks is the client's job, and the version already
+gives it what it needs.
+
+**A temporary file rather than a pipe.** This was the first design and it does
+not work for MP4. The `moov` atom holds absolute offsets into the audio and is
+only known once the audio is written, so the muxer seeks back to write it.
+Over a pipe ffmpeg can only produce fragmented MP4, which Apple's import paths
+handle badly. A pipe would have been fine for MP3. A real file also gives the
+response a `Content-Length` and Range support through `http.ServeContent`, for
+no extra code. The file is deleted by `Transcoded.Close`, which the handler
+defers, and a failed or cancelled encode removes its own.
+
+**ffmpeg writes no tags; this library does.** The encode runs with
+`-map_metadata -1`, and the result is then tagged from the source through
+`tags.Write`, the same path as every other edit. ffmpeg's metadata mapping
+drops what this project keeps carefully: the three-state compilation flag and
+the sort fields in particular (§7). Tags are read from the file rather than
+from the catalogue, because the catalogue is a snapshot and does not hold
+artwork. Only the front cover is carried, since an iPod shows one. Gapless
+data is not carried either, because it describes the source encoder's padding
+and would be wrong for the new file.
+
+**Not a job.** Everything else long-running returns a job (below). A job would
+need somewhere to put its output until the client collected it, and that place
+would be a cache. The request stays synchronous, and a client disconnecting
+cancels the request context, which kills ffmpeg through
+`exec.CommandContext`. Concurrency is bounded instead: at most half the cores
+encode at once, and a request past the bound waits for a slot rather than
+getting a `429`. A syncing client would only retry, and the waiting request is
+cancelled if it goes away.
+
+The ffmpeg is checked once, at startup, by `CheckFFmpeg`, which asks for
+`-encoders` and looks for `aac`. The binary being on the `PATH` is not enough:
+a NAS vendor's ffmpeg is often built without encoders a desktop one has, and
+without the check every request would fail instead of the startup saying so.
+An ffmpeg named with `-ffmpeg` has to pass or the server refuses to start. One
+found on the `PATH` is optional, and transcoding is simply off without it.
+
+The encode itself is `-c:a aac` (ffmpeg's native encoder, present in every
+build) with `-f ipod` (MP4 with the `M4A ` brand iTunes writes),
+`-movflags +faststart`, `+bitexact` (see §12), `-ar 44100` for sources above
+48kHz and `-ac 2` for more than two channels. The iPod limits are 48kHz and
+stereo, and a track that exceeds them does not error on the device; it just
+skips.
+
 ### The browser stages edits despite a write-through API
 
 The API writes through on `PATCH`. The terminal deliberately does not: it holds
@@ -327,7 +395,8 @@ Contract: `api/openapi.yaml`, embedded and served at `/openapi.yaml`,
 may have no outbound access). 35 operations.
 
 Reading: `GET /v1/tracks` (q, sort, limit, offset), `/tracks/{id}`, `/albums`,
-`/artists`, `/values/{field}`, `/stats`, `/tracks/{id}/artwork`.
+`/artists`, `/values/{field}`, `/stats`, `/tracks/{id}/artwork`,
+`/tracks/{id}/audio` (with `?as=aac` to transcode; see §5).
 Writing: `PATCH /v1/tracks/{id}`, `PUT`/`DELETE` artwork, the clipboard.
 Files: `DELETE /v1/tracks/{id}` and `POST /v1/tracks/{id}/rename` — the only
 two that change which files exist rather than what is inside one. A rename is
@@ -633,6 +702,12 @@ On 100,000 synthetic MP3s (`tools/genlib`), M-series Mac, files in page cache:
 | Fuzzy search, unqualified (`~presly`) | 30 ms |
 | Snapshot encode / decode | 22 ms / 10 ms |
 
+Transcoding is measured separately, because it is ffmpeg's cost rather than
+this code's. A 4-minute stereo 44.1kHz FLAC to AAC at 256 kbps took 5.1 s on
+the same Mac with Homebrew's ffmpeg, about 47× realtime, and came to 7.5 MB.
+The NAS has not been measured; expect it to be several times slower per
+track, and one encode per two cores runs at a time.
+
 On a NAS the scan will be bound by disk and network, but the per-file work is
 the same. The snapshot is small because every repeated string is interned once.
 
@@ -718,6 +793,16 @@ Recorded because several were invisible to the obvious test:
 - **A bundled browser client.** `webapp/` was a working demo written directly
   against the schema and has since been removed; no browser client ships now.
   The OpenAPI contract is the thing to build one against — see §1.
+- **Transcoding to MP3**, or anything but AAC. `TranscodeFormats` is a list so
+  that adding one is an entry and an encoder argument, not a change of shape.
+  Deferred because an iPod plays AAC better at the same size.
+- **ReplayGain / Sound Check in transcoded files.** An iPod levels volume from
+  `iTunNORM`, which nothing writes for a transcoded file. The source's
+  ReplayGain could be converted into it.
+- **The Docker image has no ffmpeg.** It is distroless static, so transcoding
+  is off there unless a static ffmpeg is mounted in and named with
+  `YAMO_FFMPEG`. Adding one to the image was not done, because it would
+  change what the image is.
 - **`internal/artclip` and `cmd/yamo` have no tests of their own.** They are
   covered indirectly through the API and client suites.
 
@@ -727,6 +812,15 @@ Recorded because several were invisible to the obvious test:
 
 - **`ffmpeg` writes its own `TSSE` frame even with `-map_metadata -1`.** A
   "bare" fixture is not bare unless you strip the ID3 tag yourself.
+- **ffmpeg writes its own encoder tag into an MP4 too**, as `©too`
+  ("Lavf…"), even with `-map_metadata -1`. `-flags +bitexact -fflags
+  +bitexact` stops it. The transcoder passes both; a fixture meant to be
+  untagged needs them as well.
+- **The default Docker context on the owner's Mac is `my-nas`**, over SSH. A
+  plain `docker build` or `docker run` there runs on the NAS, not locally, and
+  a `-v /Users/...` bind mount comes up empty because that path does not
+  exist on the NAS. Pass `--context desktop-linux` for anything meant to run
+  on the Mac.
 - **ffmpeg exposes Ogg/Opus comments as *stream* tags, not format tags.**
   `ffprobe -show_entries format_tags` on an Ogg shows nothing even when the
   tags are fine. Use `stream_tags`.

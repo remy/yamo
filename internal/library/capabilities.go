@@ -50,6 +50,10 @@ type Capabilities struct {
 	JobKinds        []string `json:"jobKinds"`
 	ArtworkSources  []string `json:"artworkSources"`
 
+	// TranscodeFormats are the formats a track's audio can be asked for in.
+	// Empty when transcoding is off, which Features.Transcode also says.
+	TranscodeFormats []string `json:"transcodeFormats"`
+
 	// KeepTags is the default keep list a strip applies, which is what a
 	// client should show as the starting point before somebody edits it.
 	KeepTags []string `json:"defaultKeepTags"`
@@ -113,6 +117,11 @@ type Features struct {
 	// that wants to point an assistant at this library has no other way to
 	// find out short of posting to it.
 	MCP bool `json:"mcp"`
+
+	// Transcode says whether audio can be fetched in another format, which
+	// needs an ffmpeg with an AAC encoder. A client syncing a device that
+	// cannot play FLAC needs to know before it starts, not a track in.
+	Transcode bool `json:"transcode"`
 }
 
 // maxImageBytes is duplicated from the API layer's upload bound so that the
@@ -166,7 +175,12 @@ func (s *Service) Capabilities(sv Serving) Capabilities {
 			Rescan:         every > 0,
 			CrossOrigin:    sv.CrossOrigin,
 			MCP:            sv.MCP,
+			Transcode:      s.opts.FFmpeg != "",
 		},
+		TranscodeFormats: []string{},
+	}
+	if s.opts.FFmpeg != "" {
+		c.TranscodeFormats = append(c.TranscodeFormats, TranscodeFormats...)
 	}
 
 	for _, t := range tags.NewKeepSet(tags.DefaultKeepTags).Sorted() {
