@@ -626,6 +626,28 @@ func TestScanJob(t *testing.T) {
 	}
 }
 
+// Track numbers restart on each disc, so sorting by track must sort by disc
+// first or a double album comes out interleaved.
+func TestTrackSortIncludesDisc(t *testing.T) {
+	c := &catalog.Catalog{Tracks: []catalog.Track{
+		{Path: "a", Disc: 2, TrackNo: 1},
+		{Path: "b", Disc: 1, TrackNo: 2},
+		{Path: "c", Disc: 2, TrackNo: 2},
+		{Path: "d", Disc: 1, TrackNo: 1},
+	}}
+	for spec, want := range map[string]string{"track": "dbac", "-track": "cabd"} {
+		hits := []catalog.Hit{{Index: 0}, {Index: 1}, {Index: 2}, {Index: 3}}
+		sortHits(c, hits, spec, false)
+		got := ""
+		for _, h := range hits {
+			got += c.Tracks[h.Index].Path
+		}
+		if got != want {
+			t.Errorf("sort %q gave %s, want %s", spec, got, want)
+		}
+	}
+}
+
 func TestPatchWritesThrough(t *testing.T) {
 	s, _ := realService(t, 3)
 	first := s.List(ListParams{Sort: "track"}).Items[0]

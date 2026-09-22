@@ -155,6 +155,10 @@ which are written to the file but not indexed. `path` goes the other way: it is
 searchable and sortable but not editable, because moving a file is
 `POST /v1/tracks/rename` rather than an edit to a field.
 
+Sorting by `track` sorts by disc first, since track numbers start again on
+each disc: `album,track` plays a double album in order rather than
+interleaving its two discs.
+
 #### Fuzzy terms
 
 `~` loosens one term. It matches the value literally, or spread through the

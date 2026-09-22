@@ -189,7 +189,15 @@ func comparatorFor(name string) (func(a, b *catalog.Track) int, bool) {
 	case catalog.FieldYear:
 		return func(a, b *catalog.Track) int { return cmpInt64(int64(a.Year), int64(b.Year)) }, true
 	case catalog.FieldTrackNo:
-		return func(a, b *catalog.Track) int { return cmpInt64(int64(a.TrackNo), int64(b.TrackNo)) }, true
+		// Track numbers restart on each disc, so ordering by track alone
+		// interleaves a double album: 1-1, 2-1, 1-2, 2-2. Disc comes first so
+		// that "album,track" plays the record in order.
+		return func(a, b *catalog.Track) int {
+			if v := cmpInt64(int64(a.Disc), int64(b.Disc)); v != 0 {
+				return v
+			}
+			return cmpInt64(int64(a.TrackNo), int64(b.TrackNo))
+		}, true
 	case catalog.FieldDisc:
 		return func(a, b *catalog.Track) int { return cmpInt64(int64(a.Disc), int64(b.Disc)) }, true
 	}

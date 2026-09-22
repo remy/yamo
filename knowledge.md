@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 278 test functions, all clean
+contract, terminal browser, and command line. 279 test functions, all clean
 under `-race`.
 
 ---
