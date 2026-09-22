@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 279 test functions, all clean
+contract, terminal browser, and command line. 280 test functions, all clean
 under `-race`.
 
 ---
@@ -596,7 +596,7 @@ The file's iTunes artwork was byte-identical to what Discogs serves, and
 `setArtwork` deliberately refuses to rewrite a file for identical bytes. When
 testing this, pick an image that actually differs — a back cover will do.
 
-### The ID3 date is written twice, on purpose
+### The date is written twice, on purpose
 
 `writeID3v2` writes the year to `TYER` (or `TDRC` in a v2.4 tag) **and** to
 `TDRL`. ID3 separates when a recording was made from when it was released; MP4
@@ -615,6 +615,26 @@ whole library to v2.4, costs more compatibility than it buys.
 
 `stripID3` reports a file holding a year frame without `TDRL` as non-canonical,
 so a clean-up retrofits one.
+
+FLAC, Ogg and Opus had the same gap and it cost more than a missing date.
+Navidrome reads no release date from Vorbis `DATE`, and its default album
+identity (`PID.Album`) ends in `releasedate`. A FLAC in an album that also held
+MP3s or M4As therefore got an album id of its own and was shown as a separate
+album, even with every other grouping field identical. Setting the year now
+writes `DATE` and `RELEASEDATE`. `stripVorbisFields` flags a date without
+`RELEASEDATE` the same way, so a normalising strip retrofits one across a
+library.
+
+Before this, `RELEASEDATE` was not in `TagDate`'s Vorbis keys at all, so it
+resolved to nothing and **a default strip deleted it** from any file another
+tagger had given one. It is in the list now, and a Vorbis `TXXX:RELEASEDATE` on
+an ID3 tag resolves through the same table.
+
+A separately editable `releasedate` field was asked for and not built. The
+year is written to both fields on purpose, so an edit to the year would
+overwrite a separate value. Nothing in this library would read the two apart
+either. If a file ever needs a release date that differs from its year, that
+is the change to make, and it needs a snapshot version bump (§7).
 
 ### Artwork is edited through two different endpoints on purpose
 

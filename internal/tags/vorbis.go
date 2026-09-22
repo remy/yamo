@@ -144,7 +144,7 @@ func (vc *vorbisComment) applyTo(md *Metadata) {
 	setIfEmpty(&md.ComposerSort, vc.get("COMPOSERSORT"))
 
 	if md.Year == 0 {
-		md.Year = parseYear(vc.getAny("DATE", "YEAR", "ORIGINALDATE"))
+		md.Year = parseYear(vc.getAny("DATE", "YEAR", "RELEASEDATE", "ORIGINALDATE"))
 	}
 	if md.Track == 0 {
 		md.Track, md.TrackTotal = parsePair(vc.get("TRACKNUMBER"))

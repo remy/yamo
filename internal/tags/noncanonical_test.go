@@ -37,14 +37,14 @@ func TestNonCanonicalID3v22(t *testing.T) {
 // things, so nothing else may be reported — a clean-up that rewrote every file
 // for no reason would be worse than none.
 //
-// The one exception is the ID3 date: ffmpeg writes a year frame and no TDRL,
-// which is why an MP3 and an M4A of the same song disagree about the release
-// year. Writing the field adds one.
+// The one exception is the date: ffmpeg writes a year frame and no TDRL, or a
+// DATE and no RELEASEDATE, which is why an MP3 or a FLAC and an M4A of the
+// same song disagree about the release year. Writing the field adds one.
 func TestNonCanonicalCleanFile(t *testing.T) {
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, want string }{
 		{"clean.mp3", "date"},
-		{"clean.flac", ""},
+		{"clean.flac", "date"},
 		{"clean.m4a", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -226,6 +226,58 @@ func TestDateIsWrittenForBothMeanings(t *testing.T) {
 	// And it still reads back as one year, not two.
 	md, err := NewReader().ReadFile(path)
 	if err != nil || md.Year != 1989 {
+		t.Fatalf("read back year=%d err=%v", md.Year, err)
+	}
+	decodes(t, path)
+}
+
+// TestVorbisDateIsWrittenForBothMeanings is the FLAC half of the test above.
+// Navidrome reads no release date from DATE, and its album identity includes
+// the release date, so a FLAC carrying only DATE is filed as a different album
+// from the MP3s and M4As it was ripped beside.
+func TestVorbisDateIsWrittenForBothMeanings(t *testing.T) {
+	dir := t.TempDir()
+	path := genFile(t, dir, "dated.flac")
+
+	e := &Edit{}
+	e.SetInt("year", 1999)
+	if err := Write(path, e); err != nil {
+		t.Fatal(err)
+	}
+
+	// An empty keep set reports every field it finds, with its value.
+	rep, err := StripFile(path, KeepSet{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := map[string]string{}
+	for _, r := range rep.Removed {
+		fields[r.Name] = string(r.Raw)
+	}
+	if fields["RELEASEDATE"] != "1999" {
+		t.Errorf("RELEASEDATE = %q, want 1999", fields["RELEASEDATE"])
+	}
+	if fields["DATE"] != "1999" {
+		t.Errorf("DATE = %q, want 1999", fields["DATE"])
+	}
+
+	// Both are the date: a default strip keeps them, and a file carrying both
+	// has nothing left to tidy.
+	rep, err = StripFile(path, NewKeepSet(DefaultKeepTags), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rep.Removed {
+		if r.Name == "RELEASEDATE" || r.Name == "DATE" {
+			t.Errorf("default strip removes %s", r.Name)
+		}
+	}
+	if n := nonCanonicalNames(rep); n != "" {
+		t.Errorf("non-canonical = %q after writing the year, want none", n)
+	}
+
+	md, err := NewReader().ReadFile(path)
+	if err != nil || md.Year != 1999 {
 		t.Fatalf("read back year=%d err=%v", md.Year, err)
 	}
 	decodes(t, path)

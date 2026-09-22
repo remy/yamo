@@ -547,7 +547,7 @@ kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 | `track` | TRCK | TRACKNUMBER, TOTALTRACKS | trkn |
 | `disc` | TPOS | DISCNUMBER, TOTALDISCS | disk |
 | `genre` | TCON | GENRE | ©gen, gnre |
-| `date` | TDRC, TYER, TDRL | DATE, YEAR | ©day |
+| `date` | TDRC, TYER, TDRL | DATE, YEAR, RELEASEDATE | ©day |
 | `compilation` | TCMP | COMPILATION | cpil |
 | `composer` | TCOM | COMPOSER | ©wrt |
 | `titlesort` | TSOT | TITLESORT | sonm |
@@ -580,10 +580,12 @@ Note that `apID` holds the Apple ID that bought the file, which is an email
 address. Drop it on its own with a `keep` list minus `itunes`, or keep the rest
 and accept it.
 
-The date is written to `TDRL` as well as the year frame. ID3 separates when a
-recording was made from when it was released and MP4 does not, so an MP3
-carrying only a year frame reports no release date at all while an M4A of the
-same song reports one. Writing both makes the two formats agree.
+The date is written to `TDRL` as well as the year frame, and to `RELEASEDATE`
+as well as `DATE`. ID3 and Vorbis separate when a recording was made from when
+it was released and MP4 does not, so an MP3 or FLAC carrying only a year
+reports no release date at all while an M4A of the same song reports one.
+Writing both makes the formats agree. Navidrome groups albums by release date,
+so without it a FLAC shows up as a separate album from the MP3s beside it.
 
 Replace the list with `keep`, extend it with `also`. Names may be canonical
 (`albumartist`) or native to any format (`TPE2`, `ALBUMARTIST`, `aART`) — you
@@ -596,7 +598,7 @@ the default list would keep.
 
 `normalize` additionally rewrites kept fields a file does not hold the way
 this tool writes them: an ID3v2.2 frame, a genre stored as `(19)`, an MP4
-`gnre` atom, a Vorbis `PERFORMER`, a year with no `TDRL` beside it, a date
+`gnre` atom, a Vorbis `PERFORMER`, a year with no `TDRL` or `RELEASEDATE` beside it, a date
 carrying more than the year. The values do not change, only the form they are
 kept in — which is what decides whether the next tool along finds them, and
 whether editing one of them does anything.

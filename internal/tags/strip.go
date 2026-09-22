@@ -308,6 +308,12 @@ var vorbisAliases = map[string]bool{
 
 // stripVorbisFields filters a Vorbis comment in place and records what went.
 func stripVorbisFields(vc *vorbisComment, keep KeepSet, format Format, rep *StripReport) {
+	// Checked before the filter below, which rewrites vc.fields in place.
+	// A date with no RELEASEDATE beside it, for the reason stripID3 flags a
+	// year frame with no TDRL; see the date block in write_flac.go.
+	if keep[TagDate] && vc.get("RELEASEDATE") == "" && (vc.get("DATE") != "" || vc.get("YEAR") != "") {
+		rep.noteNonCanonical(TagDate)
+	}
 	out := vc.fields[:0]
 	for _, f := range vc.fields {
 		t := tagForVorbisField(f.key)

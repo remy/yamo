@@ -232,6 +232,13 @@ func applyEditToVorbis(vc *vorbisComment, e *Edit, cur *Metadata) {
 		}
 		vc.set("DATE", year)
 		vc.set("YEAR", "")
+		// RELEASEDATE as well, for the reason write_id3.go writes TDRL: a
+		// reader that keeps "recorded" and "released" apart finds no release
+		// date in a file holding only DATE, and Navidrome does not treat DATE
+		// as one. Its album identity includes the release date, so a FLAC
+		// with only DATE lands in a different album from an MP3 or M4A of
+		// the same record.
+		vc.set("RELEASEDATE", year)
 	}
 	if e.Track != nil {
 		vc.set("TRACKNUMBER", numOrEmpty(*e.Track))
