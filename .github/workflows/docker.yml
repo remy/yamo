@@ -70,10 +70,16 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
 
+      # version is the tag on a vX.Y.Z build and empty otherwise, which
+      # leaves the Dockerfile's fallback to decide — a :latest image off main
+      # reports the commit rather than pretending to be a release.
       - uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+            COMMIT=${{ github.sha }}
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

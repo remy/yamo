@@ -21,8 +21,22 @@ COPY . .
 
 ARG TARGETOS
 ARG TARGETARCH
+
+# VERSION and COMMIT are stamped into the binary so that `yamo version`
+# inside the container reports the image's tag rather than "dev" — see
+# cmd/yamo/version.go. docker.yml passes both.
+#
+# They default to empty so a plain `docker build` still works, and it does
+# report "dev": the toolchain's own VCS stamping cannot cover for them here,
+# because .dockerignore excludes .git and the build stage therefore has no
+# repository to read. Pass --build-arg COMMIT=$(git rev-parse --short HEAD)
+# to a hand-built image you intend to keep.
+ARG VERSION=""
+ARG COMMIT=""
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/yamo ./cmd/yamo
+    go build -trimpath \
+      -ldflags="-s -w -X main.version=$VERSION -X main.commit=$COMMIT" \
+      -o /out/yamo ./cmd/yamo
 
 # distroless static: no shell, no package manager, nothing to exploit if the
 # API is ever tricked into running something — and it still carries CA

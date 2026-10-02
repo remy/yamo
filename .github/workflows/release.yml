@@ -1,0 +1,127 @@
+name: release
+
+# Builds the pre-built binaries a release offers and attaches them to the
+# GitHub Release for the tag that triggered it.
+#
+# This is a separate workflow from docker.yml, and repeats its test job rather
+# than chaining off it, because the two publish different things to different
+# places and either should be able to fail without taking the other with it.
+# A tag therefore runs the suite twice; that is a few CI minutes against two
+# workflows that are each correct on their own, which is the better trade.
+#
+# workflow_dispatch builds everything and publishes nothing, uploading the
+# archives as a run artifact instead. That is the way to check the packaging
+# without spending a version number on it.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+      # The tag round-trip tests encode real files with ffmpeg and skip
+      # without it — installed here so CI runs them rather than skipping.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  binaries:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      # To create the release and attach the archives to it.
+      contents: write
+    steps:
+      # fetch-depth: 0 because the Makefile derives VERSION from `git
+      # describe` when it is not given one, and --generate-notes below needs
+      # the history between this tag and the last.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      # The build commands live in the Makefile, not here, so that `make
+      # dist` locally and the release are the same thing by construction. On
+      # a tag the version is the tag; on a manual run the Makefile's own
+      # `git describe` default applies and names it after the commit.
+      - name: Build the release archives
+        run: make dist ${{ startsWith(github.ref, 'refs/tags/v') && format('VERSION={0}', github.ref_name) || '' }}
+
+      - name: Show what was built
+        run: ls -l dist/*.tar.gz dist/*.zip dist/checksums.txt
+
+      # A manual run stops here. The archives are downloadable from the run
+      # for a fortnight, which is all a packaging check needs.
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          name: yamo-archives
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          retention-days: 14
+
+      # gh is preinstalled on the runner, so this needs no third-party action
+      # for something as consequential as publishing a release.
+      #
+      # --generate-notes writes the commit list; the body below goes above it
+      # and says how to verify a download, because a checksums file nobody
+      # knows the command for is decoration. --verify-tag refuses to invent a
+      # release for a tag that is not on the remote.
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'EOF'
+          Pre-built static binaries. Each archive holds a single `yamo`
+          executable with no runtime dependencies — unpack it anywhere on the
+          path and run `yamo version` to confirm what you have.
+
+          | Platform | Archive |
+          | --- | --- |
+          | NAS, Linux server, PC (x86-64) | `linux_amd64` |
+          | NAS, Raspberry Pi 4/5, ARM server | `linux_arm64` |
+          | Apple Silicon Mac | `darwin_arm64` |
+          | Intel Mac | `darwin_amd64` |
+          | Windows | `windows_amd64` |
+
+          Verify a download against `checksums.txt`:
+
+          ```sh
+          sha256sum --ignore-missing -c checksums.txt
+          ```
+
+          macOS has no `sha256sum`; use `shasum -a 256 -c checksums.txt`
+          instead. macOS will also refuse to run an unsigned binary
+          downloaded from the internet until it is cleared:
+
+          ```sh
+          xattr -d com.apple.quarantine yamo
+          ```
+
+          The server is also published as a container image — see
+          `ghcr.io/remy/yamo` and the Docker section of the README.
+          EOF
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --verify-tag \
+            --generate-notes \
+            --notes-file notes.md \
+            dist/*.tar.gz dist/*.zip dist/checksums.txt

@@ -33,8 +33,10 @@ under `-race`.
 ```sh
 make build          # dist/yamo for this machine
 make nas            # dist/yamo-linux-{amd64,arm64}, static, no cgo
-make test           # go test ./...
+make dist           # the five release archives plus checksums.txt
+make test           # go test -race ./...
 make bench          # search and catalogue benchmarks
+make version        # what a build made right now would call itself
 ```
 
 The server owns everything; every other command is a client.
@@ -56,6 +58,10 @@ code agrees with itself.
 
 ### Releasing
 
+There are three ways a build reaches something that runs it, and they are
+independent: the NAS share, the container registry, and the pre-built binaries
+on a GitHub Release.
+
 ```sh
 make release        # builds and copies to /Volumes/Media/yamo
 ```
@@ -76,6 +82,68 @@ server, but restarting it does apply the new build.
 Paths differ between the two machines: the Mac sees `/Volumes/Media/music`,
 the NAS sees `/volume1/Media/music`. Scans run on the server, so the roots
 given to `yamo scan` must be the **NAS's** paths.
+
+### Pre-built binaries
+
+`.github/workflows/release.yml` publishes a GitHub Release on a `vX.Y.Z` tag,
+carrying one archive per platform — `linux/{amd64,arm64}`,
+`darwin/{amd64,arm64}` and `windows/amd64` — plus a `checksums.txt` over the
+set. Linux and macOS get a `.tar.gz`, Windows a `.zip`, and each one holds the
+executable under the plain name `yamo` (or `yamo.exe`) alongside the README.
+The platform is in the archive's name so that nobody has to rename a file
+after unpacking.
+
+Windows is on that list because the terminal browser genuinely works there:
+Bubble Tea reads a Windows console directly rather than requiring a pty, so
+the TUI is not Unix-only the way it would be if the input layer had been
+hand-rolled. It has not been tested on Windows, though, which is a different
+claim.
+
+The workflow does not carry its own build commands. It runs `make dist`, so
+the archives a release ships and the archives `make dist` produces on a laptop
+are the same thing by construction and cannot drift. If `make dist` is broken,
+the release is broken, and that is visible before a tag is pushed —
+`workflow_dispatch` builds the whole set and publishes nothing, uploading it as
+a run artifact instead, which is how to check the packaging without spending a
+version number on it.
+
+`release.yml` repeats `docker.yml`'s test job rather than chaining off it. A
+tag therefore runs the suite twice. That is deliberate: the two workflows
+publish different artifacts to different places, and neither should be able to
+fail the other. A few CI minutes is the cheaper side of that trade.
+
+### The version a binary reports
+
+`yamo version` exists because of the pre-built binaries. A binary somebody
+downloaded has no `git` directory to ask and no package manager to consult, so
+without it a bug report cannot say which build it came from.
+
+The version is stamped at link time (`-ldflags -X main.version=...`) by the
+Makefile, by `release.yml` from the tag, and by the Dockerfile from build args
+`docker.yml` passes. Nothing else in the program is set this way.
+
+The awkward part is the fallback, in `cmd/yamo/version.go`. The two stamps are
+left **empty** rather than defaulted to `"dev"`, because an empty value is how
+the code tells an unstamped build from a stamped one and knows to go looking at
+`debug.ReadBuildInfo` instead. That matters for `go install
+github.com/remy/yamo/cmd/yamo@v1.0.0`, which never runs the Makefile and would
+otherwise call itself a development build.
+
+But `ReadBuildInfo` cannot simply be trusted, which is the part that will look
+paranoid. It does not go quiet for a local build: it reports `(devel)` in some
+cases and in others synthesises a pseudo-version from the commit, so a plain
+`go build` in this checkout yields `0.0.0-20260922210735-a1a25e9e27de+dirty`.
+Printing that would announce a release that does not exist. So a module version
+is accepted only when it is tag-shaped — a `v` prefix, no `+` build metadata,
+and none of the 14-digit timestamps that mark a pseudo-version — and anything
+else falls through to `dev` plus the short commit, which is both shorter and
+more honest. The commit in that fallback comes from the `vcs.revision` the
+toolchain stamps into any build made inside a git checkout, which is why an
+unstamped `go build` still produces something traceable.
+
+A container is the exception: `.dockerignore` excludes `.git`, so the build
+stage has no repository and the toolchain stamps nothing. An image built by
+hand with no `--build-arg` reports `dev` with no commit at all.
 
 ### Where the catalogue lives
 
@@ -143,7 +211,7 @@ person there to do that.
 | `internal/client/` | 687 | Go client for the API. Everything below is built on it. |
 | `internal/ui/` | 3,634 | The terminal browser — a client, same as the command line. |
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
-| `cmd/yamo/` | 1,848 | `serve`, plus the client commands. |
+| `cmd/yamo/` | 2,013 | `serve`, plus the client commands and the build stamp (`version.go`). |
 | `tools/genlib/` | 173 | Synthetic library generator, for benchmarking. |
 | `tools/tuidrive/` | — | Python: drives the terminal in a pty. Not shipped. |
 

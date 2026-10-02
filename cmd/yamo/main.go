@@ -28,6 +28,7 @@ Usage:
   yamo strip [flags] [query]   remove every tag except a fixed set
   yamo restore [flags]         put stripped tags back from a backup
   yamo info [flags]            show catalogue statistics
+  yamo version                 print the version of this binary
   yamo help [command]          usage for a command
 
 Run "yamo help <command>" for the flags a command accepts.
@@ -109,6 +110,14 @@ func run(args []string) error {
 		return nil
 	}
 
+	// -version is accepted as a flag as well as a command, because that is
+	// where everyone looks first, and the browser is the default command so
+	// there is nothing else it could sensibly mean.
+	if cmd == "" && len(args) > 0 && isVersionFlag(args[0]) {
+		fmt.Println(versionLine())
+		return nil
+	}
+
 	switch cmd {
 	case "scan":
 		return cmdScan(args)
@@ -124,6 +133,8 @@ func run(args []string) error {
 		return cmdRestore(args)
 	case "info":
 		return cmdInfo(args)
+	case "version":
+		return cmdVersion(args)
 	case "", "browse", "tui":
 		return cmdBrowse(args)
 	case "help":
@@ -163,6 +174,8 @@ func cmdHelp(args []string) error {
 		return cmdRestore([]string{"-h"})
 	case "info":
 		return cmdInfo([]string{"-h"})
+	case "version":
+		return cmdVersion([]string{"-h"})
 	case "browse", "tui":
 		return cmdBrowse([]string{"-h"})
 	}
