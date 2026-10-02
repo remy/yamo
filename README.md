@@ -4,7 +4,7 @@
 
 **An HTTP API and MCP for your music library.**
 
-YAMO is a single-binary HTTP API (plus MCP server) that catalogues a large music library, searches it instantly, and writes tags back into the files themselves.
+YAMO is a single-binary HTTP API (plus [MCP server](#connecting-an-assistant-mcp)) that catalogues a large music library, searches it instantly, and writes tags back into the files themselves.
 
 ---
 
@@ -902,13 +902,13 @@ Pre-built binaries for every release are on the
 static executable that depends on nothing on the target — no libc version to
 match, no runtime to install, no database server.
 
-| Platform | Archive |
-| --- | --- |
-| NAS, Linux server or PC, x86-64 | `yamo_<version>_linux_amd64.tar.gz` |
-| NAS or ARM server, Raspberry Pi 4/5 (64-bit) | `yamo_<version>_linux_arm64.tar.gz` |
-| Apple Silicon Mac | `yamo_<version>_darwin_arm64.tar.gz` |
-| Intel Mac | `yamo_<version>_darwin_amd64.tar.gz` |
-| Windows | `yamo_<version>_windows_amd64.zip` |
+| Platform                                     | Archive                              |
+| -------------------------------------------- | ------------------------------------ |
+| NAS, Linux server or PC, x86-64              | `yamo_<version>_linux_amd64.tar.gz`  |
+| NAS or ARM server, Raspberry Pi 4/5 (64-bit) | `yamo_<version>_linux_arm64.tar.gz`  |
+| Apple Silicon Mac                            | `yamo_<version>_darwin_arm64.tar.gz` |
+| Intel Mac                                    | `yamo_<version>_darwin_amd64.tar.gz` |
+| Windows                                      | `yamo_<version>_windows_amd64.zip`   |
 
 UGREEN NASync boxes are x86-64, so `linux_amd64` is the one you want:
 
