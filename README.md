@@ -2,10 +2,16 @@
 
 ![YAMO — the green music organiser](yamo.jpg)
 
-**An HTTP API for a large music library.** It catalogues a library fast,
-searches it instantly, and edits the tags in the files themselves — including
-across hundreds of thousands of tracks at once. Every one of those operations
-is an endpoint, described by an OpenAPI 3.1 schema the server serves itself.
+**An HTTP API and MCP for your music library.**
+
+YAMO is a single-binary HTTP API (plus MCP server) that catalogues a large music library, searches it instantly, and writes tags back into the files themselves.
+
+---
+
+It catalogues a library fast, searches it instantly, and edits the tags in the
+files themselves — including across hundreds of thousands of tracks at once.
+Every one of those operations is an endpoint, described by an OpenAPI 3.1
+schema the server serves itself.
 
 The API is the program. The terminal browser and the `scan`/`find`/`art`/
 `strip` commands ship in the same binary and are worth having, but they are
@@ -79,23 +85,23 @@ pastes do it on request. See [Undo](#undo).
 The query language is the same in every endpoint that takes a `q` or a
 `Selector`, in the search bar, and on the command line.
 
-| Query | Matches |
-| --- | --- |
-| `elvis` | any text field contains "elvis" |
-| `artist:elvis` | just the artist field |
-| `artist:"elvis presley"` | quoted values may contain spaces |
-| `artist:^elvis` | the field begins with it |
-| `artist:presley$` | the field ends with it |
-| `artist:"^elvis presley$"` | the whole field, exactly |
-| `artist:~presly` | fuzzy: near misses count, and are scored |
-| `year:1977` | exact year |
-| `year:>1980`, `year:<=1969` | comparisons |
-| `year:1970-1979` | an inclusive range |
-| `-genre:christmas` | exclude matches |
-| `album:` | tracks where the field is empty |
-| `compilation:1` | the Various Artists flag is set (`comp:`, `va:`) |
-| `albumartistsort:various` | the sort fields, by name only (`aas:`, `as:`, …) |
-| `artist:elvis year:>1960` | terms are ANDed |
+| Query                       | Matches                                          |
+| --------------------------- | ------------------------------------------------ |
+| `elvis`                     | any text field contains "elvis"                  |
+| `artist:elvis`              | just the artist field                            |
+| `artist:"elvis presley"`    | quoted values may contain spaces                 |
+| `artist:^elvis`             | the field begins with it                         |
+| `artist:presley$`           | the field ends with it                           |
+| `artist:"^elvis presley$"`  | the whole field, exactly                         |
+| `artist:~presly`            | fuzzy: near misses count, and are scored         |
+| `year:1977`                 | exact year                                       |
+| `year:>1980`, `year:<=1969` | comparisons                                      |
+| `year:1970-1979`            | an inclusive range                               |
+| `-genre:christmas`          | exclude matches                                  |
+| `album:`                    | tracks where the field is empty                  |
+| `compilation:1`             | the Various Artists flag is set (`comp:`, `va:`) |
+| `albumartistsort:various`   | the sort fields, by name only (`aas:`, `as:`, …) |
+| `artist:elvis year:>1960`   | terms are ANDed                                  |
 
 Matching is case- and accent-insensitive in both directions: `bjork` finds
 Björk, and `Beyoncé` finds Beyoncé. Unqualified terms search the display tag
@@ -110,25 +116,25 @@ key, the `$field` in a rename or split template, and the key in the body of an
 edit. The short forms exist because the search bar is typed into live; the
 canonical name is the one to use from a script.
 
-| Field | Also | Matches |
-| --- | --- | --- |
-| `title` | `t`, `name` | the track title |
-| `artist` | `a`, `ar` | the performer |
-| `albumartist` | `aa`, `band` | the album's artist — what `/v1/albums` and `/v1/artists` group on |
-| `album` | `al`, `b` | the album title |
-| `genre` | `g` | the genre |
-| `composer` | `c` | the composer |
-| `comment` | | the free-text comment |
-| `year` | `y`, `date` | *numeric.* The year, parsed out of a fuller date if the file carries one |
-| `track` | `trackno`, `n` | *numeric.* The track number |
-| `disc` | `d` | *numeric.* The disc number |
-| `compilation` | `comp`, `va` | *numeric.* The Various Artists flag: `1` set, `0` not |
-| `path` | `p`, `file` | the full path of the file on disk |
-| `titlesort` | `ts` | the sort form of the title |
-| `artistsort` | `as` | the sort form of the artist |
-| `albumsort` | `als` | the sort form of the album |
-| `albumartistsort` | `aas` | the sort form of the album artist |
-| `composersort` | `cs` | the sort form of the composer |
+| Field             | Also           | Matches                                                                  |
+| ----------------- | -------------- | ------------------------------------------------------------------------ |
+| `title`           | `t`, `name`    | the track title                                                          |
+| `artist`          | `a`, `ar`      | the performer                                                            |
+| `albumartist`     | `aa`, `band`   | the album's artist — what `/v1/albums` and `/v1/artists` group on        |
+| `album`           | `al`, `b`      | the album title                                                          |
+| `genre`           | `g`            | the genre                                                                |
+| `composer`        | `c`            | the composer                                                             |
+| `comment`         |                | the free-text comment                                                    |
+| `year`            | `y`, `date`    | *numeric.* The year, parsed out of a fuller date if the file carries one |
+| `track`           | `trackno`, `n` | *numeric.* The track number                                              |
+| `disc`            | `d`            | *numeric.* The disc number                                               |
+| `compilation`     | `comp`, `va`   | *numeric.* The Various Artists flag: `1` set, `0` not                    |
+| `path`            | `p`, `file`    | the full path of the file on disk                                        |
+| `titlesort`       | `ts`           | the sort form of the title                                               |
+| `artistsort`      | `as`           | the sort form of the artist                                              |
+| `albumsort`       | `als`          | the sort form of the album                                               |
+| `albumartistsort` | `aas`          | the sort form of the album artist                                        |
+| `composersort`    | `cs`           | the sort form of the composer                                            |
 
 The four numeric fields are the ones that take `>`, `<`, `>=`, `<=` and
 `1970-1979`; on them `~` and the anchors are ignored, since there is nothing
@@ -387,12 +393,12 @@ JOB=$(curl -sX POST localhost:8467/v1/tracks/batch -H 'Content-Type: application
 curl -X POST localhost:8467/v1/jobs/$JOB/undo     # put it all back
 ```
 
-| Operation | Journals |
-| --- | --- |
-| `POST /v1/tracks/batch` | by default |
-| `POST /v1/tracks/split` | by default |
-| `POST /v1/tracks/rename` | by default |
-| `POST /v1/strip` | on `"backup": true` |
+| Operation                | Journals            |
+| ------------------------ | ------------------- |
+| `POST /v1/tracks/batch`  | by default          |
+| `POST /v1/tracks/split`  | by default          |
+| `POST /v1/tracks/rename` | by default          |
+| `POST /v1/strip`         | on `"backup": true` |
 | `POST /v1/artwork/batch` | on `"backup": true` |
 
 The two defaults differ because the costs do. An edit's journal is a line of
@@ -538,27 +544,27 @@ The keep list is written in canonical names rather than in the identifiers any
 one container uses, so the same list applies everywhere. An album artist is
 kept whether the file spells it `TPE2`, `ALBUMARTIST` or `aART`:
 
-| tag | mp3 | flac / ogg / opus | mp4 |
-| --- | --- | --- | --- |
-| `title` | TIT2 | TITLE | ©nam |
-| `artist` | TPE1 | ARTIST PERFORMER | ©ART |
-| `album` | TALB | ALBUM | ©alb |
-| `albumartist` | TPE2 | ALBUMARTIST, ALBUM ARTIST | aART |
-| `track` | TRCK | TRACKNUMBER, TOTALTRACKS | trkn |
-| `disc` | TPOS | DISCNUMBER, TOTALDISCS | disk |
-| `genre` | TCON | GENRE | ©gen, gnre |
-| `date` | TDRC, TYER, TDRL | DATE, YEAR, RELEASEDATE | ©day |
-| `compilation` | TCMP | COMPILATION | cpil |
-| `composer` | TCOM | COMPOSER | ©wrt |
-| `titlesort` | TSOT | TITLESORT | sonm |
-| `artistsort` | TSOP | ARTISTSORT | soar |
-| `albumsort` | TSOA | ALBUMSORT | soal |
-| `albumartistsort` | TSO2 | ALBUMARTISTSORT | soaa |
-| `composersort` | TSOC | COMPOSERSORT | soco |
-| `artwork` | APIC | METADATA_BLOCK_PICTURE | covr |
-| `gapless` | COMM:iTunSMPB | — | pgap, iTunSMPB |
-| `soundcheck` | COMM:iTunNORM | — | iTunNORM |
-| `itunes` | — | — | stik, apID, purd, cnID, atID, plID, … |
+| tag               | mp3              | flac / ogg / opus         | mp4                                   |
+| ----------------- | ---------------- | ------------------------- | ------------------------------------- |
+| `title`           | TIT2             | TITLE                     | ©nam                                  |
+| `artist`          | TPE1             | ARTIST PERFORMER          | ©ART                                  |
+| `album`           | TALB             | ALBUM                     | ©alb                                  |
+| `albumartist`     | TPE2             | ALBUMARTIST, ALBUM ARTIST | aART                                  |
+| `track`           | TRCK             | TRACKNUMBER, TOTALTRACKS  | trkn                                  |
+| `disc`            | TPOS             | DISCNUMBER, TOTALDISCS    | disk                                  |
+| `genre`           | TCON             | GENRE                     | ©gen, gnre                            |
+| `date`            | TDRC, TYER, TDRL | DATE, YEAR, RELEASEDATE   | ©day                                  |
+| `compilation`     | TCMP             | COMPILATION               | cpil                                  |
+| `composer`        | TCOM             | COMPOSER                  | ©wrt                                  |
+| `titlesort`       | TSOT             | TITLESORT                 | sonm                                  |
+| `artistsort`      | TSOP             | ARTISTSORT                | soar                                  |
+| `albumsort`       | TSOA             | ALBUMSORT                 | soal                                  |
+| `albumartistsort` | TSO2             | ALBUMARTISTSORT           | soaa                                  |
+| `composersort`    | TSOC             | COMPOSERSORT              | soco                                  |
+| `artwork`         | APIC             | METADATA_BLOCK_PICTURE    | covr                                  |
+| `gapless`         | COMM:iTunSMPB    | —                         | pgap, iTunSMPB                        |
+| `soundcheck`      | COMM:iTunNORM    | —                         | iTunNORM                              |
+| `itunes`          | —                | —                         | stik, apID, purd, cnID, atID, plID, … |
 
 `compilation` is the flag that stops a Various Artists album fragmenting into
 one album per track. The sort tags are what put "The Beatles" under B, and they
@@ -774,75 +780,75 @@ name is `exists` rather than `conflict`, because the answer is "choose another
 name" rather than "re-read and retry". A `count_mismatch` carries `expected`
 and `actual`. A `scan_running` names the job already going.
 
-| Status | When |
-| --- | --- |
-| `400` | The request was malformed, or named an unknown field |
-| `401` | No token, or the wrong one |
-| `403` | `read_only`: the token is good but may not write |
-| `404` | No such track, job, backup or resource |
-| `409` | `conflict`, `exists`, `count_mismatch` or `scan_running` |
-| `413` | An uploaded cover above `limits.maxImageBytes` — refused, never truncated |
-| `422` | `unwritable`: this build reads the format but cannot write it; `untranscodable`: ffmpeg could not decode the file |
-| `429` | The Discogs per-minute budget is spent; `Retry-After` says how long |
-| `503` | The Discogs lookup is turned off on this server, or transcoding is (no ffmpeg) |
+| Status | When                                                                                                              |
+| ------ | ----------------------------------------------------------------------------------------------------------------- |
+| `400`  | The request was malformed, or named an unknown field                                                              |
+| `401`  | No token, or the wrong one                                                                                        |
+| `403`  | `read_only`: the token is good but may not write                                                                  |
+| `404`  | No such track, job, backup or resource                                                                            |
+| `409`  | `conflict`, `exists`, `count_mismatch` or `scan_running`                                                          |
+| `413`  | An uploaded cover above `limits.maxImageBytes` — refused, never truncated                                         |
+| `422`  | `unwritable`: this build reads the format but cannot write it; `untranscodable`: ffmpeg could not decode the file |
+| `429`  | The Discogs per-minute budget is spent; `Retry-After` says how long                                               |
+| `503`  | The Discogs lookup is turned off on this server, or transcoding is (no ffmpeg)                                    |
 
 ### Endpoint reference
 
 The schema at `/openapi.yaml` is authoritative and carries the full description
 of every parameter. This is the map.
 
-| | |
-| --- | --- |
-| **Server** | |
-| `GET /v1/capabilities` | What this build can do. No token required |
-| `GET /v1/me` | Whether the token works |
-| **Tracks** | |
-| `GET /v1/tracks` | Search, sort and page |
-| `GET /v1/tracks/{id}` | One track. `ETag`, `If-None-Match` |
-| `PATCH /v1/tracks/{id}` | Edit fields. `If-Match` |
-| `DELETE /v1/tracks/{id}` | Delete the file. `If-Match` |
-| `GET /v1/tracks/{id}/tags` | The file's raw metadata |
-| `GET /v1/tracks/{id}/audio` | The audio itself, ranges and all. `?as=aac` transcodes |
-| `POST /v1/tracks/{id}/rename` | Move one file |
-| **Browse** | |
-| `GET /v1/albums` | Albums, sorted and paged |
-| `GET /v1/artists` | Artists, sorted and paged |
-| `GET /v1/folders` | One level of the directory tree |
-| `GET /v1/duplicates` | The same recording more than once |
-| `GET /v1/values/{field}` | Distinct values, for autocomplete |
-| `GET /v1/stats` | Counts, totals, and what is missing |
-| **Batch** | |
-| `POST /v1/tracks/batch` | One set of changes across a selection |
-| `POST /v1/tracks/split` | Pull the fields a title carries into their own tags |
-| `POST /v1/tracks/rename` | Rename a selection after its tags |
-| `POST /v1/strip` | Remove every tag not on a keep list |
-| `GET /v1/backups` | The undo journals |
-| `GET /v1/backups/{id}` | What one journal holds |
-| `DELETE /v1/backups/{id}` | Discard a journal |
-| `POST /v1/restore` | Put a journal back |
-| **Artwork** | |
-| `GET /v1/tracks/{id}/artwork` | The cover, optionally scaled with `?size=` |
-| `PUT /v1/tracks/{id}/artwork` | Replace it. `If-Match` |
-| `DELETE /v1/tracks/{id}/artwork` | Remove it. `If-Match` |
-| `POST /v1/artwork/batch` | Set or clear art across a selection |
-| `POST /v1/artwork/export` | Write embedded covers out as `cover.jpg` |
-| `GET /v1/artwork/summary` | Group identical covers across a selection |
-| `GET·PUT·DELETE /v1/clipboard/artwork` | The server-side clipboard |
-| `PUT /v1/clipboard/artwork/from-track/{id}` | Copy a track's cover to it |
-| `PUT /v1/clipboard/artwork/from-url` | Copy a Discogs cover to it |
-| **Discogs** | |
-| `GET /v1/discogs/search` | Find album covers |
-| `GET /v1/discogs/masters/{id}` | Every image on a master |
-| `GET /v1/discogs/album` | Look an album up for its year and genre |
-| **Jobs and scanning** | |
-| `GET /v1/jobs` | Filtered, paged |
-| `GET /v1/jobs/{id}` | One job |
-| `DELETE /v1/jobs/{id}` | Cancel it |
-| `POST /v1/jobs/{id}/undo` | Reverse it |
-| `GET /v1/jobs/{id}/events` | Stream its progress |
-| `GET /v1/events` | Stream every change. Resumable |
-| `GET /v1/scans` | Whether a scan is running |
-| `POST /v1/scans` | Bring the catalogue up to date |
+|                                             |                                                        |
+| ------------------------------------------- | ------------------------------------------------------ |
+| **Server**                                  |                                                        |
+| `GET /v1/capabilities`                      | What this build can do. No token required              |
+| `GET /v1/me`                                | Whether the token works                                |
+| **Tracks**                                  |                                                        |
+| `GET /v1/tracks`                            | Search, sort and page                                  |
+| `GET /v1/tracks/{id}`                       | One track. `ETag`, `If-None-Match`                     |
+| `PATCH /v1/tracks/{id}`                     | Edit fields. `If-Match`                                |
+| `DELETE /v1/tracks/{id}`                    | Delete the file. `If-Match`                            |
+| `GET /v1/tracks/{id}/tags`                  | The file's raw metadata                                |
+| `GET /v1/tracks/{id}/audio`                 | The audio itself, ranges and all. `?as=aac` transcodes |
+| `POST /v1/tracks/{id}/rename`               | Move one file                                          |
+| **Browse**                                  |                                                        |
+| `GET /v1/albums`                            | Albums, sorted and paged                               |
+| `GET /v1/artists`                           | Artists, sorted and paged                              |
+| `GET /v1/folders`                           | One level of the directory tree                        |
+| `GET /v1/duplicates`                        | The same recording more than once                      |
+| `GET /v1/values/{field}`                    | Distinct values, for autocomplete                      |
+| `GET /v1/stats`                             | Counts, totals, and what is missing                    |
+| **Batch**                                   |                                                        |
+| `POST /v1/tracks/batch`                     | One set of changes across a selection                  |
+| `POST /v1/tracks/split`                     | Pull the fields a title carries into their own tags    |
+| `POST /v1/tracks/rename`                    | Rename a selection after its tags                      |
+| `POST /v1/strip`                            | Remove every tag not on a keep list                    |
+| `GET /v1/backups`                           | The undo journals                                      |
+| `GET /v1/backups/{id}`                      | What one journal holds                                 |
+| `DELETE /v1/backups/{id}`                   | Discard a journal                                      |
+| `POST /v1/restore`                          | Put a journal back                                     |
+| **Artwork**                                 |                                                        |
+| `GET /v1/tracks/{id}/artwork`               | The cover, optionally scaled with `?size=`             |
+| `PUT /v1/tracks/{id}/artwork`               | Replace it. `If-Match`                                 |
+| `DELETE /v1/tracks/{id}/artwork`            | Remove it. `If-Match`                                  |
+| `POST /v1/artwork/batch`                    | Set or clear art across a selection                    |
+| `POST /v1/artwork/export`                   | Write embedded covers out as `cover.jpg`               |
+| `GET /v1/artwork/summary`                   | Group identical covers across a selection              |
+| `GET·PUT·DELETE /v1/clipboard/artwork`      | The server-side clipboard                              |
+| `PUT /v1/clipboard/artwork/from-track/{id}` | Copy a track's cover to it                             |
+| `PUT /v1/clipboard/artwork/from-url`        | Copy a Discogs cover to it                             |
+| **Discogs**                                 |                                                        |
+| `GET /v1/discogs/search`                    | Find album covers                                      |
+| `GET /v1/discogs/masters/{id}`              | Every image on a master                                |
+| `GET /v1/discogs/album`                     | Look an album up for its year and genre                |
+| **Jobs and scanning**                       |                                                        |
+| `GET /v1/jobs`                              | Filtered, paged                                        |
+| `GET /v1/jobs/{id}`                         | One job                                                |
+| `DELETE /v1/jobs/{id}`                      | Cancel it                                              |
+| `POST /v1/jobs/{id}/undo`                   | Reverse it                                             |
+| `GET /v1/jobs/{id}/events`                  | Stream its progress                                    |
+| `GET /v1/events`                            | Stream every change. Resumable                         |
+| `GET /v1/scans`                             | Whether a scan is running                              |
+| `POST /v1/scans`                            | Bring the catalogue up to date                         |
 
 Outside `/v1`, and outside the schema: `GET /healthz`, `GET /openapi.yaml`,
 `GET /openapi.json` and `GET /docs`, none of which require a token and none of
@@ -891,22 +897,66 @@ skipped, as are AppleDouble `._` sidecars.
 
 ### Install
 
+Pre-built binaries for every release are on the
+[releases page](https://github.com/remy/yamo/releases). Each archive holds one
+static executable that depends on nothing on the target — no libc version to
+match, no runtime to install, no database server.
+
+| Platform | Archive |
+| --- | --- |
+| NAS, Linux server or PC, x86-64 | `yamo_<version>_linux_amd64.tar.gz` |
+| NAS or ARM server, Raspberry Pi 4/5 (64-bit) | `yamo_<version>_linux_arm64.tar.gz` |
+| Apple Silicon Mac | `yamo_<version>_darwin_arm64.tar.gz` |
+| Intel Mac | `yamo_<version>_darwin_amd64.tar.gz` |
+| Windows | `yamo_<version>_windows_amd64.zip` |
+
+UGREEN NASync boxes are x86-64, so `linux_amd64` is the one you want:
+
 ```sh
-make nas                       # builds dist/yamo-linux-{amd64,arm64}
+VER=1.0.0
+curl -LO https://github.com/remy/yamo/releases/download/v$VER/yamo_${VER}_linux_amd64.tar.gz
+tar xzf yamo_${VER}_linux_amd64.tar.gz
+sudo install yamo /usr/local/bin/yamo
+yamo version
+```
+
+Each release also carries a `checksums.txt`. Verify a download against it
+before running it — `sha256sum --ignore-missing -c checksums.txt`, or
+`shasum -a 256 -c checksums.txt` on macOS, which has no `sha256sum`. macOS
+will additionally refuse to run an unsigned binary fetched from the internet
+until you clear the quarantine flag with `xattr -d com.apple.quarantine yamo`.
+
+Windows is in the list because the terminal browser works in Windows
+Terminal, not only because the server does. It is the least exercised of the
+five.
+
+#### From source
+
+```sh
+go install github.com/remy/yamo/cmd/yamo@latest   # or: make install
+```
+
+Or build the whole release set yourself — the releases above are made by this
+exact target, so there is nothing in them you cannot reproduce:
+
+```sh
+make nas                       # just dist/yamo-linux-{amd64,arm64}
+make dist                      # all five archives, plus checksums.txt
 scp dist/yamo-linux-amd64 nas:/usr/local/bin/yamo
 ```
 
-UGREEN NASync boxes are x86-64, so `yamo-linux-amd64` is the one you want.
-Both binaries are static and depend on nothing on the target.
-
-For local use: `make install` or `go install ./cmd/yamo`.
+`yamo version` reports the release, the commit, the platform and the Go
+toolchain, which is the first thing to include in a bug report. A build you
+made yourself says `dev` and names the commit; `yamo version -short` prints
+the bare version for a script to read.
 
 ### Docker
 
 The image is `ghcr.io/remy/yamo`, built by
 [`docker.yml`](.github/workflows/docker.yml) for `linux/amd64` and
 `linux/arm64` on every push to `main` (`:latest`) and every `vX.Y.Z` tag
-(`:X.Y.Z`, `:X.Y`, `:X`). It runs `yamo serve`; the terminal and the rest of
+(`:X.Y.Z`, `:X.Y`, `:X`) — the same tags that publish the binaries above, via
+[`release.yml`](.github/workflows/release.yml). It runs `yamo serve`; the terminal and the rest of
 the client commands are still in the binary if you `docker compose exec` in,
 but the container's job is to be the API server.
 
@@ -956,16 +1006,16 @@ scans on every start instead — a no-op cost (a stat per file, not a
 re-read) once the library is caught up, which is what makes it safe to
 leave set rather than something to remember to run once.
 
-| Variable | Flag | Used by | Meaning |
-| --- | --- | --- | --- |
-| `YAMO_CATALOG` | `-catalog` | `serve` | Catalogue file path. Defaults to the user cache directory outside Docker; the image sets it to `/data/catalog.db`. |
-| `YAMO_ROOT` | `-root` (repeatable) | `serve` | Comma-separated directories to scan on startup, in the background, without blocking the server from accepting requests. Unset means an empty new catalogue stays empty until something scans it. |
-| `YAMO_TOKEN` | `-token` | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back. |
-| `YAMO_RESCAN_EVERY` | `-rescan-every` | `serve` | Optional. Rescans the catalogue's roots on this interval (`1h`, `30m`) — the same incremental scan, so a stat per file on an unchanged library. Unset, nothing is scanned unless asked: nothing watches the filesystem. A minute is the shortest accepted. |
-| `YAMO_DISCOGS_TOKEN` | `-discogs-token` | `serve` | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower. |
-| `YAMO_FFMPEG` | `-ffmpeg` | `serve` | Optional. The ffmpeg that transcodes audio for a device (`?as=aac`). Unset, the one on the `PATH` is used if it has an AAC encoder, and transcoding is off if not. Set, it must work or the server refuses to start. The Docker image has no ffmpeg: mount a static build in and point this at it. |
-| `YAMO_SERVER` | `-server` | every client command | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
-| `YAMO_NO_IMAGES` | — (no flag) | the terminal browser | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands. |
+| Variable             | Flag                 | Used by                           | Meaning                                                                                                                                                                                                                                                                                               |
+| -------------------- | -------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `YAMO_CATALOG`       | `-catalog`           | `serve`                           | Catalogue file path. Defaults to the user cache directory outside Docker; the image sets it to `/data/catalog.db`.                                                                                                                                                                                    |
+| `YAMO_ROOT`          | `-root` (repeatable) | `serve`                           | Comma-separated directories to scan on startup, in the background, without blocking the server from accepting requests. Unset means an empty new catalogue stays empty until something scans it.                                                                                                      |
+| `YAMO_TOKEN`         | `-token`             | `serve`, and every client command | On `serve`: the bearer token required once it's bound to anything but loopback. On a client (`scan`, `find`, `art`, `strip`, `info`, the browser): the token it sends back.                                                                                                                           |
+| `YAMO_RESCAN_EVERY`  | `-rescan-every`      | `serve`                           | Optional. Rescans the catalogue's roots on this interval (`1h`, `30m`) — the same incremental scan, so a stat per file on an unchanged library. Unset, nothing is scanned unless asked: nothing watches the filesystem. A minute is the shortest accepted.                                            |
+| `YAMO_DISCOGS_TOKEN` | `-discogs-token`     | `serve`                           | Optional. Raises the Discogs cover-lookup rate limit from 25 to 60 requests/minute. Unset still works, just slower.                                                                                                                                                                                   |
+| `YAMO_FFMPEG`        | `-ffmpeg`            | `serve`                           | Optional. The ffmpeg that transcodes audio for a device (`?as=aac`). Unset, the one on the `PATH` is used if it has an AAC encoder, and transcoding is off if not. Set, it must work or the server refuses to start. The Docker image has no ffmpeg: mount a static build in and point this at it.    |
+| `YAMO_SERVER`        | `-server`            | every client command              | Server address to connect to. Defaults to `http://127.0.0.1:8467`, so `docker compose exec yamo /yamo find …` needs neither this nor `-token` — the default address is already the container's own loopback, and `YAMO_TOKEN` is already in its environment. Only needed to reach a server elsewhere. |
+| `YAMO_NO_IMAGES`     | — (no flag)          | the terminal browser              | Set to disable cover-art preview detection, for a terminal that mishandles the Kitty/iTerm2 image escape sequences rather than ignoring them. Not relevant to `serve` or the other client commands.                                                                                                   |
 
 ## Sample clients
 
@@ -1068,16 +1118,16 @@ Override it with `-catalog PATH` or `YAMO_CATALOG`.
 
 ## Format support
 
-| Format | Read | Write |
-| --- | --- | --- |
-| MP3 (ID3v2.2/2.3/2.4, ID3v1) | yes | yes |
-| FLAC (Vorbis comments) | yes | yes |
-| MP4 / M4A / M4B (iTunes atoms) | yes | yes |
-| Ogg Vorbis | yes | yes |
-| Opus | yes | yes |
-| WMA (ASF) | yes | no |
-| WAV (RIFF INFO, ID3 chunk) | yes | no |
-| AIFF | yes | no |
+| Format                         | Read | Write |
+| ------------------------------ | ---- | ----- |
+| MP3 (ID3v2.2/2.3/2.4, ID3v1)   | yes  | yes   |
+| FLAC (Vorbis comments)         | yes  | yes   |
+| MP4 / M4A / M4B (iTunes atoms) | yes  | yes   |
+| Ogg Vorbis                     | yes  | yes   |
+| Opus                           | yes  | yes   |
+| WMA (ASF)                      | yes  | no    |
+| WAV (RIFF INFO, ID3 chunk)     | yes  | no    |
+| AIFF                           | yes  | no    |
 
 The editor warns before you type when the selection contains a format it cannot
 write back.
@@ -1093,14 +1143,14 @@ Measured on 100,000 MP3 files (a synthetic library from `tools/genlib`), on an
 M-series Mac with the files in page cache. On a NAS the scan will be bound by
 disk and network rather than by this code, but the per-file work is the same.
 
-| Operation | Time |
-| --- | --- |
-| Full scan, 100,000 files | 2.6 s (~38,600 files/sec) |
-| Incremental rescan, nothing changed | 0.30 s |
-| Load catalogue (4.6 MiB) | 13 ms |
-| Build search index | 49 ms, once at startup |
-| Search | 0.9–3.6 ms |
-| Save 12 edited files | 30 ms |
+| Operation                           | Time                      |
+| ----------------------------------- | ------------------------- |
+| Full scan, 100,000 files            | 2.6 s (~38,600 files/sec) |
+| Incremental rescan, nothing changed | 0.30 s                    |
+| Load catalogue (4.6 MiB)            | 13 ms                     |
+| Build search index                  | 49 ms, once at startup    |
+| Search                              | 0.9–3.6 ms                |
+| Save 12 edited files                | 30 ms                     |
 
 Search is a linear pass over pre-folded, contiguous strings rather than an
 inverted index. At this size that is both faster and more useful, because it
@@ -1121,7 +1171,7 @@ internal/scan/     parallel directory walk and tag extraction
 internal/client/   Go client for the API, used by everything below
 internal/mcp/      the MCP endpoint: twenty tools over the same service
 internal/ui/       the terminal browser, a client like any other
-cmd/yamo/          serve, plus the client commands: scan, find, info, art, strip, browse
+cmd/yamo/          serve, plus the client commands: scan, find, info, art, strip, browse, version
 tools/genlib/      synthetic library generator, for benchmarking
 tools/tuidrive/    drives the interface in a pty, for testing the rendering
 ```
@@ -1276,31 +1326,31 @@ endpoints that move bytes it cannot read are no use to it at all.
 Everything under **Reading**, plus `get_job` and `list_backups`, is what a
 read-only token is offered. The other eight need the full one.
 
-| Tool | |
-| --- | --- |
-| **Reading** | |
-| `search_tracks` | Search, sort and page. `total` counts every match, not the page |
-| `get_track` | One track, including the version that identifies it on disk |
-| `get_raw_tags` | Every tag actually in the file, rather than the fields the catalogue keeps |
-| `list_albums` | Albums with their track and artwork counts |
-| `list_artists` | Artists with their track and album counts |
-| `list_values` | Distinct values of a field, with counts — the misspelling finder |
-| `find_duplicates` | The same recording more than once, and what it wastes |
-| `artwork_summary` | Distinct covers across a selection, grouped, and how many have none |
-| `library_stats` | Counts, formats, missing fields, when it was scanned, what this build can do |
-| `lookup_album` | Year and genre from Discogs. The only tool that leaves the machine |
-| **Writing** | |
-| `edit_tracks` | One set of field values across a selection. `null` clears a field |
-| `split_titles` | Pull `$artist - $title` out of a title into its own tags |
-| `rename_files` | Move files to a path built from their own tags |
-| `strip_tags` | Remove everything but a keep list |
-| `set_artwork` | Embed the `cover.jpg` beside each track, paste the clipboard, or clear it |
-| **Jobs and recovery** | |
-| `scan_library` | Bring the catalogue up to date |
-| `get_job` | Poll a job, optionally waiting for it |
-| `list_backups` | The undo journals, which outlive the hour a job stays queryable |
-| `undo_job` | Reverse what a job did |
-| `restore_backup` | Put one journal back, for a job older than that hour |
+| Tool                  |                                                                              |
+| --------------------- | ---------------------------------------------------------------------------- |
+| **Reading**           |                                                                              |
+| `search_tracks`       | Search, sort and page. `total` counts every match, not the page              |
+| `get_track`           | One track, including the version that identifies it on disk                  |
+| `get_raw_tags`        | Every tag actually in the file, rather than the fields the catalogue keeps   |
+| `list_albums`         | Albums with their track and artwork counts                                   |
+| `list_artists`        | Artists with their track and album counts                                    |
+| `list_values`         | Distinct values of a field, with counts — the misspelling finder             |
+| `find_duplicates`     | The same recording more than once, and what it wastes                        |
+| `artwork_summary`     | Distinct covers across a selection, grouped, and how many have none          |
+| `library_stats`       | Counts, formats, missing fields, when it was scanned, what this build can do |
+| `lookup_album`        | Year and genre from Discogs. The only tool that leaves the machine           |
+| **Writing**           |                                                                              |
+| `edit_tracks`         | One set of field values across a selection. `null` clears a field            |
+| `split_titles`        | Pull `$artist - $title` out of a title into its own tags                     |
+| `rename_files`        | Move files to a path built from their own tags                               |
+| `strip_tags`          | Remove everything but a keep list                                            |
+| `set_artwork`         | Embed the `cover.jpg` beside each track, paste the clipboard, or clear it    |
+| **Jobs and recovery** |                                                                              |
+| `scan_library`        | Bring the catalogue up to date                                               |
+| `get_job`             | Poll a job, optionally waiting for it                                        |
+| `list_backups`        | The undo journals, which outlive the hour a job stays queryable              |
+| `undo_job`            | Reverse what a job did                                                       |
+| `restore_backup`      | Put one journal back, for a job older than that hour                         |
 
 Four rules hold across all of them, and they are the four the API itself is
 built on.
@@ -1336,3 +1386,7 @@ Not offered here, and deliberately: uploading an image, reading audio, the
 artwork clipboard, the event streams, and the per-track write endpoints. The
 first three move bytes a model cannot read, the fourth exists so a client can
 build its own concurrency, and the last is `edit_tracks` with one id in it.
+
+## What the hell is  with the green character?
+
+Since I had used Just Another Music Organiser, shortened to YAMO, a quick search on the web turned up that Yamo is the baddie in the [Bruce Lee game](https://en.wikipedia.org/wiki/Bruce_Lee_%28video_game%29) from 1984 - which… seemed perfect!
