@@ -149,6 +149,8 @@ func parseASFExtContentDesc(b []byte, md *Metadata) {
 			}
 		case "WM/PICTURE":
 			md.HasArt = true
+		default:
+			applyMusicBrainz(md, name, val)
 		}
 	}
 }

@@ -27,6 +27,18 @@ func (vc *vorbisComment) get(key string) string {
 	return ""
 }
 
+// getAll returns every value for key, which callers pass upper-cased. A
+// Vorbis comment repeats a field rather than packing several values into one.
+func (vc *vorbisComment) getAll(key string) []string {
+	var out []string
+	for i := range vc.fields {
+		if vc.fields[i].key == key {
+			out = append(out, vc.fields[i].value)
+		}
+	}
+	return out
+}
+
 // getAny returns the first value found for any of the given aliases, in the
 // order listed. Taggers disagree about names far more than about semantics.
 func (vc *vorbisComment) getAny(keys ...string) string {
@@ -159,6 +171,8 @@ func (vc *vorbisComment) applyTo(md *Metadata) {
 		}
 	}
 	md.Compilation = isTrueFlag(vc.get("COMPILATION"))
+	applyMusicBrainz(md, "MUSICBRAINZ_ARTISTID", vc.getAll("MUSICBRAINZ_ARTISTID")...)
+	applyMusicBrainz(md, "MUSICBRAINZ_ALBUMARTISTID", vc.getAll("MUSICBRAINZ_ALBUMARTISTID")...)
 	if vc.get("METADATA_BLOCK_PICTURE") != "" {
 		md.HasArt = true
 	}

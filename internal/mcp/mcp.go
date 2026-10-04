@@ -221,8 +221,9 @@ Finding things. Every tool that takes a query uses one language:
   compilation:1             the Various Artists flag
   artist:elvis year:>1960   terms are ANDed
 Matching ignores case and accents. Fields: title, artist, albumartist, album,
-genre, composer, comment, year, track, disc, compilation, path, and the sort
-forms (titlesort, artistsort, albumsort, albumartistsort, composersort).
+genre, composer, comment, year, track, disc, compilation, path, the sort
+forms (titlesort, artistsort, albumsort, albumartistsort, composersort), and
+the MusicBrainz ids (mbartistid, mbalbumartistid), which are read-only.
 
 Choosing what to change. Writing tools take a selection, not a list of files:
 give "query" (the same language), or "ids", or "all": true, which must be set

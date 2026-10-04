@@ -111,30 +111,33 @@ that merely files itself under "Presley, Elvis".
 
 #### The fields
 
-Seventeen, and one name each: the same word is the query prefix, the `sort`
+Nineteen, and one name each: the same word is the query prefix, the `sort`
 key, the `$field` in a rename or split template, and the key in the body of an
-edit. The short forms exist because the search bar is typed into live; the
+edit — except that the two MusicBrainz ids are read-only, so an edit naming one
+is refused. The short forms exist because the search bar is typed into live; the
 canonical name is the one to use from a script.
 
-| Field             | Also           | Matches                                                                  |
-| ----------------- | -------------- | ------------------------------------------------------------------------ |
-| `title`           | `t`, `name`    | the track title                                                          |
-| `artist`          | `a`, `ar`      | the performer                                                            |
-| `albumartist`     | `aa`, `band`   | the album's artist — what `/v1/albums` and `/v1/artists` group on        |
-| `album`           | `al`, `b`      | the album title                                                          |
-| `genre`           | `g`            | the genre                                                                |
-| `composer`        | `c`            | the composer                                                             |
-| `comment`         |                | the free-text comment                                                    |
-| `year`            | `y`, `date`    | *numeric.* The year, parsed out of a fuller date if the file carries one |
-| `track`           | `trackno`, `n` | *numeric.* The track number                                              |
-| `disc`            | `d`            | *numeric.* The disc number                                               |
-| `compilation`     | `comp`, `va`   | *numeric.* The Various Artists flag: `1` set, `0` not                    |
-| `path`            | `p`, `file`    | the full path of the file on disk                                        |
-| `titlesort`       | `ts`           | the sort form of the title                                               |
-| `artistsort`      | `as`           | the sort form of the artist                                              |
-| `albumsort`       | `als`          | the sort form of the album                                               |
-| `albumartistsort` | `aas`          | the sort form of the album artist                                        |
-| `composersort`    | `cs`           | the sort form of the composer                                            |
+| Field             | Also                        | Matches                                                                  |
+| ----------------- | --------------------------- | ------------------------------------------------------------------------ |
+| `title`           | `t`, `name`                 | the track title                                                          |
+| `artist`          | `a`, `ar`                   | the performer                                                            |
+| `albumartist`     | `aa`, `band`                | the album's artist — what `/v1/albums` and `/v1/artists` group on        |
+| `album`           | `al`, `b`                   | the album title                                                          |
+| `genre`           | `g`                         | the genre                                                                |
+| `composer`        | `c`                         | the composer                                                             |
+| `comment`         |                             | the free-text comment                                                    |
+| `year`            | `y`, `date`                 | *numeric.* The year, parsed out of a fuller date if the file carries one |
+| `track`           | `trackno`, `n`              | *numeric.* The track number                                              |
+| `disc`            | `d`                         | *numeric.* The disc number                                               |
+| `compilation`     | `comp`, `va`                | *numeric.* The Various Artists flag: `1` set, `0` not                    |
+| `path`            | `p`, `file`                 | the full path of the file on disk                                        |
+| `titlesort`       | `ts`                        | the sort form of the title                                               |
+| `artistsort`      | `as`                        | the sort form of the artist                                              |
+| `albumsort`       | `als`                       | the sort form of the album                                               |
+| `albumartistsort` | `aas`                       | the sort form of the album artist                                        |
+| `composersort`    | `cs`                        | the sort form of the composer                                            |
+| `mbartistid`      | `musicbrainz_artistid`      | the artist's MusicBrainz id. *Read-only*                                 |
+| `mbalbumartistid` | `musicbrainz_albumartistid` | the album artist's MusicBrainz id. *Read-only*                           |
 
 The four numeric fields are the ones that take `>`, `<`, `>=`, `<=` and
 `1970-1979`; on them `~` and the anchors are ignored, since there is nothing
@@ -143,8 +146,8 @@ text, and takes the anchors, the fuzzy marker and the empty form.
 
 An unqualified term searches the seven display fields — `title`, `artist`,
 `albumartist`, `album`, `genre`, `composer` and `comment` — and stops there.
-`path` and the five sort fields are searchable only when named, which is the
-point: `presley` should find the tracks by him, not every track that files
+`path`, the five sort fields and the two MusicBrainz ids are searchable only
+when named, which is the point: `presley` should find the tracks by him, not every track that files
 itself under "Presley, Elvis".
 
 A prefix that is not one of these names is not treated as one, which is what

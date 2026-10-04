@@ -139,6 +139,14 @@ type Metadata struct {
 	// every container, stored as "1" in ID3's TCMP and as a single byte in
 	// MP4's cpil.
 	Compilation bool
+
+	// The MusicBrainz ids of the track artist and the album artist. Each is
+	// one or more lower-case UUIDs joined with "; " — a collaboration has one
+	// per artist — and anything in the tag not shaped like an id is dropped.
+	// They are read and never written: MusicBrainz assigns them, and a tagger
+	// that fetched them is the right thing to change them.
+	MusicBrainzArtistID      string
+	MusicBrainzAlbumArtistID string
 }
 
 // FormatForExt maps a file extension (with or without the leading dot) to a

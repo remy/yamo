@@ -33,7 +33,9 @@ const (
 	// backward-compatible if something re-reads the files, and incremental
 	// scanning guarantees nothing does. Rejecting an older snapshot outright
 	// costs one full scan and is the only thing that makes a new field appear.
-	snapshotVersion = 2
+	//
+	// Version 3 added the MusicBrainz artist and album artist ids.
+	snapshotVersion = 3
 )
 
 const (
@@ -74,6 +76,7 @@ func Encode(c *Catalog) []byte {
 	type rec struct {
 		dir, base, title, artist, albumArtist, album, genre, composer, comment uint64
 		titleSort, artistSort, albumSort, albumArtistSort, composerSort        uint64
+		mbArtist, mbAlbumArtist                                                uint64
 	}
 	recs := make([]rec, len(c.Tracks))
 	for i := range c.Tracks {
@@ -91,6 +94,7 @@ func Encode(c *Catalog) []byte {
 			titleSort: in.id(t.TitleSort), artistSort: in.id(t.ArtistSort),
 			albumSort: in.id(t.AlbumSort), albumArtistSort: in.id(t.AlbumArtistSort),
 			composerSort: in.id(t.ComposerSort),
+			mbArtist: in.id(t.MBArtistID), mbAlbumArtist: in.id(t.MBAlbumArtistID),
 		}
 	}
 
@@ -130,6 +134,8 @@ func Encode(c *Catalog) []byte {
 		buf = binary.AppendUvarint(buf, r.albumSort)
 		buf = binary.AppendUvarint(buf, r.albumArtistSort)
 		buf = binary.AppendUvarint(buf, r.composerSort)
+		buf = binary.AppendUvarint(buf, r.mbArtist)
+		buf = binary.AppendUvarint(buf, r.mbAlbumArtist)
 		buf = binary.AppendUvarint(buf, uint64(nonNeg(t.Size)))
 		buf = binary.AppendUvarint(buf, uint64(nonNeg(t.ModTime)))
 		buf = binary.AppendUvarint(buf, uint64(nonNeg32(t.Year)))
@@ -219,6 +225,8 @@ func Decode(buf []byte) (*Catalog, error) {
 		t.AlbumSort = get(d.uvarint())
 		t.AlbumArtistSort = get(d.uvarint())
 		t.ComposerSort = get(d.uvarint())
+		t.MBArtistID = get(d.uvarint())
+		t.MBAlbumArtistID = get(d.uvarint())
 		t.Size = int64(d.uvarint())
 		t.ModTime = int64(d.uvarint())
 		t.Year = int32(d.uvarint())

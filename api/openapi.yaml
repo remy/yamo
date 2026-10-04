@@ -1977,7 +1977,8 @@ components:
       type: string
       description: A metadata field.
       enum: [title, artist, albumartist, album, genre, composer, comment, year, track, disc, path,
-             titlesort, artistsort, albumsort, albumartistsort, composersort]
+             titlesort, artistsort, albumsort, albumartistsort, composersort,
+             mbartistid, mbalbumartistid]
 
     Track:
       type: object
@@ -2003,6 +2004,20 @@ components:
             field that says Various Artists, because iTunes writes the sort tag
             and no album artist at all.
         composerSort: { type: string }
+        mbArtistId:
+          type: string
+          description: >-
+            The track artist's MusicBrainz id, read from `MUSICBRAINZ_ARTISTID`
+            or its equivalent in the file's container. A collaboration carries
+            one id per artist, joined with `"; "`. Read-only: it cannot be
+            changed through `Changes`.
+          examples: ["70248960-cb53-4ea4-943a-edb18f7d336f"]
+        mbAlbumArtistId:
+          type: string
+          description: >-
+            The album artist's MusicBrainz id, from
+            `MUSICBRAINZ_ALBUMARTISTID`. The same shape as `mbArtistId`, and
+            read-only like it.
         year: { type: integer, format: int32 }
         track: { type: integer, format: int32 }
         trackTotal: { type: integer, format: int32 }

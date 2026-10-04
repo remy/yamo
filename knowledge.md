@@ -199,9 +199,9 @@ person there to do that.
 
 | Path | Lines | Responsibility |
 | --- | --- | --- |
-| `api/` | 42 | `openapi.yaml` (3,190 lines) plus the Go embed. **The contract.** |
-| `internal/tags/` | 6,196 | Format parsers and writers. No third-party tag library. |
-| `internal/catalog/` | 1,810 | In-memory library, binary snapshot, search index, query language. |
+| `api/` | 42 | `openapi.yaml` (3,205 lines) plus the Go embed. **The contract.** |
+| `internal/tags/` | 6,385 | Format parsers and writers. No third-party tag library. |
+| `internal/catalog/` | 1,853 | In-memory library, binary snapshot, search index, query language. |
 | `internal/scan/` | 438 | Parallel directory walk and tag extraction. |
 | `internal/library/` | 7,001 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
 | `internal/api/` | 1,539 | **The server.** HTTP handlers over the service, SSE, docs page. |
@@ -551,8 +551,8 @@ It rides the numeric path in the query language, so `compilation:1`,
 Adding it to the catalogue was originally done without a snapshot version bump,
 on the reasoning that the flags byte beside `HasArt` had spare bits and an older
 snapshot would decode with the bit clear until the next scan said otherwise.
-That reasoning was wrong — see the next section — and the snapshot is now at
-version 2.
+That reasoning was wrong — see the next section — and the snapshot went to
+version 2 for it. Version 3 added the MusicBrainz ids, below.
 
 The TUI cannot edit it. Its editor is a fixed two-by-five grid — `editRows` is
 a constant and `renderField(editRows+row)` assumes exactly ten fields — so an
@@ -621,6 +621,45 @@ answer while being unable to give one.
 In the web app they get a Sorting tab rather than five more rows on Details,
 which is where Apple Music puts them too. The TUI cannot edit them, for the
 same fixed-grid reason it cannot edit the compilation flag.
+
+### The MusicBrainz artist ids are read-only, and only UUIDs survive
+
+`mbartistid` and `mbalbumartistid` hold the MusicBrainz ids of the track
+artist and the album artist (`internal/tags/musicbrainz.go`). They exist so
+that something outside the file can be looked up by identity rather than by
+name: "Genesis" is three bands, and an id is one. The first planned use is
+fetching an artist photo into the artist's folder as `artist.jpg`. MusicBrainz
+hosts no images, so the source chosen is Wikimedia Commons, reached through
+the artist's MusicBrainz `image` relation or else its Wikidata `P18`. It needs
+no API key and covers the most artists of the sources that need none. That
+fetch is **not written yet**: how it is triggered (a job on `yamo art`, a scan
+flag, or a serve flag) is still open.
+
+Every container spells the keys differently — `TXXX:MusicBrainz Artist Id`
+from Picard, `TXXX:MUSICBRAINZ_ARTISTID` from ffmpeg carrying a Vorbis key
+into an MP3, `MUSICBRAINZ_ARTISTID` in Vorbis, a `----` freeform item named
+`MusicBrainz Artist Id` in MP4, `MusicBrainz/Artist Id` in ASF. Reducing a key
+to its letters, upper-cased, makes all of them one string, so there is one
+comparison rather than a list per format.
+
+A collaboration carries one id per artist, and the writers disagree on how:
+NULs in ID3v2.4, a slash in Picard's v2.3 output, a repeated field in Vorbis,
+a second data atom in MP4. The value is split on all of those and only tokens
+shaped like a UUID are kept, lower-cased and joined with `"; "`. Keeping only
+UUIDs also matters downstream: an id is going to be put into a URL.
+
+They are **read-only**. `Field.Editable` refuses them and `tags.Edit` has no
+slot for them, because MusicBrainz assigns them and a hand edit can only break
+one. Making them writable is a field on `Edit` and a writer per container, not
+a change of shape. Two consequences of read-only that are easy to miss: a
+transcoded file does not carry them, since the transcoder tags through `Edit`;
+and the strip's default keep list does not include `musicbrainz`, so a
+default strip removes them. Now that the program uses them, that default
+deserves a second look. It has not been changed.
+
+They sit past the sort fields in `blobOrder`, so `mbartistid:` finds them and
+a bare term does not: a search for a run of hex digits should not match the
+middle of a UUID.
 
 ### The Discogs lookup is three constraints in a trenchcoat
 
