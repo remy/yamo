@@ -635,6 +635,28 @@ no API key and covers the most artists of the sources that need none. That
 fetch is **not written yet**: how it is triggered (a job on `yamo art`, a scan
 flag, or a serve flag) is still open.
 
+Those two lookups are not enough on their own, and the fetch needs a third:
+the lead image of the artist's Wikipedia article, found through the Wikidata
+entry's `enwiki` sitelink and the `pageimages` API. Ren
+(`81250ee6-a008-4007-8cfd-dddc22176cac`) is the case that showed it. There is
+no image relation on MusicBrainz and no `P18` on Wikidata, yet the English
+article has a photo hosted on Commons. It is still keyless and still
+Commons-hosted, so the licensing story does not change.
+
+The alternatives considered and rejected:
+
+- **fanart.tv** looks up by MusicBrainz id and has proper square artist
+  thumbs, but needs a personal API key. It is the fallback to reach for if
+  Commons coverage turns out to be too thin.
+- **TheAudioDB** also looks up by MusicBrainz id, but its free key is
+  rate-limited and real use needs a paid one.
+- **Last.fm** needs a key, and its `artist.getInfo` has returned the same
+  placeholder star instead of an artist photo since around 2019, when artist
+  images stopped being served through the API. The photos on the website are
+  user uploads with no clear licence, and getting at them means scraping
+  pages the terms forbid scraping. A fetch of an artist page showed no image
+  URL in the HTML at all.
+
 Every container spells the keys differently — `TXXX:MusicBrainz Artist Id`
 from Picard, `TXXX:MUSICBRAINZ_ARTISTID` from ffmpeg carrying a Vorbis key
 into an MP3, `MUSICBRAINZ_ARTISTID` in Vorbis, a `----` freeform item named
