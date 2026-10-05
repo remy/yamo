@@ -152,6 +152,9 @@ func (s *Server) routes() {
 	s.handle("GET /v1/discogs/masters/{id}", s.discogsMaster)
 	s.handle("GET /v1/discogs/album", s.discogsAlbum)
 
+	// MusicBrainz artist id lookup.
+	s.handle("GET /v1/musicbrainz/artists", s.musicbrainzArtists)
+
 	// Batch and maintenance.
 	s.handle("POST /v1/tracks/batch", s.batchEditTracks)
 	s.handle("POST /v1/tracks/split", s.splitTracks)

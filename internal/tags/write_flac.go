@@ -254,6 +254,29 @@ func applyEditToVorbis(vc *vorbisComment, e *Edit, cur *Metadata) {
 		vc.set("DISCTOTAL", numOrEmpty(*e.DiscTotal))
 		vc.set("TOTALDISCS", "")
 	}
+	setVorbisMBIDs(vc, mbArtistKey, mbArtistVorbisKey, e.MBArtistID)
+	setVorbisMBIDs(vc, mbAlbumArtistKey, mbAlbumArtistVorbisKey, e.MBAlbumArtistID)
+}
+
+// setVorbisMBIDs writes one field per id, which is how a Vorbis comment holds
+// a list and how Picard writes a collaboration. Any key that reduces to the
+// same letters is cleared first — MUSICBRAINZ_ARTISTID and a stray
+// MusicBrainz Artist Id are one key to the reader, so they must be one key
+// to the writer too.
+func setVorbisMBIDs(vc *vorbisComment, key, name string, v *string) {
+	if v == nil {
+		return
+	}
+	out := vc.fields[:0]
+	for _, f := range vc.fields {
+		if musicBrainzKey(f.key) != key {
+			out = append(out, f)
+		}
+	}
+	vc.fields = out
+	for _, id := range splitMBIDs(*v) {
+		vc.fields = append(vc.fields, vorbisField{key: name, value: id})
+	}
 }
 
 func numOrEmpty(v int32) string {

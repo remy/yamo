@@ -311,6 +311,8 @@ func editFromMetadata(md *tags.Metadata, cover *tags.Picture) *tags.Edit {
 	str(&e.AlbumSort, md.AlbumSort)
 	str(&e.AlbumArtistSort, md.AlbumArtistSort)
 	str(&e.ComposerSort, md.ComposerSort)
+	str(&e.MBArtistID, md.MusicBrainzArtistID)
+	str(&e.MBAlbumArtistID, md.MusicBrainzAlbumArtistID)
 	num(&e.Year, md.Year)
 	num(&e.Track, md.Track)
 	num(&e.TrackTotal, md.TrackTotal)

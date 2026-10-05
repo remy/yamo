@@ -526,6 +526,54 @@ func TestChangesValidation(t *testing.T) {
 	if err := (Changes{"tracktotal": strptr("12")}).Validate(); err != nil {
 		t.Errorf("tracktotal was rejected: %v", err)
 	}
+	// The MusicBrainz ids take UUIDs and nothing else, but clearing one is
+	// always allowed.
+	if err := (Changes{"mbartistid": strptr("Genesis")}).Validate(); err == nil {
+		t.Error("a name was accepted as a MusicBrainz id")
+	}
+	if err := (Changes{"mbalbumartistid": strptr(mbTestID)}).Validate(); err != nil {
+		t.Errorf("a MusicBrainz id was rejected: %v", err)
+	}
+	if err := (Changes{"mbartistid": nil}).Validate(); err != nil {
+		t.Errorf("clearing a MusicBrainz id was rejected: %v", err)
+	}
+}
+
+const mbTestID = "8e3fcd7d-bda1-4ca0-b987-b8528d2ad8fa"
+
+// An id written through the edit path lands in the file and the catalogue in
+// one form, so that sending the same id again — in capitals, as MusicBrainz'
+// own pages sometimes show it — is recognised as no change.
+func TestPatchWritesMusicBrainzIDs(t *testing.T) {
+	s, _ := realService(t, 1)
+	track := s.List(ListParams{}).Items[0]
+
+	upper := strings.ToUpper(mbTestID)
+	updated, err := s.Patch(track.ID, Changes{"mbalbumartistid": &upper}, "")
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if updated.MBAlbumArtistID != mbTestID {
+		t.Errorf("catalogue holds %q, want %q", updated.MBAlbumArtistID, mbTestID)
+	}
+	md, err := tags.NewReader().ReadFile(track.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md.MusicBrainzAlbumArtistID != mbTestID {
+		t.Errorf("the file on disk says %q", md.MusicBrainzAlbumArtistID)
+	}
+
+	again, err := s.Patch(track.ID, Changes{"mbalbumartistid": &upper}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Version != updated.Version {
+		t.Error("the same id in another case rewrote the file")
+	}
+	if got := s.List(ListParams{Query: "mbalbumartistid:" + mbTestID}).Total; got != 1 {
+		t.Errorf("searching by the new id found %d tracks, want 1", got)
+	}
 }
 
 func strptr(s string) *string { return &s }

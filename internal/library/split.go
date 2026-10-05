@@ -126,7 +126,7 @@ func compileSplit(tmpl string) (*splitRule, error) {
 			return nil, fmt.Errorf("%w: a $ with no field name after it", ErrBadTemplate)
 		}
 		f, ok := catalog.LookupField(name)
-		if !ok || !f.Editable() {
+		if !ok || !f.Editable() || f.IsMBID() {
 			return nil, fmt.Errorf("%w: %q is not a field that can be written", ErrBadTemplate, name)
 		}
 		for _, have := range fields {

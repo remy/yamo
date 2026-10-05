@@ -94,7 +94,7 @@ func Encode(c *Catalog) []byte {
 			titleSort: in.id(t.TitleSort), artistSort: in.id(t.ArtistSort),
 			albumSort: in.id(t.AlbumSort), albumArtistSort: in.id(t.AlbumArtistSort),
 			composerSort: in.id(t.ComposerSort),
-			mbArtist: in.id(t.MBArtistID), mbAlbumArtist: in.id(t.MBAlbumArtistID),
+			mbArtist:     in.id(t.MBArtistID), mbAlbumArtist: in.id(t.MBAlbumArtistID),
 		}
 	}
 

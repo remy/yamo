@@ -171,8 +171,9 @@ const (
 	FieldAlbumArtistSort
 	FieldComposerSort
 
-	// The MusicBrainz ids, searchable by name and read-only: they come from
-	// MusicBrainz by way of a tagger, and a hand edit could only break them.
+	// The MusicBrainz ids, searchable by name. Writable, but only as UUIDs:
+	// the edit path refuses anything else, since a hand-typed id with one
+	// character wrong names a different artist or none at all. See IsMBID.
 	FieldMBArtistID
 	FieldMBAlbumArtistID
 	numFields
@@ -331,18 +332,24 @@ func (t *Track) SetString(f Field, v string) {
 		t.AlbumArtistSort = v
 	case FieldComposerSort:
 		t.ComposerSort = v
+	case FieldMBArtistID:
+		t.MBArtistID = v
+	case FieldMBAlbumArtistID:
+		t.MBAlbumArtistID = v
 	}
 }
 
 // Editable reports whether a field can be changed in the editor. Path is
-// derived from the filesystem, and the MusicBrainz ids are assigned by
-// MusicBrainz, so those are read-only.
+// derived from the filesystem, so it is read-only.
 func (f Field) Editable() bool {
-	switch f {
-	case FieldPath, FieldMBArtistID, FieldMBAlbumArtistID:
-		return false
-	}
-	return true
+	return f != FieldPath
+}
+
+// IsMBID reports whether a field holds MusicBrainz ids. Those are editable,
+// but only with a list of UUIDs, and they are no use as the target of a
+// split: no title has an id in it.
+func (f Field) IsMBID() bool {
+	return f == FieldMBArtistID || f == FieldMBAlbumArtistID
 }
 
 func itoa32(v int32) string {

@@ -118,8 +118,15 @@ Album art from Discogs:
   search costs one request plus one per candidate, because an unauthenticated
   search returns no images. Set -discogs-token or YAMO_DISCOGS_TOKEN and it
   becomes 60 a minute with covers in the search itself, one request a search.
-  -no-discogs turns the lookup off, leaving the server making no outbound
-  requests at all.
+  -no-discogs turns the lookup off.
+
+Artist ids from MusicBrainz:
+  The Get Info sheet can also look an artist up on MusicBrainz and write its
+  id into mbartistid or mbalbumartistid. It needs no credentials either.
+  MusicBrainz allows one request a second per IP address, so searches are
+  spaced out here, and repeated ones are answered from a short cache.
+  -no-musicbrainz turns it off; with -no-discogs as well, the server makes no
+  outbound requests at all.
 
 Transcoding for a device:
   GET /v1/tracks/{id}/audio?as=aac returns the track as AAC in an .m4a,
@@ -156,7 +163,8 @@ func cmdServe(args []string) error {
 	saveEvery := fs.Duration("save-every", 5*time.Second, "how often to write the catalogue snapshot")
 	web := fs.String("web", ".", "directory of a web front end to serve at / (ignored if it has no index.html)")
 	discogsToken := fs.String("discogs-token", os.Getenv("YAMO_DISCOGS_TOKEN"), "optional Discogs token; raises the cover-lookup rate limit")
-	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup, so the server makes no outbound requests")
+	noDiscogs := fs.Bool("no-discogs", false, "disable the Discogs cover lookup")
+	noMusicBrainz := fs.Bool("no-musicbrainz", false, "disable the MusicBrainz artist id lookup")
 	rescanEvery := fs.Duration("rescan-every", 0, "rescan the roots on this interval (e.g. 1h); 0 never rescans")
 	withMCP := fs.Bool("mcp", envBool("YAMO_MCP"), "mount the Model Context Protocol endpoint at /mcp")
 	ffmpeg := fs.String("ffmpeg", os.Getenv("YAMO_FFMPEG"), "ffmpeg to transcode with; found on the PATH if not given")
@@ -210,6 +218,7 @@ func cmdServe(args []string) error {
 		SaveInterval:   *saveEvery,
 		DiscogsToken:   *discogsToken,
 		NoDiscogs:      *noDiscogs,
+		NoMusicBrainz:  *noMusicBrainz,
 		RescanInterval: *rescanEvery,
 		FFmpeg:         ffmpegPath,
 	})
