@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 280 test functions, all clean
+contract, terminal browser, and command line. 281 test functions, all clean
 under `-race`.
 
 ---
@@ -199,11 +199,11 @@ person there to do that.
 
 | Path | Lines | Responsibility |
 | --- | --- | --- |
-| `api/` | 42 | `openapi.yaml` (3,205 lines) plus the Go embed. **The contract.** |
+| `api/` | 42 | `openapi.yaml` (3,206 lines) plus the Go embed. **The contract.** |
 | `internal/tags/` | 6,385 | Format parsers and writers. No third-party tag library. |
 | `internal/catalog/` | 1,853 | In-memory library, binary snapshot, search index, query language. |
 | `internal/scan/` | 438 | Parallel directory walk and tag extraction. |
-| `internal/library/` | 7,001 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
+| `internal/library/` | 7,051 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
 | `internal/api/` | 1,539 | **The server.** HTTP handlers over the service, SSE, docs page. |
 | `internal/auth/` | 116 | How a request presents a credential and what that credential may do. Shared by the API and MCP. |
 | `internal/mcp/` | 1,180 | The Model Context Protocol endpoint at `/mcp`, over the service. |
@@ -491,8 +491,8 @@ back whose own title has nothing to do with the term — a composer called "Jami
 Catto" is enough. This is the useful semantic (find the album with that one song
 on it) but it surprises people. Scope the term with `album:` to search titles.
 
-`/artists` shares the semantic and the grouping key — album artist, falling
-back to artist — so its names are exactly the names heading the album grid and
+`/artists` shares the semantic and the grouping key — album artist, then
+Various Artists when the compilation flag is set, then artist — so its names are exactly the names heading the album grid and
 a compilation lists once, under Various Artists. Its `query` is anchored to
 the whole name (`artist:"^elvis$"`), unlike an album's, because an artist's
 name is routinely a prefix of another's and the query has no second term to

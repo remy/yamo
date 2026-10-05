@@ -552,9 +552,10 @@ paths:
         every track; scope it (`?q=artist:cat`) to search the names alone.
 
         The grouping key is the one the album grid uses: the album artist,
-        falling back to the artist when a file has none. A compilation
-        therefore lists once, under its Various Artists credit, rather than
-        once per performer on it — and the names here are exactly the names
+        then "Various Artists" when the compilation flag is set, then the
+        artist. A compilation therefore lists once, under Various Artists,
+        rather than once per performer on it, whether or not its files carry
+        an album artist; such a group's `query` uses `compilation:1` — and the names here are exactly the names
         heading `/albums`.
 
         `tracks` and `albums` count only the matching tracks and the releases
