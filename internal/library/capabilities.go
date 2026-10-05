@@ -97,6 +97,9 @@ type Features struct {
 	Discogs        bool `json:"discogs"`
 	DiscogsTokened bool `json:"discogsTokened"`
 
+	// MusicBrainz is the artist id lookup, off for the same reason.
+	MusicBrainz bool `json:"musicbrainz"`
+
 	// Backups says whether journals can be written, which needs somewhere to
 	// put them. Without it a batch edit still works and simply cannot be
 	// undone, so a client should say so before running one.
@@ -170,6 +173,7 @@ func (s *Service) Capabilities(sv Serving) Capabilities {
 		Features: Features{
 			Discogs:        s.discogs != nil,
 			DiscogsTokened: s.discogs != nil && s.opts.DiscogsToken != "",
+			MusicBrainz:    s.mb != nil,
 			Backups:        s.opts.BackupDir != "",
 			Clipboard:      s.opts.ClipboardDir != "",
 			Rescan:         every > 0,

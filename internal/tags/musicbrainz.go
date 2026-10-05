@@ -127,3 +127,48 @@ func containsStr(list []string, s string) bool {
 	}
 	return false
 }
+
+// Writing them back. The keys are spelled the way Picard spells them, since
+// Picard wrote most of the ids that are already out there and a library that
+// mixes two spellings of one key is the mess the reader has to untangle.
+const (
+	mbArtistDesc           = "MusicBrainz Artist Id"
+	mbAlbumArtistDesc      = "MusicBrainz Album Artist Id"
+	mbArtistVorbisKey      = "MUSICBRAINZ_ARTISTID"
+	mbAlbumArtistVorbisKey = "MUSICBRAINZ_ALBUMARTISTID"
+)
+
+// NormaliseMBIDs checks a value meant for one of the id fields and returns it
+// in the form the catalogue holds: lower-case UUIDs joined with "; ". Empty is
+// valid and means "remove the ids".
+//
+// It is stricter than joinMBIDs on purpose. Reading keeps whatever is
+// UUID-shaped and quietly drops the rest, because a file is what it is; a
+// write is a request, and a request with a typo in it should be refused
+// rather than half-applied — an id with one digit wrong is a different
+// artist, or none, and nothing downstream could tell.
+func NormaliseMBIDs(v string) (string, bool) {
+	var out []string
+	for _, tok := range strings.FieldsFunc(v, isMBIDSeparator) {
+		tok = strings.ToLower(tok)
+		if !isMBID(tok) {
+			return "", false
+		}
+		if !containsStr(out, tok) {
+			out = append(out, tok)
+		}
+	}
+	return strings.Join(out, "; "), true
+}
+
+// splitMBIDs is the list behind a normalised value, for the containers that
+// store one id per field rather than one string.
+func splitMBIDs(v string) []string {
+	var out []string
+	for _, tok := range strings.FieldsFunc(v, isMBIDSeparator) {
+		if tok = strings.ToLower(tok); isMBID(tok) {
+			out = append(out, tok)
+		}
+	}
+	return out
+}

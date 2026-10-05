@@ -16,6 +16,7 @@ import (
 	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/discogs"
 	"github.com/remy/yamo/internal/library"
+	"github.com/remy/yamo/internal/musicbrainz"
 	"github.com/remy/yamo/internal/tags"
 )
 
@@ -849,6 +850,43 @@ func failDiscogs(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
 	case errors.Is(err, discogs.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
+	default:
+		fail(w, err)
+	}
+}
+
+// --- musicbrainz ----------------------------------------------------------
+//
+// Through the server for two of the reasons Discogs is: MusicBrainz wants a
+// User-Agent it can attribute, which a browser cannot set, and its one request
+// a second is per IP, so it can only be paced in one place.
+
+func (s *Server) musicbrainzArtists(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("q"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "an artist name is required")
+		return
+	}
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	res, err := s.svc.MusicBrainzArtistSearch(r.Context(), name, limit)
+	if err != nil {
+		failMusicBrainz(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// failMusicBrainz maps the lookup's failures the way failDiscogs does: a
+// lookup that is turned off is 503, and a spent budget is 429 with the wait.
+func failMusicBrainz(w http.ResponseWriter, err error) {
+	var limited *musicbrainz.RateLimitError
+	switch {
+	case errors.Is(err, library.ErrNoMusicBrainz):
+		writeError(w, http.StatusServiceUnavailable, "unavailable", err.Error())
+	case errors.As(err, &limited):
+		w.Header().Set("Retry-After", strconv.Itoa(int(limited.RetryAfter.Seconds()+0.999)))
+		writeError(w, http.StatusTooManyRequests, "rate_limited", limited.Error())
 	default:
 		fail(w, err)
 	}

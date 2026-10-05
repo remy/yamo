@@ -539,3 +539,20 @@ func TestSplitReportsItsOwnKind(t *testing.T) {
 func queryEscape(s string) string { return url.QueryEscape(s) }
 
 func base64Of(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+// The MusicBrainz ids are written through PATCH like any other field, and a
+// value that is not an id is the caller's mistake rather than a server fault.
+func TestMusicBrainzIDsOverHTTP(t *testing.T) {
+	h := newHarness(t, 1)
+	id := h.firstTrack(t)["id"].(string)
+
+	const genesis = "8e3fcd7d-bda1-4ca0-b987-b8528d2ad8fa"
+	out := h.patch(t, "/v1/tracks/"+id, map[string]any{"mbartistid": strings.ToUpper(genesis)}, "", http.StatusOK)
+	if out["mbArtistId"] != genesis {
+		t.Errorf("mbArtistId = %v, want %s", out["mbArtistId"], genesis)
+	}
+	h.patch(t, "/v1/tracks/"+id, map[string]any{"mbartistid": "Genesis"}, "", http.StatusBadRequest)
+
+	// Searching needs a name; without one nothing is sent anywhere.
+	h.do(t, http.MethodGet, "/v1/musicbrainz/artists", nil, http.StatusBadRequest)
+}

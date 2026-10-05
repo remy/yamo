@@ -100,9 +100,13 @@ tags:
     description: Cover art, including the copy and paste clipboard.
   - name: discogs
     description: |
-      Finding album art on Discogs. The only part of this API that reaches
-      outside the machine, and the only part with a rate limit that is not
-      this server's own.
+      Finding album art on Discogs. With `musicbrainz`, the only part of this
+      API that reaches outside the machine, and so the only parts with a rate
+      limit that is not this server's own.
+  - name: musicbrainz
+    description: |
+      Finding an artist's MusicBrainz id from its name, to write into
+      `mbartistid` or `mbalbumartistid`.
   - name: jobs
     description: Long-running operations and their progress.
   - name: scan
@@ -1261,6 +1265,53 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/ServerError' }
 
+  /musicbrainz/artists:
+    get:
+      tags: [musicbrainz]
+      summary: Find an artist's MusicBrainz id
+      description: |
+        Searches MusicBrainz for artists by name, best match first, for a
+        client to offer as a list. It deliberately returns candidates rather
+        than an answer: a name alone is ambiguous far more often than an
+        artist and an album together — "Genesis" is three bands — and a wrong
+        id is worse than none, since nothing downstream can tell.
+        `disambiguation` is MusicBrainz' own note on which one is which, and
+        is the thing worth showing.
+
+        The name is searched against the artist's name, aliases and sort name,
+        so "Beatles" finds The Beatles.
+
+        MusicBrainz allows one request a second per IP address, so requests
+        are spaced out here. A second search arriving at once waits its turn;
+        one that would wait more than a few seconds is answered `429` instead.
+        The same search within ten minutes is answered from a cache and costs
+        nothing.
+
+        Writing the id is an ordinary edit: send it as `mbartistid` or
+        `mbalbumartistid` in `Changes`.
+      operationId: musicbrainzArtists
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: The artist's name.
+          schema: { type: string, examples: ["Genesis", "AC/DC"] }
+        - name: limit
+          in: query
+          description: How many candidates to return, up to 25.
+          schema: { type: integer, minimum: 1, maximum: 25, default: 10 }
+      responses:
+        '200':
+          description: The candidates, best first. Empty when nothing matched.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MusicBrainzArtists' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/LookupUnavailable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
   /artwork/summary:
     get:
       tags: [artwork]
@@ -1925,9 +1976,10 @@ components:
         application/json: { schema: { $ref: '#/components/schemas/Job' } }
     RateLimited:
       description: |
-        The Discogs per-minute budget is spent. `Retry-After` says how many
-        seconds until it refills. The limit is counted per IP address, so it is
-        shared with anything else on this machine talking to Discogs.
+        The lookup's budget is spent — Discogs' per-minute allowance, or
+        MusicBrainz' one request a second. `Retry-After` says how many seconds
+        to wait. Both limits are counted per IP address, so they are shared
+        with anything else on this machine talking to the same service.
       headers:
         Retry-After:
           description: Seconds to wait before trying again.
@@ -1941,7 +1993,7 @@ components:
     # policy. Answering only on the 429 lets a client slow down after it has
     # already run out rather than before.
     LookupUnavailable:
-      description: The Discogs lookup is turned off on this server.
+      description: The lookup — Discogs or MusicBrainz — is turned off on this server.
       content:
         application/json: { schema: { $ref: '#/components/schemas/Error' } }
     TranscodeUnavailable:
@@ -2009,15 +2061,15 @@ components:
           description: >-
             The track artist's MusicBrainz id, read from `MUSICBRAINZ_ARTISTID`
             or its equivalent in the file's container. A collaboration carries
-            one id per artist, joined with `"; "`. Read-only: it cannot be
-            changed through `Changes`.
+            one id per artist, joined with `"; "`. Set it through `Changes`
+            as `mbartistid`; `/musicbrainz/artists` finds the id.
           examples: ["70248960-cb53-4ea4-943a-edb18f7d336f"]
         mbAlbumArtistId:
           type: string
           description: >-
             The album artist's MusicBrainz id, from
             `MUSICBRAINZ_ALBUMARTISTID`. The same shape as `mbArtistId`, and
-            read-only like it.
+            set the same way, as `mbalbumartistid`.
         year: { type: integer, format: int32 }
         track: { type: integer, format: int32 }
         trackTotal: { type: integer, format: int32 }
@@ -2092,6 +2144,18 @@ components:
         albumsort: { type: [string, "null"] }
         albumartistsort: { type: [string, "null"] }
         composersort: { type: [string, "null"] }
+        mbartistid:
+          type: [string, "null"]
+          description: >-
+            MusicBrainz artist ids — one, or several for a collaboration,
+            separated by `;`, `/`, `,` or spaces. Anything that is not a UUID is
+            refused with `400` rather than written: an id with one character
+            wrong names a different artist or none. Case does not matter; the
+            ids are stored lower-case and joined with `"; "`.
+          examples: ["6bb73458-6c5f-4c26-8367-66fcef562955"]
+        mbalbumartistid:
+          type: [string, "null"]
+          description: The album artist's MusicBrainz ids, on the same terms as `mbartistid`.
         year: { type: [string, "null"] }
         track: { type: [string, "null"] }
         tracktotal: { type: [string, "null"] }
@@ -3034,6 +3098,11 @@ components:
         discogsTokened:
           type: boolean
           description: Whether it is authenticated, which is 60 requests a minute rather than 25.
+        musicbrainz:
+          type: boolean
+          description: >-
+            The artist id lookup. False when it is turned off, in which case
+            `/musicbrainz/artists` answers `503`.
         backups:
           type: boolean
           description: >-
@@ -3084,6 +3153,51 @@ components:
           description: Requests a minute allowed — 25 without a token, 60 with one.
         rateRemaining: { type: integer, description: How much of the budget is left. }
         tokened: { type: boolean, description: Whether the server has a Discogs token. }
+
+    MusicBrainzArtists:
+      type: object
+      required: [query, items]
+      properties:
+        query: { type: string, description: The name that was searched for. }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/MusicBrainzArtist' }
+
+    MusicBrainzArtist:
+      type: object
+      description: One artist MusicBrainz knows by that name.
+      required: [id, name, score]
+      properties:
+        id:
+          type: string
+          description: The MusicBrainz id, lower-case. This is what to write.
+          examples: ["6bb73458-6c5f-4c26-8367-66fcef562955"]
+        name: { type: string, examples: ["Genesis"] }
+        sortName: { type: string, examples: ["Genesis"] }
+        disambiguation:
+          type: string
+          description: >-
+            MusicBrainz' note on which artist of that name this is. Often the
+            only way to tell candidates apart.
+          examples: ["English rock band"]
+        type:
+          type: string
+          description: Person, Group, Orchestra, Choir, Character or Other.
+          examples: ["Group"]
+        country:
+          type: string
+          description: The ISO 3166-1 code, where it is known.
+          examples: ["GB"]
+        area: { type: string, examples: ["United Kingdom"] }
+        begin:
+          type: string
+          description: A date, or as much of one as is known.
+          examples: ["1967"]
+        end: { type: string, examples: ["2023"] }
+        score:
+          type: integer
+          description: How well the name matched, out of 100.
+          examples: [100]
 
     DiscogsImage:
       type: object

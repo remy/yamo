@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 280 test functions, all clean
+contract, terminal browser, and command line. 288 test functions, all clean
 under `-race`.
 
 ---
@@ -208,6 +208,7 @@ person there to do that.
 | `internal/auth/` | 116 | How a request presents a credential and what that credential may do. Shared by the API and MCP. |
 | `internal/mcp/` | 1,180 | The Model Context Protocol endpoint at `/mcp`, over the service. |
 | `internal/discogs/` | 573 | Read-only Discogs client for the cover and album lookup. |
+| `internal/musicbrainz/` | 302 | Read-only MusicBrainz client for the artist id lookup, paced to one request a second. |
 | `internal/client/` | 687 | Go client for the API. Everything below is built on it. |
 | `internal/ui/` | 3,634 | The terminal browser — a client, same as the command line. |
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
@@ -622,7 +623,7 @@ In the web app they get a Sorting tab rather than five more rows on Details,
 which is where Apple Music puts them too. The TUI cannot edit them, for the
 same fixed-grid reason it cannot edit the compilation flag.
 
-### The MusicBrainz artist ids are read-only, and only UUIDs survive
+### The MusicBrainz artist ids are writable, but only as UUIDs
 
 `mbartistid` and `mbalbumartistid` hold the MusicBrainz ids of the track
 artist and the album artist (`internal/tags/musicbrainz.go`). They exist so
@@ -648,14 +649,63 @@ a second data atom in MP4. The value is split on all of those and only tokens
 shaped like a UUID are kept, lower-cased and joined with `"; "`. Keeping only
 UUIDs also matters downstream: an id is going to be put into a URL.
 
-They are **read-only**. `Field.Editable` refuses them and `tags.Edit` has no
-slot for them, because MusicBrainz assigns them and a hand edit can only break
-one. Making them writable is a field on `Edit` and a writer per container, not
-a change of shape. Two consequences of read-only that are easy to miss: a
-transcoded file does not carry them, since the transcoder tags through `Edit`;
-and the strip's default keep list does not include `musicbrainz`, so a
-default strip removes them. Now that the program uses them, that default
-deserves a second look. It has not been changed.
+They were read-only at first, on the grounds that MusicBrainz assigns them
+and a hand edit can only break one. That held until the web app wanted to fill
+them in for files Picard never saw, from a lookup — `GET
+/v1/musicbrainz/artists`, below. So they are now ordinary fields on `Edit`,
+with one rule the other text fields do not have: `Changes.Validate` refuses
+anything that is not a list of UUIDs (`tags.NormaliseMBIDs`). Reading is
+lenient and keeps whatever is UUID-shaped, because a file is what it is;
+writing is strict, because a request with a typo in it should be refused
+rather than half-applied, and an id with one character wrong is a different
+artist. The value is normalised before it is compared, so the same id pasted
+in capitals is not a change. `Field.IsMBID` keeps them out of split
+templates, since no title has an id in it.
+
+The writers use Picard's spelling — `TXXX:MusicBrainz Artist Id`,
+`MUSICBRAINZ_ARTISTID`, a `----` item in the `com.apple.iTunes` namespace —
+and **clear every other spelling of the same key first**. The reader keeps
+the first value it meets, so leaving ffmpeg's `TXXX:MUSICBRAINZ_ARTISTID`
+beside a freshly written Picard frame would make the edit look as though it
+had not happened. Several ids are NULs in ID3v2.4, a slash in v2.3, repeated
+fields in Vorbis and repeated data atoms in MP4, matching what the reader
+already splits on. The MP4 ones cannot go through `applyEditToILST`'s
+replacement map, which is keyed by atom name: every freeform item is called
+`----`, so they are matched by the name inside them instead. ASF is still
+read-only, like every other ASF field.
+
+Two consequences that are easy to miss: a transcoded file now carries the
+ids, since the transcoder tags through `Edit`; and the strip's default keep
+list still does not include `musicbrainz`, so a default strip removes them —
+including ones just looked up. That default deserves a second look. It has
+not been changed.
+
+#### The MusicBrainz lookup
+
+`internal/musicbrainz` searches the web service by name and returns
+candidates — name, disambiguation, type, country, life span, score. It
+returns a list rather than an answer, unlike the Discogs album lookup:
+an artist and an album together are specific, a name alone is not
+("Genesis" is three bands), and a wrong id is worse than none because
+nothing downstream can tell. `disambiguation` is the field that makes the
+list usable.
+
+It goes through the server for two of the reasons Discogs does. MusicBrainz
+blocks clients that do not name themselves in the User-Agent, which a browser
+cannot set; and the limit is one request a second **per IP**, so it can only
+be kept in one place. That limit is strict enough — exceed it and every
+request gets a 503, not just the excess — that requests are *spaced* rather
+than counted: each claims the next slot 1.1 seconds after the last, waits up
+to three seconds for it, and past that answers 429 with the wait. A 503 is
+taken as the limit (it is also how MusicBrainz says it is down, and waiting
+is the right answer to both) and pushes the next slot back by its
+`Retry-After`. Searches are cached for ten minutes, since opening the picker
+twice on the same name is ordinary. The name is Lucene-escaped and sent
+unfielded, so it matches aliases and sort names as well — "Beatles" finds
+The Beatles, and "AC/DC" is not a syntax error.
+
+`-no-musicbrainz` turns it off. `-no-discogs` used to be described as "no
+outbound requests"; that now takes both flags.
 
 They sit past the sort fields in `blobOrder`, so `mbartistid:` finds them and
 a bare term does not: a search for a run of hex digits should not match the

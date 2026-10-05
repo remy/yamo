@@ -223,7 +223,7 @@ Finding things. Every tool that takes a query uses one language:
 Matching ignores case and accents. Fields: title, artist, albumartist, album,
 genre, composer, comment, year, track, disc, compilation, path, the sort
 forms (titlesort, artistsort, albumsort, albumartistsort, composersort), and
-the MusicBrainz ids (mbartistid, mbalbumartistid), which are read-only.
+the MusicBrainz ids (mbartistid, mbalbumartistid), which take only UUIDs.
 
 Choosing what to change. Writing tools take a selection, not a list of files:
 give "query" (the same language), or "ids", or "all": true, which must be set
