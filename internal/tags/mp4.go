@@ -241,6 +241,9 @@ func parseILST(ilst []byte, md *Metadata) {
 				md.Disc, md.DiscTotal = mp4NumberPair(body)
 			}
 			return true
+		case "----":
+			applyMusicBrainz(md, mp4FreeformName(body), mp4DataStrings(body)...)
+			return true
 		}
 
 		val := mp4DataString(body)
@@ -328,6 +331,26 @@ func mp4DataString(item []byte) string {
 			out = strings.TrimSpace(trimNulUTF8(string(payload)))
 		}
 		return false
+	})
+	return out
+}
+
+// mp4DataStrings decodes every text data atom in an item. A freeform item
+// holding several values — Picard's MusicBrainz ids for a collaboration —
+// carries one data atom per value, where mp4DataString reads only the first.
+func mp4DataStrings(item []byte) []string {
+	var out []string
+	walkAtoms(item, func(typ string, body []byte) bool {
+		if typ != "data" || len(body) < 8 {
+			return true
+		}
+		payload := body[8:]
+		if binary.BigEndian.Uint32(body[0:4])&0x00FFFFFF == 2 {
+			out = append(out, decodeUTF16(payload, true))
+		} else {
+			out = append(out, trimNulUTF8(string(payload)))
+		}
+		return true
 	})
 	return out
 }

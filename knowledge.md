@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 284 test functions, all clean
+contract, terminal browser, and command line. 293 test functions, all clean
 under `-race`.
 
 ---
@@ -199,15 +199,16 @@ person there to do that.
 
 | Path | Lines | Responsibility |
 | --- | --- | --- |
-| `api/` | 42 | `openapi.yaml` (3,190 lines) plus the Go embed. **The contract.** |
-| `internal/tags/` | 6,196 | Format parsers and writers. No third-party tag library. |
-| `internal/catalog/` | 1,810 | In-memory library, binary snapshot, search index, query language. |
+| `api/` | 42 | `openapi.yaml` (3,206 lines) plus the Go embed. **The contract.** |
+| `internal/tags/` | 6,385 | Format parsers and writers. No third-party tag library. |
+| `internal/catalog/` | 1,853 | In-memory library, binary snapshot, search index, query language. |
 | `internal/scan/` | 438 | Parallel directory walk and tag extraction. |
-| `internal/library/` | 7,001 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
+| `internal/library/` | 7,051 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
 | `internal/api/` | 1,539 | **The server.** HTTP handlers over the service, SSE, docs page. |
 | `internal/auth/` | 116 | How a request presents a credential and what that credential may do. Shared by the API and MCP. |
 | `internal/mcp/` | 1,180 | The Model Context Protocol endpoint at `/mcp`, over the service. |
 | `internal/discogs/` | 573 | Read-only Discogs client for the cover and album lookup. |
+| `internal/musicbrainz/` | 302 | Read-only MusicBrainz client for the artist id lookup, paced to one request a second. |
 | `internal/client/` | 687 | Go client for the API. Everything below is built on it. |
 | `internal/ui/` | 3,634 | The terminal browser — a client, same as the command line. |
 | `internal/artclip/` | 144 | The server-side artwork clipboard. |
@@ -491,7 +492,7 @@ to fail in both directions** — a test that cannot fail is worthless.
 
 Contract: `api/openapi.yaml`, embedded and served at `/openapi.yaml`,
 `/openapi.json` and browsable at `/docs` (self-contained, no CDN, because a NAS
-may have no outbound access). 46 operations.
+may have no outbound access). 47 operations.
 
 Reading: `GET /v1/tracks` (q, sort, limit, offset), `/tracks/{id}`, `/albums`,
 `/artists`, `/values/{field}`, `/stats`, `/tracks/{id}/artwork`,
@@ -523,8 +524,8 @@ back whose own title has nothing to do with the term — a composer called "Jami
 Catto" is enough. This is the useful semantic (find the album with that one song
 on it) but it surprises people. Scope the term with `album:` to search titles.
 
-`/artists` shares the semantic and the grouping key — album artist, falling
-back to artist — so its names are exactly the names heading the album grid and
+`/artists` shares the semantic and the grouping key — album artist, then
+Various Artists when the compilation flag is set, then artist — so its names are exactly the names heading the album grid and
 a compilation lists once, under Various Artists. Its `query` is anchored to
 the whole name (`artist:"^elvis$"`), unlike an album's, because an artist's
 name is routinely a prefix of another's and the query has no second term to
@@ -583,8 +584,8 @@ It rides the numeric path in the query language, so `compilation:1`,
 Adding it to the catalogue was originally done without a snapshot version bump,
 on the reasoning that the flags byte beside `HasArt` had spare bits and an older
 snapshot would decode with the bit clear until the next scan said otherwise.
-That reasoning was wrong — see the next section — and the snapshot is now at
-version 2.
+That reasoning was wrong — see the next section — and the snapshot went to
+version 2 for it. Version 3 added the MusicBrainz ids, below.
 
 The TUI cannot edit it. Its editor is a fixed two-by-five grid — `editRows` is
 a constant and `renderField(editRows+row)` assumes exactly ten fields — so an
@@ -653,6 +654,116 @@ answer while being unable to give one.
 In the web app they get a Sorting tab rather than five more rows on Details,
 which is where Apple Music puts them too. The TUI cannot edit them, for the
 same fixed-grid reason it cannot edit the compilation flag.
+
+### The MusicBrainz artist ids are writable, but only as UUIDs
+
+`mbartistid` and `mbalbumartistid` hold the MusicBrainz ids of the track
+artist and the album artist (`internal/tags/musicbrainz.go`). They exist so
+that something outside the file can be looked up by identity rather than by
+name: "Genesis" is three bands, and an id is one. The first planned use is
+fetching an artist photo into the artist's folder as `artist.jpg`. MusicBrainz
+hosts no images, so the source chosen is Wikimedia Commons, reached through
+the artist's MusicBrainz `image` relation or else its Wikidata `P18`. It needs
+no API key and covers the most artists of the sources that need none. That
+fetch is **not written yet**: how it is triggered (a job on `yamo art`, a scan
+flag, or a serve flag) is still open.
+
+Those two lookups are not enough on their own, and the fetch needs a third:
+the lead image of the artist's Wikipedia article, found through the Wikidata
+entry's `enwiki` sitelink and the `pageimages` API. Ren
+(`81250ee6-a008-4007-8cfd-dddc22176cac`) is the case that showed it. There is
+no image relation on MusicBrainz and no `P18` on Wikidata, yet the English
+article has a photo hosted on Commons. It is still keyless and still
+Commons-hosted, so the licensing story does not change.
+
+The alternatives considered and rejected:
+
+- **fanart.tv** looks up by MusicBrainz id and has proper square artist
+  thumbs, but needs a personal API key. It is the fallback to reach for if
+  Commons coverage turns out to be too thin.
+- **TheAudioDB** also looks up by MusicBrainz id, but its free key is
+  rate-limited and real use needs a paid one.
+- **Last.fm** needs a key, and its `artist.getInfo` has returned the same
+  placeholder star instead of an artist photo since around 2019, when artist
+  images stopped being served through the API. The photos on the website are
+  user uploads with no clear licence, and getting at them means scraping
+  pages the terms forbid scraping. A fetch of an artist page showed no image
+  URL in the HTML at all.
+
+Every container spells the keys differently — `TXXX:MusicBrainz Artist Id`
+from Picard, `TXXX:MUSICBRAINZ_ARTISTID` from ffmpeg carrying a Vorbis key
+into an MP3, `MUSICBRAINZ_ARTISTID` in Vorbis, a `----` freeform item named
+`MusicBrainz Artist Id` in MP4, `MusicBrainz/Artist Id` in ASF. Reducing a key
+to its letters, upper-cased, makes all of them one string, so there is one
+comparison rather than a list per format.
+
+A collaboration carries one id per artist, and the writers disagree on how:
+NULs in ID3v2.4, a slash in Picard's v2.3 output, a repeated field in Vorbis,
+a second data atom in MP4. The value is split on all of those and only tokens
+shaped like a UUID are kept, lower-cased and joined with `"; "`. Keeping only
+UUIDs also matters downstream: an id is going to be put into a URL.
+
+They were read-only at first, on the grounds that MusicBrainz assigns them
+and a hand edit can only break one. That held until the web app wanted to fill
+them in for files Picard never saw, from a lookup — `GET
+/v1/musicbrainz/artists`, below. So they are now ordinary fields on `Edit`,
+with one rule the other text fields do not have: `Changes.Validate` refuses
+anything that is not a list of UUIDs (`tags.NormaliseMBIDs`). Reading is
+lenient and keeps whatever is UUID-shaped, because a file is what it is;
+writing is strict, because a request with a typo in it should be refused
+rather than half-applied, and an id with one character wrong is a different
+artist. The value is normalised before it is compared, so the same id pasted
+in capitals is not a change. `Field.IsMBID` keeps them out of split
+templates, since no title has an id in it.
+
+The writers use Picard's spelling — `TXXX:MusicBrainz Artist Id`,
+`MUSICBRAINZ_ARTISTID`, a `----` item in the `com.apple.iTunes` namespace —
+and **clear every other spelling of the same key first**. The reader keeps
+the first value it meets, so leaving ffmpeg's `TXXX:MUSICBRAINZ_ARTISTID`
+beside a freshly written Picard frame would make the edit look as though it
+had not happened. Several ids are NULs in ID3v2.4, a slash in v2.3, repeated
+fields in Vorbis and repeated data atoms in MP4, matching what the reader
+already splits on. The MP4 ones cannot go through `applyEditToILST`'s
+replacement map, which is keyed by atom name: every freeform item is called
+`----`, so they are matched by the name inside them instead. ASF is still
+read-only, like every other ASF field.
+
+Two consequences that are easy to miss: a transcoded file now carries the
+ids, since the transcoder tags through `Edit`; and the strip's default keep
+list still does not include `musicbrainz`, so a default strip removes them —
+including ones just looked up. That default deserves a second look. It has
+not been changed.
+
+#### The MusicBrainz lookup
+
+`internal/musicbrainz` searches the web service by name and returns
+candidates — name, disambiguation, type, country, life span, score. It
+returns a list rather than an answer, unlike the Discogs album lookup:
+an artist and an album together are specific, a name alone is not
+("Genesis" is three bands), and a wrong id is worse than none because
+nothing downstream can tell. `disambiguation` is the field that makes the
+list usable.
+
+It goes through the server for two of the reasons Discogs does. MusicBrainz
+blocks clients that do not name themselves in the User-Agent, which a browser
+cannot set; and the limit is one request a second **per IP**, so it can only
+be kept in one place. That limit is strict enough — exceed it and every
+request gets a 503, not just the excess — that requests are *spaced* rather
+than counted: each claims the next slot 1.1 seconds after the last, waits up
+to three seconds for it, and past that answers 429 with the wait. A 503 is
+taken as the limit (it is also how MusicBrainz says it is down, and waiting
+is the right answer to both) and pushes the next slot back by its
+`Retry-After`. Searches are cached for ten minutes, since opening the picker
+twice on the same name is ordinary. The name is Lucene-escaped and sent
+unfielded, so it matches aliases and sort names as well — "Beatles" finds
+The Beatles, and "AC/DC" is not a syntax error.
+
+`-no-musicbrainz` turns it off. `-no-discogs` used to be described as "no
+outbound requests"; that now takes both flags.
+
+They sit past the sort fields in `blobOrder`, so `mbartistid:` finds them and
+a bare term does not: a search for a run of hex digits should not match the
+middle of a UUID.
 
 ### The Discogs lookup is three constraints in a trenchcoat
 

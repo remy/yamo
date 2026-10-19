@@ -353,6 +353,12 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 		if it.Name == atomCover && e.Artwork != nil {
 			continue
 		}
+		// Freeform items all share the name "----" and are told apart by the
+		// name inside them, so they cannot go through repl. The MusicBrainz
+		// ones being rewritten are dropped here and re-added below.
+		if it.Name == "----" && mbFreeformEdited(e, mp4FreeformName(it.Body)) {
+			continue
+		}
 		if v, ok := repl[it.Name]; ok {
 			if !seen[it.Name] && v != nil {
 				out = append(out, mp4Item{Name: it.Name, Body: v})
@@ -372,7 +378,48 @@ func applyEditToILST(items []mp4Item, e *Edit, cur *Metadata) []mp4Item {
 			out = append(out, mp4Item{Name: name, Body: v})
 		}
 	}
+	if e.MBArtistID != nil {
+		out = appendMBFreeform(out, mbArtistDesc, *e.MBArtistID)
+	}
+	if e.MBAlbumArtistID != nil {
+		out = appendMBFreeform(out, mbAlbumArtistDesc, *e.MBAlbumArtistID)
+	}
 	return out
+}
+
+// mbFreeformEdited reports whether a freeform item is one of the MusicBrainz
+// keys the edit rewrites, in any spelling.
+func mbFreeformEdited(e *Edit, name string) bool {
+	switch musicBrainzKey(name) {
+	case mbArtistKey:
+		return e.MBArtistID != nil
+	case mbAlbumArtistKey:
+		return e.MBAlbumArtistID != nil
+	}
+	return false
+}
+
+// appendMBFreeform adds a "----" item in the iTunes namespace, which is where
+// Picard puts the MusicBrainz ids in an MP4. Several ids are several data
+// atoms in one item rather than one joined string, since that is how MP4
+// holds a list and how the reader expects to find one.
+func appendMBFreeform(items []mp4Item, name, ids string) []mp4Item {
+	list := splitMBIDs(ids)
+	if len(list) == 0 {
+		return items
+	}
+	body := [][]byte{
+		atom("mean", make([]byte, 4), []byte("com.apple.iTunes")),
+		atom("name", make([]byte, 4), []byte(name)),
+	}
+	for _, id := range list {
+		body = append(body, mp4TextBody(id))
+	}
+	var b []byte
+	for _, part := range body {
+		b = append(b, part...)
+	}
+	return append(items, mp4Item{Name: "----", Body: b})
 }
 
 // ilstOrder gives newly added items a deterministic order. An atom missing

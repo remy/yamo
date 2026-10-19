@@ -111,30 +111,33 @@ that merely files itself under "Presley, Elvis".
 
 #### The fields
 
-Seventeen, and one name each: the same word is the query prefix, the `sort`
+Nineteen, and one name each: the same word is the query prefix, the `sort`
 key, the `$field` in a rename or split template, and the key in the body of an
-edit. The short forms exist because the search bar is typed into live; the
+edit. The two MusicBrainz ids take only ids: an edit that sets one to anything
+but a list of UUIDs is refused. The short forms exist because the search bar is typed into live; the
 canonical name is the one to use from a script.
 
-| Field             | Also           | Matches                                                                  |
-| ----------------- | -------------- | ------------------------------------------------------------------------ |
-| `title`           | `t`, `name`    | the track title                                                          |
-| `artist`          | `a`, `ar`      | the performer                                                            |
-| `albumartist`     | `aa`, `band`   | the album's artist — what `/v1/albums` and `/v1/artists` group on        |
-| `album`           | `al`, `b`      | the album title                                                          |
-| `genre`           | `g`            | the genre                                                                |
-| `composer`        | `c`            | the composer                                                             |
-| `comment`         |                | the free-text comment                                                    |
-| `year`            | `y`, `date`    | *numeric.* The year, parsed out of a fuller date if the file carries one |
-| `track`           | `trackno`, `n` | *numeric.* The track number                                              |
-| `disc`            | `d`            | *numeric.* The disc number                                               |
-| `compilation`     | `comp`, `va`   | *numeric.* The Various Artists flag: `1` set, `0` not                    |
-| `path`            | `p`, `file`    | the full path of the file on disk                                        |
-| `titlesort`       | `ts`           | the sort form of the title                                               |
-| `artistsort`      | `as`           | the sort form of the artist                                              |
-| `albumsort`       | `als`          | the sort form of the album                                               |
-| `albumartistsort` | `aas`          | the sort form of the album artist                                        |
-| `composersort`    | `cs`           | the sort form of the composer                                            |
+| Field             | Also                        | Matches                                                                  |
+| ----------------- | --------------------------- | ------------------------------------------------------------------------ |
+| `title`           | `t`, `name`                 | the track title                                                          |
+| `artist`          | `a`, `ar`                   | the performer                                                            |
+| `albumartist`     | `aa`, `band`                | the album's artist — what `/v1/albums` and `/v1/artists` group on        |
+| `album`           | `al`, `b`                   | the album title                                                          |
+| `genre`           | `g`                         | the genre                                                                |
+| `composer`        | `c`                         | the composer                                                             |
+| `comment`         |                             | the free-text comment                                                    |
+| `year`            | `y`, `date`                 | *numeric.* The year, parsed out of a fuller date if the file carries one |
+| `track`           | `trackno`, `n`              | *numeric.* The track number                                              |
+| `disc`            | `d`                         | *numeric.* The disc number                                               |
+| `compilation`     | `comp`, `va`                | *numeric.* The Various Artists flag: `1` set, `0` not                    |
+| `path`            | `p`, `file`                 | the full path of the file on disk                                        |
+| `titlesort`       | `ts`                        | the sort form of the title                                               |
+| `artistsort`      | `as`                        | the sort form of the artist                                              |
+| `albumsort`       | `als`                       | the sort form of the album                                               |
+| `albumartistsort` | `aas`                       | the sort form of the album artist                                        |
+| `composersort`    | `cs`                        | the sort form of the composer                                            |
+| `mbartistid`      | `musicbrainz_artistid`      | the artist's MusicBrainz id. *Only UUIDs can be written*                 |
+| `mbalbumartistid` | `musicbrainz_albumartistid` | the album artist's MusicBrainz id. *Only UUIDs can be written*           |
 
 The four numeric fields are the ones that take `>`, `<`, `>=`, `<=` and
 `1970-1979`; on them `~` and the anchors are ignored, since there is nothing
@@ -143,8 +146,8 @@ text, and takes the anchors, the fuzzy marker and the empty form.
 
 An unqualified term searches the seven display fields — `title`, `artist`,
 `albumartist`, `album`, `genre`, `composer` and `comment` — and stops there.
-`path` and the five sort fields are searchable only when named, which is the
-point: `presley` should find the tracks by him, not every track that files
+`path`, the five sort fields and the two MusicBrainz ids are searchable only
+when named, which is the point: `presley` should find the tracks by him, not every track that files
 itself under "Presley, Elvis".
 
 A prefix that is not one of these names is not treated as one, which is what
@@ -515,8 +518,22 @@ and they are worth knowing before changing any of it:
 
 The download lands on the same artwork clipboard as everything else, so
 applying it to one track or to an album reuses the paste that already exists.
-`-no-discogs` turns the lookup off, leaving the server making no outbound
-requests at all.
+`-no-discogs` turns the lookup off.
+
+#### Finding artist ids on MusicBrainz
+
+`GET /v1/musicbrainz/artists?q=Genesis` lists the artists MusicBrainz knows by
+that name, best match first, each with its id and the note MusicBrainz keeps
+on which one it is — "English rock band", "US hip hop artist". It is a list
+rather than an answer on purpose: a name on its own is ambiguous far more
+often than an album is, and a wrong id is worse than none. Write the chosen id
+with an ordinary edit, as `mbartistid` or `mbalbumartistid`.
+
+No account is needed. MusicBrainz allows one request a second per IP, so the
+server spaces searches out, makes a second one wait its turn, and answers
+`429` with a `Retry-After` rather than hold a request for long. The same
+search within ten minutes is answered from a cache. `-no-musicbrainz` turns it
+off; with `-no-discogs` as well, the server makes no outbound requests at all.
 
 `GET /v1/discogs/album` asks a cheaper question: the year and the genre of an
 album, from the leading match. Only images are missing from an unauthenticated
@@ -800,8 +817,8 @@ and `actual`. A `scan_running` names the job already going.
 | `409`  | `conflict`, `exists`, `count_mismatch` or `scan_running`                                                          |
 | `413`  | An uploaded cover above `limits.maxImageBytes` — refused, never truncated                                         |
 | `422`  | `unwritable`: this build reads the format but cannot write it; `untranscodable`: ffmpeg could not decode the file |
-| `429`  | The Discogs per-minute budget is spent; `Retry-After` says how long                                               |
-| `503`  | The Discogs lookup is turned off on this server, or transcoding is (no ffmpeg)                                    |
+| `429`  | The Discogs or MusicBrainz budget is spent; `Retry-After` says how long                                           |
+| `503`  | The Discogs or MusicBrainz lookup is turned off on this server, or transcoding is (no ffmpeg)                     |
 
 ### Endpoint reference
 
@@ -852,6 +869,8 @@ of every parameter. This is the map.
 | `GET /v1/discogs/search`                    | Find album covers                                      |
 | `GET /v1/discogs/masters/{id}`              | Every image on a master                                |
 | `GET /v1/discogs/album`                     | Look an album up for its year and genre                |
+| **MusicBrainz**                             |                                                        |
+| `GET /v1/musicbrainz/artists`               | Find an artist's id by name                            |
 | **Jobs and scanning**                       |                                                        |
 | `GET /v1/jobs`                              | Filtered, paged                                        |
 | `GET /v1/jobs/{id}`                         | One job                                                |
@@ -1099,7 +1118,9 @@ server and works from anywhere.
 The **Split** button beside the title appears only when the artist reads
 Various Artists. For one song it fills the fields in and waits for you to save;
 for a selection it runs as a job. The **Artwork** tab searches Discogs, and
-**Populate from Discogs** beside the year fills in the year and genre.
+**Populate from Discogs** beside the year fills in the year and genre. The two
+MusicBrainz id fields each have a **Find…** button that lists the artists of
+that name on MusicBrainz to pick from.
 
 ### The command line
 

@@ -352,6 +352,61 @@ func TestArtistQueryReselectsExactly(t *testing.T) {
 	}
 }
 
+// A compilation ripped without an album artist carries the flag and nothing
+// else to say so. Falling back to the artist broke it into one album per
+// performer; the flag has to keep it together, under Various Artists, with a
+// query that reselects all of it and none of a performer's own records.
+func TestFlaggedCompilationGroupsOnce(t *testing.T) {
+	dir := t.TempDir()
+	c := catalog.New()
+	for i, artist := range []string{"Agnelli & Nelson", "Bedrock", "Binary Finary", "Bedrock"} {
+		c.Tracks = append(c.Tracks, catalog.Track{
+			Path:        filepath.Join(dir, "music", artist, "Euphoria", fmt.Sprintf("%02d.m4a", i)),
+			Artist:      artist,
+			Album:       "Euphoria",
+			Compilation: true,
+			Format:      tags.FormatMP3,
+		})
+	}
+	c.Tracks = append(c.Tracks, catalog.Track{
+		Path:   filepath.Join(dir, "music", "Bedrock", "Heaven Scent", "01.m4a"),
+		Artist: "Bedrock",
+		Album:  "Heaven Scent",
+		Format: tags.FormatMP3,
+	})
+	s := openService(t, dir, c)
+
+	albums := s.Albums(ListParams{Limit: 100})
+	if albums.Total != 2 {
+		t.Fatalf("grouped into %d albums, want 2", albums.Total)
+	}
+	for _, a := range albums.Items {
+		if a.Album == "Euphoria" && (a.AlbumArtist != VariousArtists || a.Tracks != 4) {
+			t.Errorf("Euphoria is %d tracks under %q, want 4 under %q", a.Tracks, a.AlbumArtist, VariousArtists)
+		}
+		if got := s.Count(a.Query); got != a.Tracks {
+			t.Errorf("album query %q matched %d, want %d", a.Query, got, a.Tracks)
+		}
+	}
+
+	artists := s.Artists(ListParams{Limit: 100})
+	want := map[string]int{VariousArtists: 4, "Bedrock": 1}
+	if artists.Total != len(want) {
+		t.Fatalf("grouped into %d artists, want %d", artists.Total, len(want))
+	}
+	for _, a := range artists.Items {
+		if a.Tracks != want[a.Artist] {
+			t.Errorf("artist %q has %d tracks, want %d", a.Artist, a.Tracks, want[a.Artist])
+		}
+		// Bedrock's own query is artist:, which also finds their tracks on
+		// the compilation — the limit Artists already documents — so only the
+		// group named by the flag is held to an exact reselection here.
+		if got := s.Count(a.Query); a.Artist == VariousArtists && got != a.Tracks {
+			t.Errorf("artist query %q matched %d, want %d", a.Query, got, a.Tracks)
+		}
+	}
+}
+
 // TestAlbumQueryWithoutAlbumArtist covers the case that made the album grid
 // useless on a real library: grouping falls back to the artist when a file has
 // no album artist, but the query the album carried always named albumartist,
@@ -470,6 +525,54 @@ func TestChangesValidation(t *testing.T) {
 	}
 	if err := (Changes{"tracktotal": strptr("12")}).Validate(); err != nil {
 		t.Errorf("tracktotal was rejected: %v", err)
+	}
+	// The MusicBrainz ids take UUIDs and nothing else, but clearing one is
+	// always allowed.
+	if err := (Changes{"mbartistid": strptr("Genesis")}).Validate(); err == nil {
+		t.Error("a name was accepted as a MusicBrainz id")
+	}
+	if err := (Changes{"mbalbumartistid": strptr(mbTestID)}).Validate(); err != nil {
+		t.Errorf("a MusicBrainz id was rejected: %v", err)
+	}
+	if err := (Changes{"mbartistid": nil}).Validate(); err != nil {
+		t.Errorf("clearing a MusicBrainz id was rejected: %v", err)
+	}
+}
+
+const mbTestID = "8e3fcd7d-bda1-4ca0-b987-b8528d2ad8fa"
+
+// An id written through the edit path lands in the file and the catalogue in
+// one form, so that sending the same id again — in capitals, as MusicBrainz'
+// own pages sometimes show it — is recognised as no change.
+func TestPatchWritesMusicBrainzIDs(t *testing.T) {
+	s, _ := realService(t, 1)
+	track := s.List(ListParams{}).Items[0]
+
+	upper := strings.ToUpper(mbTestID)
+	updated, err := s.Patch(track.ID, Changes{"mbalbumartistid": &upper}, "")
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+	if updated.MBAlbumArtistID != mbTestID {
+		t.Errorf("catalogue holds %q, want %q", updated.MBAlbumArtistID, mbTestID)
+	}
+	md, err := tags.NewReader().ReadFile(track.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if md.MusicBrainzAlbumArtistID != mbTestID {
+		t.Errorf("the file on disk says %q", md.MusicBrainzAlbumArtistID)
+	}
+
+	again, err := s.Patch(track.ID, Changes{"mbalbumartistid": &upper}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Version != updated.Version {
+		t.Error("the same id in another case rewrote the file")
+	}
+	if got := s.List(ListParams{Query: "mbalbumartistid:" + mbTestID}).Total; got != 1 {
+		t.Errorf("searching by the new id found %d tracks, want 1", got)
 	}
 }
 

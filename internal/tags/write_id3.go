@@ -208,9 +208,53 @@ func applyEditToFrames(tag *id3Tag, e *Edit, cur *Metadata) {
 	if e.Comment != nil {
 		setCommentFrame(tag, *e.Comment)
 	}
+	setMBIDFrame(tag, mbArtistKey, mbArtistDesc, e.MBArtistID)
+	setMBIDFrame(tag, mbAlbumArtistKey, mbAlbumArtistDesc, e.MBAlbumArtistID)
 	if e.Artwork != nil {
 		setPictureFrames(tag, *e.Artwork)
 	}
+}
+
+// setMBIDFrame replaces every TXXX frame that spells the MusicBrainz key with
+// one in Picard's spelling. Every spelling goes, not just Picard's: ffmpeg
+// writes TXXX:MUSICBRAINZ_ARTISTID, and leaving that behind would leave two
+// frames disagreeing with the first one read winning — the reader keeps the
+// first, so the edit could appear not to have happened at all.
+//
+// Several ids are NUL-separated in v2.4, which is how that version says a
+// frame holds a list, and slash-separated in v2.3, which has no list syntax
+// and where Picard uses a slash. The reader splits on both.
+func setMBIDFrame(tag *id3Tag, key, desc string, v *string) {
+	if v == nil {
+		return
+	}
+	out := tag.frames[:0]
+	for _, f := range tag.frames {
+		if f.id == "TXXX" {
+			if d, _ := userText(f.payload); musicBrainzKey(d) == key {
+				continue
+			}
+		}
+		out = append(out, f)
+	}
+	tag.frames = out
+
+	ids := splitMBIDs(*v)
+	if len(ids) == 0 {
+		return
+	}
+	sep := "/"
+	if tag.major >= 4 {
+		sep = "\x00"
+	}
+	enc, d := encodeString(tag.major, desc)
+	_, text := encodeString(tag.major, strings.Join(ids, sep))
+	payload := make([]byte, 0, 1+len(d)+2+len(text))
+	payload = append(payload, enc)
+	payload = append(payload, d...)
+	payload = append(payload, terminator(enc)...)
+	payload = append(payload, text...)
+	tag.frames = append(tag.frames, id3Frame{id: "TXXX", payload: payload})
 }
 
 // setPictureFrames replaces every APIC frame with the given images.

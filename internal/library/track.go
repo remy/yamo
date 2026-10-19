@@ -37,6 +37,11 @@ type Track struct {
 	AlbumArtistSort string `json:"albumArtistSort,omitempty"`
 	ComposerSort    string `json:"composerSort,omitempty"`
 
+	// The MusicBrainz ids of the artist and the album artist, each one or
+	// more UUIDs joined with "; ". Read-only: MusicBrainz assigns them.
+	MBArtistID      string `json:"mbArtistId,omitempty"`
+	MBAlbumArtistID string `json:"mbAlbumArtistId,omitempty"`
+
 	Year       int32 `json:"year,omitempty"`
 	TrackNo    int32 `json:"track,omitempty"`
 	TrackTotal int32 `json:"trackTotal,omitempty"`
@@ -89,6 +94,9 @@ func toTrack(t *catalog.Track) Track {
 		AlbumSort:       t.AlbumSort,
 		AlbumArtistSort: t.AlbumArtistSort,
 		ComposerSort:    t.ComposerSort,
+
+		MBArtistID:      t.MBArtistID,
+		MBAlbumArtistID: t.MBAlbumArtistID,
 
 		Year:        t.Year,
 		TrackNo:     t.TrackNo,

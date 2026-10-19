@@ -15,11 +15,14 @@ import (
 // "Presley, Elvis" when its artist does not. They cost almost nothing to
 // carry — a track without them adds five NUL bytes to its blob — and leaving
 // them out would make a qualified query for one silently match nothing.
+// The MusicBrainz ids follow for the same reason: a bare term that happens to
+// be a run of hex digits should not match the middle of a UUID.
 var blobOrder = [...]Field{
 	FieldTitle, FieldArtist, FieldAlbumArtist, FieldAlbum,
 	FieldGenre, FieldComposer, FieldComment, FieldPath,
 	FieldTitleSort, FieldArtistSort, FieldAlbumSort,
 	FieldAlbumArtistSort, FieldComposerSort,
+	FieldMBArtistID, FieldMBAlbumArtistID,
 }
 
 const (

@@ -371,10 +371,7 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 		t := &s.cat.Tracks[i]
 		// Grouping on album artist as well as album keeps two different
 		// records that happen to share a title apart.
-		artist := t.AlbumArtist
-		if artist == "" {
-			artist = t.Artist
-		}
+		artist, compiled := creditedArtist(t)
 		folded := catalog.Fold(artist)
 		key := folded + "\x00" + catalog.Fold(t.Album)
 		a := byKey[key]
@@ -389,6 +386,9 @@ func (s *Service) Albums(p ListParams) AlbumsResult {
 		}
 		if catalog.Fold(t.Artist) == folded {
 			a.byArtist++
+		}
+		if compiled {
+			a.byFlag++
 		}
 		a.Tracks++
 		a.DurationMS += int64(t.DurationMS)
@@ -425,10 +425,32 @@ type albumAgg struct {
 	Album
 	byAlbumArtist int // tracks that carry an album artist of their own
 	byArtist      int // tracks whose artist is the one naming this group
+	byFlag        int // tracks placed here by the compilation flag alone
 }
 
 func (a *albumAgg) artistField() string {
-	return artistField(a.byAlbumArtist, a.byArtist)
+	return artistField(a.byAlbumArtist, a.byArtist, a.byFlag)
+}
+
+// VariousArtists is the name a compilation is listed under when its files
+// never had an album artist written.
+const VariousArtists = "Various Artists"
+
+// creditedArtist is the name a track is grouped under: the album artist, then
+// the compilation flag, then the artist. The flag has to come before the
+// artist. A compilation ripped without an album artist names a different
+// performer on every track, so falling back to the artist broke one record
+// into as many "albums" as it has performers — which is precisely what the
+// flag exists to prevent. compiled reports that the flag decided it, since
+// the name alone cannot be searched for: no file says "Various Artists".
+func creditedArtist(t *catalog.Track) (name string, compiled bool) {
+	switch {
+	case t.AlbumArtist != "":
+		return t.AlbumArtist, false
+	case t.Compilation:
+		return VariousArtists, true
+	}
+	return t.Artist, false
 }
 
 // artistField names the field that reselects a group credited to one artist.
@@ -439,8 +461,14 @@ func (a *albumAgg) artistField() string {
 // Neither field can express a group that is genuinely mixed, so the one
 // covering more of it wins, and album artist breaks the tie as the more
 // specific of the two.
-func artistField(byAlbumArtist, byArtist int) string {
-	if byAlbumArtist >= byArtist {
+//
+// A group named by the compilation flag has no field holding its name, so it
+// is reselected by the flag itself, and that wins whenever it covers the most.
+func artistField(byAlbumArtist, byArtist, byFlag int) string {
+	switch {
+	case byFlag > 0 && byFlag >= byAlbumArtist && byFlag >= byArtist:
+		return "compilation"
+	case byAlbumArtist >= byArtist:
 		return "albumartist"
 	}
 	return "artist"
@@ -450,7 +478,9 @@ func artistField(byAlbumArtist, byArtist int) string {
 // so that titles containing spaces survive the round trip.
 func albumQuery(field, artist, album string) string {
 	var b strings.Builder
-	if artist != "" {
+	if field == "compilation" {
+		b.WriteString("compilation:1 ")
+	} else if artist != "" {
 		b.WriteString(field + `:"` + strings.ReplaceAll(artist, `"`, "") + `" `)
 	}
 	b.WriteString(`album:"` + strings.ReplaceAll(album, `"`, "") + `"`)
@@ -458,8 +488,8 @@ func albumQuery(field, artist, album string) string {
 }
 
 // Artist groups the tracks credited to one artist. It is the level above the
-// album grid, and it groups on the same key — the album artist, falling back
-// to the artist — so the names here are exactly the names heading /albums,
+// album grid, and it groups on the same key — see creditedArtist — so the
+// names here are exactly the names heading /albums,
 // and a compilation lists once, under Various Artists, rather than once per
 // performer on it.
 type Artist struct {
@@ -507,10 +537,7 @@ func (s *Service) Artists(p ListParams) ArtistsResult {
 	byKey := map[string]*artistAgg{}
 	for _, i := range hits {
 		t := &s.cat.Tracks[i]
-		artist := t.AlbumArtist
-		if artist == "" {
-			artist = t.Artist
-		}
+		artist, compiled := creditedArtist(t)
 		folded := catalog.Fold(artist)
 		a := byKey[folded]
 		if a == nil {
@@ -522,6 +549,9 @@ func (s *Service) Artists(p ListParams) ArtistsResult {
 		}
 		if catalog.Fold(t.Artist) == folded {
 			a.byArtist++
+		}
+		if compiled {
+			a.byFlag++
 		}
 		a.Tracks++
 		a.DurationMS += int64(t.DurationMS)
@@ -540,7 +570,7 @@ func (s *Service) Artists(p ListParams) ArtistsResult {
 	items := make([]Artist, 0, len(byKey))
 	for _, a := range byKey {
 		a.Albums = len(a.albums)
-		a.Query = artistQuery(artistField(a.byAlbumArtist, a.byArtist), a.Artist.Artist)
+		a.Query = artistQuery(artistField(a.byAlbumArtist, a.byArtist, a.byFlag), a.Artist.Artist)
 		items = append(items, a.Artist)
 	}
 	sortArtists(items, p.Sort)
@@ -561,6 +591,7 @@ type artistAgg struct {
 	albums        map[string]bool // folded album titles seen in this group
 	byAlbumArtist int             // tracks that carry an album artist of their own
 	byArtist      int             // tracks whose artist is the one naming this group
+	byFlag        int             // tracks placed here by the compilation flag alone
 }
 
 // artistQuery builds a query that selects exactly one artist. Unlike an
@@ -571,6 +602,9 @@ type artistAgg struct {
 // group is the tracks credited to nobody, and both fields being empty is what
 // says so.
 func artistQuery(field, artist string) string {
+	if field == "compilation" {
+		return "compilation:1"
+	}
 	if artist == "" {
 		return "artist: albumartist:"
 	}

@@ -55,6 +55,11 @@ func (ch Changes) Validate() error {
 		if !f.Editable() {
 			return fmt.Errorf("library: %q is derived from the file and cannot be set", k)
 		}
+		if v := ch[k]; f.IsMBID() && v != nil {
+			if _, ok := tags.NormaliseMBIDs(*v); !ok {
+				return fmt.Errorf("%w: %s takes MusicBrainz ids, and %q is not one", ErrBadRequest, k, *v)
+			}
+		}
 	}
 	return nil
 }
@@ -230,6 +235,18 @@ func editFromChanges(cur *catalog.Track, ch Changes) (*tags.Edit, func(*catalog.
 		f, ok := catalog.LookupField(key)
 		if !ok || !f.Editable() {
 			continue
+		}
+		if f.IsMBID() {
+			// Compared and stored in the catalogue's own form, so that an id
+			// pasted in upper case, or two joined with a slash, is not taken
+			// for a change from the same ids already in the file. Validate has
+			// refused anything that does not normalise; this is the belt to
+			// its braces for a caller that skipped it.
+			norm, ok := tags.NormaliseMBIDs(val)
+			if !ok {
+				continue
+			}
+			val = norm
 		}
 		name := catalog.FieldNames[f]
 		if f == catalog.FieldCompilation {

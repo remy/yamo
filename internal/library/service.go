@@ -10,6 +10,7 @@ import (
 	"github.com/remy/yamo/internal/artclip"
 	"github.com/remy/yamo/internal/catalog"
 	"github.com/remy/yamo/internal/discogs"
+	"github.com/remy/yamo/internal/musicbrainz"
 )
 
 // Options configures a Service.
@@ -41,6 +42,10 @@ type Options struct {
 	// make no outbound requests at all.
 	NoDiscogs bool
 
+	// NoMusicBrainz turns the artist id lookup off. A server that should make
+	// no outbound requests needs both this and NoDiscogs.
+	NoMusicBrainz bool
+
 	// RescanInterval rescans the catalogue's own roots on a timer. Zero, the
 	// default, never rescans: nothing watches the filesystem, so a library
 	// changed by anything other than this server is only noticed when a scan
@@ -68,6 +73,7 @@ type Service struct {
 	locks   pathLocks
 	clip    *artclip.Store
 	discogs *discogs.Client
+	mb      *musicbrainz.Client
 	thumbs  *thumbCache
 
 	// transcodes holds a token per encode in progress; see transcodeSlots.
@@ -153,6 +159,9 @@ func Open(opts Options) (*Service, error) {
 	// makes no request until someone searches.
 	if !opts.NoDiscogs {
 		s.discogs = discogs.New(opts.DiscogsToken)
+	}
+	if !opts.NoMusicBrainz {
+		s.mb = musicbrainz.New()
 	}
 	s.jobs = newJobs(s)
 	s.reindexLocked()

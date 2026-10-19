@@ -62,12 +62,13 @@ const queryHelp = `Query syntax:
   artist:elvis year:>1960   terms are combined with AND
 
 Fields: title, artist, albumartist, album, genre, composer, comment,
-year, track, disc, compilation, path, and the sort forms titlesort,
-artistsort, albumsort, albumartistsort, composersort. Most have short
-aliases (ar, al, g, y, comp, aas).
+year, track, disc, compilation, path, the sort forms titlesort,
+artistsort, albumsort, albumartistsort, composersort, and the MusicBrainz
+ids mbartistid and mbalbumartistid. Most have short aliases (ar, al, g,
+y, comp, aas).
 
-A bare term searches the display fields only; the sort fields and path
-are reachable by name.
+A bare term searches the display fields only; the sort fields, the
+MusicBrainz ids and path are reachable by name.
 
 Matching ignores case and accents, so "bjork" finds "Björk".
 

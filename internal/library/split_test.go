@@ -66,10 +66,11 @@ func TestSplitTemplatesRejected(t *testing.T) {
 	for _, tmpl := range []string{
 		"",
 		"   ",
-		"artist - title",   // no fields named
-		"$artist - $",      // a dollar with nothing after it
-		"$nosuch - $title", // not a field
-		"$path - $title",   // a field, but not one that can be written
+		"artist - title",       // no fields named
+		"$artist - $",          // a dollar with nothing after it
+		"$nosuch - $title",     // not a field
+		"$path - $title",       // a field, but not one that can be written
+		"$mbartistid - $title", // writable, but no title holds an id
 		"$artist - $artist",
 		"$title", // would copy the title onto itself
 	} {

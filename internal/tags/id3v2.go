@@ -286,7 +286,7 @@ func (t *id3Tag) applyTo(md *Metadata) {
 			// comment and the compilation flag as TXXX rather than in the
 			// frames the specification provides.
 			desc, val := userText(f.payload)
-			if val == "" {
+			if val == "" || applyMusicBrainz(md, desc, val) {
 				break
 			}
 			t, _ := tagForDescription(desc)

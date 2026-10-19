@@ -33,6 +33,12 @@ type Track struct {
 	AlbumArtistSort string
 	ComposerSort    string
 
+	// The MusicBrainz ids of the artist and the album artist, each one or
+	// more UUIDs joined with "; ". They identify an artist where the name
+	// cannot, which is what an artist photo has to be looked up by.
+	MBArtistID      string
+	MBAlbumArtistID string
+
 	Size    int64
 	ModTime int64 // Unix seconds
 
@@ -96,6 +102,8 @@ func (t *Track) FromMetadata(md *tags.Metadata) {
 	t.AlbumSort = md.AlbumSort
 	t.AlbumArtistSort = md.AlbumArtistSort
 	t.ComposerSort = md.ComposerSort
+	t.MBArtistID = md.MusicBrainzArtistID
+	t.MBAlbumArtistID = md.MusicBrainzAlbumArtistID
 	t.Year = md.Year
 	t.TrackNo = md.Track
 	t.TrackTotal = md.TrackTotal
@@ -162,6 +170,12 @@ const (
 	FieldAlbumSort
 	FieldAlbumArtistSort
 	FieldComposerSort
+
+	// The MusicBrainz ids, searchable by name. Writable, but only as UUIDs:
+	// the edit path refuses anything else, since a hand-typed id with one
+	// character wrong names a different artist or none at all. See IsMBID.
+	FieldMBArtistID
+	FieldMBAlbumArtistID
 	numFields
 )
 
@@ -185,6 +199,9 @@ var FieldNames = [numFields]string{
 	FieldAlbumSort:       "albumsort",
 	FieldAlbumArtistSort: "albumartistsort",
 	FieldComposerSort:    "composersort",
+
+	FieldMBArtistID:      "mbartistid",
+	FieldMBAlbumArtistID: "mbalbumartistid",
 }
 
 // fieldAliases maps the short forms a query may use to a Field.
@@ -207,6 +224,11 @@ var fieldAliases = map[string]Field{
 	"albumsort": FieldAlbumSort, "als": FieldAlbumSort,
 	"albumartistsort": FieldAlbumArtistSort, "aas": FieldAlbumArtistSort,
 	"composersort": FieldComposerSort, "cs": FieldComposerSort,
+
+	// The long forms are the Vorbis field names, which is what someone who
+	// has seen the tag in a file will type.
+	"mbartistid": FieldMBArtistID, "musicbrainz_artistid": FieldMBArtistID,
+	"mbalbumartistid": FieldMBAlbumArtistID, "musicbrainz_albumartistid": FieldMBAlbumArtistID,
 }
 
 // LookupField resolves a query field name, which may be an alias.
@@ -255,6 +277,10 @@ func (t *Track) String(f Field) string {
 		return t.AlbumArtistSort
 	case FieldComposerSort:
 		return t.ComposerSort
+	case FieldMBArtistID:
+		return t.MBArtistID
+	case FieldMBAlbumArtistID:
+		return t.MBAlbumArtistID
 	}
 	return ""
 }
@@ -306,12 +332,25 @@ func (t *Track) SetString(f Field, v string) {
 		t.AlbumArtistSort = v
 	case FieldComposerSort:
 		t.ComposerSort = v
+	case FieldMBArtistID:
+		t.MBArtistID = v
+	case FieldMBAlbumArtistID:
+		t.MBAlbumArtistID = v
 	}
 }
 
 // Editable reports whether a field can be changed in the editor. Path is
 // derived from the filesystem, so it is read-only.
-func (f Field) Editable() bool { return f != FieldPath }
+func (f Field) Editable() bool {
+	return f != FieldPath
+}
+
+// IsMBID reports whether a field holds MusicBrainz ids. Those are editable,
+// but only with a list of UUIDs, and they are no use as the target of a
+// split: no title has an id in it.
+func (f Field) IsMBID() bool {
+	return f == FieldMBArtistID || f == FieldMBAlbumArtistID
+}
 
 func itoa32(v int32) string {
 	if v == 0 {

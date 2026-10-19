@@ -27,6 +27,14 @@ type Edit struct {
 	AlbumArtistSort *string
 	ComposerSort    *string
 
+	// The MusicBrainz ids of the artist and the album artist, each one or
+	// more UUIDs. They are set from a lookup rather than typed, and a value
+	// that is not a list of UUIDs is refused before it gets here — see
+	// NormaliseMBIDs. Every container has its own spelling of the two keys;
+	// the writers clear all of them before writing their own.
+	MBArtistID      *string
+	MBAlbumArtistID *string
+
 	// Compilation is the Various Artists flag. A tri-state pointer rather
 	// than a bool: nil leaves the file's own answer alone, which is what
 	// separates "do not touch this" from "set it to false".
@@ -55,6 +63,7 @@ func (e *Edit) Empty() bool {
 		e.TrackTotal == nil && e.Disc == nil && e.DiscTotal == nil &&
 		e.TitleSort == nil && e.ArtistSort == nil && e.AlbumSort == nil &&
 		e.AlbumArtistSort == nil && e.ComposerSort == nil &&
+		e.MBArtistID == nil && e.MBAlbumArtistID == nil &&
 		e.Artwork == nil
 }
 
@@ -93,6 +102,10 @@ func (e *Edit) SetString(field, value string) {
 		e.AlbumArtistSort = &v
 	case "composersort":
 		e.ComposerSort = &v
+	case "mbartistid":
+		e.MBArtistID = &v
+	case "mbalbumartistid":
+		e.MBAlbumArtistID = &v
 	}
 }
 
