@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 280 test functions, all clean
+contract, terminal browser, and command line. 284 test functions, all clean
 under `-race`.
 
 ---
@@ -317,6 +317,37 @@ Resolution reads **descriptions**, not just keys. ID3's `TXXX`/`COMM` and MP4's
 where MusicBrainz and ReplayGain live at all. `-also gapless` keeps `iTunSMPB`
 while ordinary comments still go.
 
+### Raw tags are edited by the key the listing shows
+
+`PATCH /v1/tracks/{id}/tags` (`tags.EditNative`, `internal/tags/native.go`)
+writes tags the catalogue has no field for — a `TXXX` ReplayGain value, an
+encoder comment, a freeform atom. Before it the only thing that could touch
+those was a strip, which removes every one of them at once.
+
+The key is `RemovedTag.Display()`, the same string `GET …/tags` reports
+(`TXXX:MOOD`, `COMM:iTunNORM`, `----:com.apple.iTunes:iTunSMPB`). An index
+into the frame list was the obvious alternative and was rejected: any other
+write reorders frames, so an index from a listing is stale the moment anything
+else touches the file, and it would silently edit the wrong tag. Because a
+label can name several entries — Vorbis comments repeat, and two `COMM`
+frames can share a description in different languages — setting a key writes
+the first and drops the rest, and removing it removes them all.
+
+Three restrictions, each deliberate. Only text can be set (`editable` in the
+listing): a cover or a `PRIV` blob is shown as a size, so there is no value a
+client could honestly send back, though either can be removed. Every key must
+already exist, and an unknown one is a 400 before anything is written: creating
+a tag means choosing a container for it (`TXXX` or `COMM`, which language,
+which freeform namespace), and a client sending a stale listing should hear
+about it rather than see "saved". And there is no batch form, because a native
+key means something only in the file it was read from.
+
+Like a single-track `PATCH` it records no journal. Unlike one, it cannot update
+the catalogue from the request — `TPE1` is the artist, `TXXX:MOOD` is nothing —
+so the file is re-read afterwards with `refreshTracks`, as a strip's are. The
+full text rides on `RemovedTag` as `Text`/`Editable`, tagged `json:"-"` so
+strip journals, which already hold `Raw`, do not carry every value twice.
+
 ### Track identity is a hash of the path
 
 `library.TrackID` — FNV-1a 64-bit hex. Slice indices shift on every rescan, so
@@ -460,12 +491,13 @@ to fail in both directions** — a test that cannot fail is worthless.
 
 Contract: `api/openapi.yaml`, embedded and served at `/openapi.yaml`,
 `/openapi.json` and browsable at `/docs` (self-contained, no CDN, because a NAS
-may have no outbound access). 35 operations.
+may have no outbound access). 46 operations.
 
 Reading: `GET /v1/tracks` (q, sort, limit, offset), `/tracks/{id}`, `/albums`,
 `/artists`, `/values/{field}`, `/stats`, `/tracks/{id}/artwork`,
 `/tracks/{id}/audio` (with `?as=aac` to transcode; see §5).
-Writing: `PATCH /v1/tracks/{id}`, `PUT`/`DELETE` artwork, the clipboard.
+Writing: `PATCH /v1/tracks/{id}`, `PATCH /v1/tracks/{id}/tags` (by native
+key; see §5), `PUT`/`DELETE` artwork, the clipboard.
 Files: `DELETE /v1/tracks/{id}` and `POST /v1/tracks/{id}/rename` — the only
 two that change which files exist rather than what is inside one. A rename is
 bounded to the library roots and may not change the extension, and because a

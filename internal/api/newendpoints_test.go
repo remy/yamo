@@ -539,3 +539,65 @@ func TestSplitReportsItsOwnKind(t *testing.T) {
 func queryEscape(s string) string { return url.QueryEscape(s) }
 
 func base64Of(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+// Editing by native key: the listing hands out the version and the keys, the
+// edit takes them back, and the catalogue follows the file even though the
+// request named a key rather than a field.
+func TestPatchRawTags(t *testing.T) {
+	h := newHarness(t, 1)
+	id := h.firstTrack(t)["id"].(string)
+	path := "/v1/tracks/" + id + "/tags"
+
+	raw := h.getJSON(t, path, http.StatusOK)
+	version, _ := raw["version"].(string)
+	if version == "" {
+		t.Fatal("the listing carries no version to edit from")
+	}
+	var commentKey, encoderKey string
+	for _, entry := range raw["tags"].([]any) {
+		m := entry.(map[string]any)
+		switch {
+		case m["text"] == "noise":
+			commentKey = m["key"].(string)
+		case m["key"] == "TSSE":
+			encoderKey = "TSSE"
+		}
+		if m["editable"] == nil {
+			t.Errorf("%v has no editable flag", m["key"])
+		}
+	}
+	if commentKey == "" || encoderKey == "" {
+		t.Fatalf("fixture lacks a comment or an encoder frame: %v", raw["tags"])
+	}
+
+	// A stale version is refused, and so is a key the file does not hold.
+	h.patch(t, path, map[string]any{encoderKey: "x"}, "stale", http.StatusConflict)
+	h.patch(t, path, map[string]any{"TXXX:NOT THERE": "x"}, version, http.StatusBadRequest)
+	h.patch(t, path, map[string]any{}, version, http.StatusBadRequest)
+
+	track := h.patch(t, path, map[string]any{commentKey: nil, encoderKey: "hand-made"}, version, http.StatusOK)
+	if track["comment"] != nil && track["comment"] != "" {
+		t.Errorf("comment = %v after removing %s; the catalogue was not re-read", track["comment"], commentKey)
+	}
+	if track["version"] == version {
+		t.Error("the version did not move after a write")
+	}
+	if found := h.getJSON(t, "/v1/tracks?q=noise", http.StatusOK); found["total"].(float64) != 0 {
+		t.Error("a search still finds the removed comment")
+	}
+
+	after := h.getJSON(t, path, http.StatusOK)
+	var sawEncoder bool
+	for _, entry := range after["tags"].([]any) {
+		m := entry.(map[string]any)
+		if m["key"] == commentKey {
+			t.Errorf("%s is still in the file", commentKey)
+		}
+		if m["key"] == encoderKey {
+			sawEncoder = m["text"] == "hand-made"
+		}
+	}
+	if !sawEncoder {
+		t.Error("the encoder frame does not read back as written")
+	}
+}

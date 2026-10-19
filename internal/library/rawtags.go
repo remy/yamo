@@ -1,6 +1,8 @@
 package library
 
 import (
+	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/remy/yamo/internal/tags"
@@ -36,6 +38,13 @@ type RawTag struct {
 	// rather than dumped: a cover reads as its size and type.
 	Value string `json:"value,omitempty"`
 
+	// Text is the whole value, unclipped, when the tag holds text, and
+	// Editable says so. Value is for reading down a list; Text is what an edit
+	// starts from, and what EditRawTags accepts a replacement for. A cover or
+	// a private blob has neither: it can be removed, never typed.
+	Text     string `json:"text,omitempty"`
+	Editable bool   `json:"editable"`
+
 	Bytes int `json:"bytes"`
 
 	// Kept says whether the default keep list would preserve this tag, which
@@ -48,6 +57,10 @@ type RawTags struct {
 	ID     string `json:"id"`
 	Path   string `json:"path"`
 	Format string `json:"format"`
+
+	// Version is the track's, so a client editing from this listing can send
+	// it back as If-Match without fetching the track as well.
+	Version string `json:"version"`
 
 	// Container names the metadata block the tags came out of, which is what
 	// a person needs to make sense of the keys: "TPE2" is only meaningful
@@ -93,7 +106,7 @@ func (s *Service) RawTags(id string) (RawTags, error) {
 	}
 
 	out := RawTags{
-		ID: id, Path: t.Path, Format: t.Format,
+		ID: id, Path: t.Path, Format: t.Format, Version: t.Version,
 		Container:   containerName(rep.Format),
 		NoTag:       rep.NoTag,
 		Unsupported: rep.Unsupported,
@@ -104,7 +117,8 @@ func (s *Service) RawTags(id string) (RawTags, error) {
 	for _, r := range rep.Removed {
 		out.Tags = append(out.Tags, RawTag{
 			Key: r.Display(), Field: fieldNameFor(r.Tag), Meaning: r.Meaning,
-			Value: r.Sample, Bytes: r.Bytes, Kept: keep[r.Tag],
+			Value: r.Sample, Text: r.Text, Editable: r.Editable,
+			Bytes: r.Bytes, Kept: keep[r.Tag],
 		})
 		out.Bytes += r.Bytes
 	}
@@ -139,4 +153,64 @@ func containerName(f tags.Format) string {
 		return "iTunes atoms"
 	}
 	return ""
+}
+
+// RawEdits maps the keys RawTags reports to new values; null removes the tag.
+type RawEdits = tags.NativeEdits
+
+// EditRawTags writes tags by their native keys, for the metadata the catalogue
+// has no field for.
+//
+// It is a single-track operation with the same If-Match rule as Patch, and for
+// the same reason: the keys came from a listing of one file, and a listing made
+// before somebody else's write is exactly the thing that should not be acted
+// on. There is no batch form, because a native key is only meaningful against
+// the file it was read from — "COMM:iTunNORM" is a different thing in every
+// track that has one.
+//
+// Like Patch it records no journal. Unlike Patch it cannot update the record
+// from the request, since a key may or may not be one the catalogue reads —
+// TPE1 is the artist, TXXX:MOOD is nothing — so the file is re-read afterwards,
+// as a strip's are.
+func (s *Service) EditRawTags(id string, edits RawEdits, ifMatch string) (Track, error) {
+	if len(edits) == 0 {
+		return Track{}, fmt.Errorf("%w: no changes given", ErrBadRequest)
+	}
+	s.mu.RLock()
+	i, ok := s.lookupLocked(id)
+	if !ok {
+		s.mu.RUnlock()
+		return Track{}, ErrNotFound
+	}
+	cur := s.cat.Tracks[i]
+	s.mu.RUnlock()
+
+	if ifMatch != "" && ifMatch != s.version(&cur) {
+		return Track{}, ErrConflict
+	}
+	if !cur.Format.Writable() {
+		return Track{}, fmt.Errorf("library: %s files cannot be written by this build", cur.Format)
+	}
+
+	var changed bool
+	err := s.locks.withPath(cur.Path, func() error {
+		var werr error
+		changed, werr = tags.EditNative(cur.Path, edits)
+		return werr
+	})
+	if errors.Is(err, tags.ErrNativeKey) {
+		// The client's mistake, not the file's: a key that is not there or a
+		// value that is not text. Said as a bad request so it is not mistaken
+		// for the 422 a file this build cannot write produces.
+		return Track{}, fmt.Errorf("%w: %v", ErrBadRequest, err)
+	}
+	if err != nil {
+		return Track{}, err
+	}
+	if changed {
+		s.bumpRev(cur.Path)
+		s.refreshTracks([]string{id})
+		s.events.publish(Event{Type: EventTracksChanged, TrackIDs: []string{id}})
+	}
+	return s.Get(id)
 }

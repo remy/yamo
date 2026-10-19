@@ -333,6 +333,63 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/ServerError' }
+    patch:
+      tags: [tracks]
+      summary: Edit or remove tags by their native keys
+      description: |
+        For the metadata `PATCH /tracks/{id}` cannot reach: anything without
+        a canonical field — a ReplayGain value under `TXXX`, a MusicBrainz id
+        with nowhere in the catalogue, an encoder's comment, a freeform atom a
+        tagger left behind. Clean up can remove all of those at once; this is
+        how one of them is corrected or removed on its own.
+
+        Keys are exactly the `key` values `GET` returns, and each must already
+        be in the file — a key it does not hold is a `400`, so a client acting
+        on a stale listing hears about it. A string replaces the value; `null`
+        or an empty string removes the tag. When a key names several entries
+        (Vorbis comments repeat freely) a string is written into the first and
+        the others are dropped, and `null` removes them all.
+
+        Only tags with `editable: true` take a string. Anything else — a
+        cover, a `PRIV` blob, an MP4 integer atom — can be removed but not
+        set, since the listing shows it as a size rather than as its value.
+
+        One track only, with the same `If-Match` rule as `PATCH /tracks/{id}`.
+        There is no batch form: a native key means something only in the file
+        it was read from. Like a single-track edit, nothing is journalled.
+      operationId: patchTrackTags
+      parameters:
+        - name: If-Match
+          in: header
+          description: |
+            The `version` the client last saw — on the track, or on the
+            listing, which carries the same value. When present it must still
+            match, or the request fails with `409`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RawEdits' }
+            examples:
+              fixAndRemove:
+                summary: Correct a gain value and drop an encoder comment
+                value: { "TXXX:REPLAYGAIN_TRACK_GAIN": "-6.20 dB", "COMM:ID3v1 Comment": null }
+      responses:
+        '200':
+          description: The track, re-read from the file.
+          headers:
+            ETag: { $ref: '#/components/headers/ETag' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Track' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unwritable' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/ServerError' }
 
   /tracks/{id}/rename:
     parameters:
@@ -2761,7 +2818,7 @@ components:
 
     RawTag:
       type: object
-      required: [key, bytes, kept]
+      required: [key, bytes, kept, editable]
       properties:
         key:
           type: string
@@ -2780,20 +2837,41 @@ components:
         value:
           type: string
           description: >-
-            The tag rendered for display. A binary payload is described rather
-            than dumped — a cover reads as its size and type.
+            The tag rendered for display, clipped. A binary payload is
+            described rather than dumped — a cover reads as its size and type.
+        text:
+          type: string
+          description: >-
+            The whole value, unclipped, when the tag holds text. This is what
+            an editor starts from; `value` is for reading down a list.
+        editable:
+          type: boolean
+          description: >-
+            Whether `PATCH` accepts a string for this key. Every key can be
+            removed; only text can be set.
         bytes: { type: integer }
         kept:
           type: boolean
           description: Whether the default keep list would preserve this tag through a strip.
 
+    RawEdits:
+      type: object
+      description: |
+        Native keys, as `GET /tracks/{id}/tags` reports them, mapped to a new
+        value. `null` or an empty string removes the tag.
+      minProperties: 1
+      additionalProperties: { type: [string, "null"] }
+
     RawTags:
       type: object
-      required: [id, path, format, tags, noTag, unsupported]
+      required: [id, path, format, version, tags, noTag, unsupported]
       properties:
         id: { type: string }
         path: { type: string }
         format: { type: string }
+        version:
+          type: string
+          description: The track's version, to send back as `If-Match` when editing from this listing.
         container:
           type: string
           description: >-

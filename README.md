@@ -296,6 +296,17 @@ question there is not what the track says but what is *in* it, which is where
 the iTunes purchase account and the 300 KB of ratings a ripper left behind
 turn up.
 
+`PATCH /v1/tracks/{id}/tags` edits that listing directly, by the same keys:
+a string replaces a value, `null` removes the tag. It is how one stray tag is
+corrected or dropped without a strip taking all the others with it. Only text
+can be set — a cover or a private blob can only be removed — every key must
+already be in the file, and it takes `If-Match` like any single-track edit.
+
+```sh
+curl -X PATCH -H "If-Match: \"$VERSION\"" localhost:8467/v1/tracks/$ID/tags \
+  -d '{"TXXX:REPLAYGAIN_TRACK_GAIN": "-6.20 dB", "TSSE": null}'
+```
+
 ### Pulling the artist out of a title
 
 A compilation says Various Artists in the artist tag, because that is what the
@@ -808,6 +819,7 @@ of every parameter. This is the map.
 | `PATCH /v1/tracks/{id}`                     | Edit fields. `If-Match`                                |
 | `DELETE /v1/tracks/{id}`                    | Delete the file. `If-Match`                            |
 | `GET /v1/tracks/{id}/tags`                  | The file's raw metadata                                |
+| `PATCH /v1/tracks/{id}/tags`                | Edit or remove raw tags by native key. `If-Match`      |
 | `GET /v1/tracks/{id}/audio`                 | The audio itself, ranges and all. `?as=aac` transcodes |
 | `POST /v1/tracks/{id}/rename`               | Move one file                                          |
 | **Browse**                                  |                                                        |

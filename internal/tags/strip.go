@@ -80,6 +80,13 @@ type RemovedTag struct {
 	Sample  string `json:"sample,omitempty"`
 	Bytes   int    `json:"bytes"`
 	Raw     []byte `json:"raw"`
+
+	// Text is the whole value, unclipped, and Editable says whether it is text
+	// at all — what EditNative will accept for this key. Neither is written
+	// into a strip backup, which already holds Raw: they exist for the listing
+	// a client edits from, not for putting anything back.
+	Text     string `json:"-"`
+	Editable bool   `json:"-"`
 }
 
 // Display is the key as it should appear in a report.
@@ -225,11 +232,13 @@ func stripID3(path string, keep KeepSet, apply bool, rep *StripReport) error {
 			}
 			continue
 		}
+		text, editable := id3NativeText(fr.id, fr.payload)
 		rep.Removed = append(rep.Removed, RemovedTag{
 			Format: FormatMP3, Name: fr.id, Label: id3Label(fr.id, fr.payload),
 			Tag: t, Meaning: tagMeaning(t, frameMeaning(fr.id)),
 			Sample: DescribeFrame(fr.id, fr.payload),
 			Bytes:  len(fr.payload) + 10, Raw: clone(fr.payload),
+			Text: text, Editable: editable,
 		})
 	}
 	// A date with no TDRL beside it. ID3 separates the recording year from the
@@ -332,6 +341,7 @@ func stripVorbisFields(vc *vorbisComment, keep KeepSet, format Format, rep *Stri
 			Sample: clip(f.value),
 			Bytes:  4 + len(f.key) + 1 + len(f.value),
 			Raw:    []byte(f.value),
+			Text:   f.value, Editable: !strings.EqualFold(f.key, vorbisPictureField),
 		})
 	}
 	vc.fields = out
@@ -414,12 +424,14 @@ func filterMP4Items(items []mp4Item, keep KeepSet, rep *StripReport) []mp4Item {
 			}
 			continue
 		}
+		text, editable := mp4NativeText(it.Body)
 		rep.Removed = append(rep.Removed, RemovedTag{
 			// The name is stored in printable form so it survives a backup
 			// file; restoreMP4 converts it back.
 			Format: FormatMP4, Name: MP4AtomName(it.Name), Label: describeMP4Item(it.Name, it.Body),
 			Tag: t, Meaning: t.Desc(), Sample: mp4ItemSample(it),
 			Bytes: len(it.Body) + 8, Raw: clone(it.Body),
+			Text: text, Editable: editable,
 		})
 	}
 	rep.Kept += len(out)

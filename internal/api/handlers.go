@@ -47,6 +47,22 @@ func (s *Server) getRawTags(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, raw)
 }
 
+// patchRawTags edits or removes tags by the native keys getRawTags reports.
+func (s *Server) patchRawTags(w http.ResponseWriter, r *http.Request) {
+	var edits library.RawEdits
+	if err := decodeJSON(r, &edits); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", err.Error())
+		return
+	}
+	t, err := s.svc.EditRawTags(r.PathValue("id"), edits, unquote(r.Header.Get("If-Match")))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	w.Header().Set("ETag", strconv.Quote(t.Version))
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (s *Server) patchTrack(w http.ResponseWriter, r *http.Request) {
 	var ch library.Changes
 	if err := decodeJSON(r, &ch); err != nil {
