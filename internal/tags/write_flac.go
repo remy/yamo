@@ -203,22 +203,33 @@ func applyEditToVorbis(vc *vorbisComment, e *Edit, cur *Metadata) {
 			vc.set("COMPILATION", "")
 		}
 	}
+	// The fields whose values are lists by nature — people and genres — are
+	// written one field per value, which is how a Vorbis comment says "these
+	// three" and what joined read them as. A title or an album is one thing
+	// even when it contains a semicolon, so those are never split: a file that
+	// held two TITLE fields reads as both joined, and an edit writes back the
+	// one string it was given.
+	setList := func(key string, v *string) {
+		if v != nil {
+			vc.setList(key, *v)
+		}
+	}
 	setStr("TITLE", e.Title)
-	setStr("ARTIST", e.Artist)
+	setList("ARTIST", e.Artist)
 	setStr("ALBUM", e.Album)
-	setStr("GENRE", e.Genre)
-	setStr("COMPOSER", e.Composer)
+	setList("GENRE", e.Genre)
+	setList("COMPOSER", e.Composer)
 	setStr("TITLESORT", e.TitleSort)
-	setStr("ARTISTSORT", e.ArtistSort)
+	setList("ARTISTSORT", e.ArtistSort)
 	setStr("ALBUMSORT", e.AlbumSort)
-	setStr("COMPOSERSORT", e.ComposerSort)
+	setList("COMPOSERSORT", e.ComposerSort)
 
 	if e.AlbumArtist != nil {
-		vc.set("ALBUMARTIST", *e.AlbumArtist)
+		vc.setList("ALBUMARTIST", *e.AlbumArtist)
 		vc.set("ALBUM ARTIST", "")
 	}
 	if e.AlbumArtistSort != nil {
-		vc.set("ALBUMARTISTSORT", *e.AlbumArtistSort)
+		vc.setList("ALBUMARTISTSORT", *e.AlbumArtistSort)
 		vc.set("ALBUM ARTIST SORT", "")
 	}
 	if e.Comment != nil {

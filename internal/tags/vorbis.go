@@ -50,6 +50,70 @@ func (vc *vorbisComment) getAny(keys ...string) string {
 	return ""
 }
 
+// joined returns every value for key as one string, joined the way frameText
+// joins a multi-value ID3 frame.
+//
+// A Vorbis comment holds a list by repeating the field: three GENRE entries
+// are a song with three genres. Reading only the first, as get does, showed
+// one of them and left no sign the others existed — and the writer replaces
+// every entry under a key, so correcting that one genre silently deleted the
+// other two. Joined, the catalogue holds what the file holds, an edit starts
+// from all of it, and setList writes it back as the same separate fields.
+func (vc *vorbisComment) joined(key string) string {
+	var out []string
+	for _, v := range vc.getAll(key) {
+		if v = strings.TrimSpace(v); v != "" && !containsStr(out, v) {
+			out = append(out, v)
+		}
+	}
+	return strings.Join(out, multiValueSep)
+}
+
+// joinedAny is joined for the first alias that holds anything, the multi-value
+// counterpart of getAny. Aliases are not merged: ALBUMARTIST and ALBUM ARTIST
+// both present are one value spelled twice, not two values.
+func (vc *vorbisComment) joinedAny(keys ...string) string {
+	for _, k := range keys {
+		if v := vc.joined(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// setList writes a joined value back as one field per entry, in place of
+// every field under key. It is the inverse of joined, and only for the fields
+// whose values are lists by nature — see applyEditToVorbis for which.
+func (vc *vorbisComment) setList(key, value string) {
+	vals := splitMultiValue(value)
+	if len(vals) <= 1 {
+		vc.set(key, strings.TrimSpace(value))
+		return
+	}
+	// Written where the first of the old entries was, so a file's field order
+	// survives an edit the same way set preserves it for a single value.
+	out := vc.fields[:0]
+	written := false
+	for _, f := range vc.fields {
+		if f.key != key {
+			out = append(out, f)
+			continue
+		}
+		if !written {
+			for _, v := range vals {
+				out = append(out, vorbisField{key: key, value: v})
+			}
+			written = true
+		}
+	}
+	if !written {
+		for _, v := range vals {
+			out = append(out, vorbisField{key: key, value: v})
+		}
+	}
+	vc.fields = out
+}
+
 // set replaces every occurrence of key with a single field, or removes the key
 // entirely when value is empty.
 func (vc *vorbisComment) set(key, value string) {
@@ -141,19 +205,22 @@ func encodeVorbisComment(vc *vorbisComment) []byte {
 
 // applyTo folds Vorbis comments into md, accepting the common key aliases.
 func (vc *vorbisComment) applyTo(md *Metadata) {
-	setIfEmpty(&md.Title, vc.get("TITLE"))
-	setIfEmpty(&md.Artist, vc.getAny("ARTIST", "PERFORMER"))
-	setIfEmpty(&md.AlbumArtist, vc.getAny("ALBUMARTIST", "ALBUM ARTIST", "ENSEMBLE"))
-	setIfEmpty(&md.Album, vc.get("ALBUM"))
-	setIfEmpty(&md.Genre, vc.get("GENRE"))
-	setIfEmpty(&md.Composer, vc.get("COMPOSER"))
-	setIfEmpty(&md.Comment, vc.getAny("COMMENT", "DESCRIPTION"))
+	// Every text field is read joined, not only the list-like ones: a file
+	// holding two TITLE entries is unusual, but showing one and hiding the
+	// other is never the honest reading of it.
+	setIfEmpty(&md.Title, vc.joined("TITLE"))
+	setIfEmpty(&md.Artist, vc.joinedAny("ARTIST", "PERFORMER"))
+	setIfEmpty(&md.AlbumArtist, vc.joinedAny("ALBUMARTIST", "ALBUM ARTIST", "ENSEMBLE"))
+	setIfEmpty(&md.Album, vc.joined("ALBUM"))
+	setIfEmpty(&md.Genre, vc.joined("GENRE"))
+	setIfEmpty(&md.Composer, vc.joined("COMPOSER"))
+	setIfEmpty(&md.Comment, vc.joinedAny("COMMENT", "DESCRIPTION"))
 
-	setIfEmpty(&md.TitleSort, vc.get("TITLESORT"))
-	setIfEmpty(&md.ArtistSort, vc.get("ARTISTSORT"))
-	setIfEmpty(&md.AlbumSort, vc.get("ALBUMSORT"))
-	setIfEmpty(&md.AlbumArtistSort, vc.getAny("ALBUMARTISTSORT", "ALBUM ARTIST SORT"))
-	setIfEmpty(&md.ComposerSort, vc.get("COMPOSERSORT"))
+	setIfEmpty(&md.TitleSort, vc.joined("TITLESORT"))
+	setIfEmpty(&md.ArtistSort, vc.joined("ARTISTSORT"))
+	setIfEmpty(&md.AlbumSort, vc.joined("ALBUMSORT"))
+	setIfEmpty(&md.AlbumArtistSort, vc.joinedAny("ALBUMARTISTSORT", "ALBUM ARTIST SORT"))
+	setIfEmpty(&md.ComposerSort, vc.joined("COMPOSERSORT"))
 
 	if md.Year == 0 {
 		md.Year = parseYear(vc.getAny("DATE", "YEAR", "RELEASEDATE", "ORIGINALDATE"))

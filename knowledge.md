@@ -23,7 +23,7 @@ overwhelmingly file IO rather than computation, so goroutine-per-file
 concurrency is the whole performance story; a faster language would not help.
 
 **Current state: complete and working.** Server, HTTP API with an OpenAPI
-contract, terminal browser, and command line. 293 test functions, all clean
+contract, terminal browser, and command line. 295 test functions, all clean
 under `-race`.
 
 ---
@@ -619,6 +619,38 @@ version, because the header (magic, version, reserved flags, scan time, roots)
 has not changed and only the track records have. The service calls it on the
 rejection path.
 
+### Several values in one field are joined with "; "
+
+Every container can hold a list, and each says so differently: ID3v2.4
+separates values with NULs inside one frame, a Vorbis comment repeats the
+field, MP4 repeats the data atom. The catalogue holds one string per field, so
+a list is joined with `multiValueSep` ("; ", in `internal/tags/text.go`) —
+the separator `frameText` already used for ID3, and the one the MusicBrainz
+ids use. One separator everywhere means `genre:trap` finds the song whatever
+container it came from, and that a value can be taken apart again.
+
+Vorbis is the format that needs taking apart. Reading joins every text field
+(`vorbisComment.joined`); writing splits only the fields whose values are lists
+by nature — artist, album artist, genre, composer and their sort forms — back
+into one field per value (`setList`). Title, album and comment are never
+split: a title containing a semicolon is one title, so a file that held two
+`TITLE` fields reads as both joined and an edit writes back the single string
+it was given. Splitting accepts ";" without the space, so a typed
+"Hip Hop;Trap" is two genres too.
+
+ID3 is not split on write: a joined value goes back as one text frame, which
+reads back the same. MP4 is not done at all yet — its reader still takes the
+first data atom of an item, so a second genre atom is as invisible as a second
+Vorbis field used to be (§11). Vorbis came first because it was the case that
+destroyed data (see §10, 12): its writer replaced every field under a key with
+the one value it had read. An MP4 write replaces the whole item the same way.
+
+The change altered what an existing field holds without adding one, and that
+needed `snapshotVersion` bumped all the same (now 4): an unchanged FLAC is
+never reopened by an incremental scan, so it would have gone on showing one
+genre indefinitely. The cost is the usual one — the first start after
+upgrading has an empty catalogue until a scan runs.
+
 ### The sort fields are tags, not derivations
 
 `titlesort`, `artistsort`, `albumsort`, `albumartistsort` and `composersort`
@@ -1007,11 +1039,23 @@ Recorded because several were invisible to the obvious test:
     every other container, since they all announce themselves at offset 0.
     Two files in a 9,000-track library, and neither was visible until one was
     edited: a mislabelled file reads as merely untagged.
+12. **A repeated Vorbis field read as its first value, and written as one.**
+    A FLAC tagged by Picard held three `GENRE` fields; the catalogue showed
+    "Hip Hop" and nothing anywhere said there were two more. Worse, the writer
+    replaced every field under a key, so correcting that genre deleted the
+    other two without a word. Repeated fields are now read joined with "; "
+    and the list-like ones written back one field per value — see "Several
+    values in one field" in §7. Invisible to the round-trip tests because
+    ffmpeg never writes a key twice.
 
 ---
 
 ## 11. Not done
 
+- **Repeated MP4 data atoms.** An item holding two `data` atoms — two genres —
+  reads as the first, and an edit writes one back, as Vorbis did before
+  "Several values in one field are joined" (§7). The fix is the same shape:
+  join on read in `mp4DataString`'s callers, one atom per value on write.
 - **TLS.** The token crosses the network in plaintext. Fine on a trusted LAN;
   put it behind Tailscale or a TLS proxy for anything wider.
 - **Service units.** No systemd unit or launchd plist yet, so the server does

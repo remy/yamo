@@ -35,7 +35,14 @@ const (
 	// costs one full scan and is the only thing that makes a new field appear.
 	//
 	// Version 3 added the MusicBrainz artist and album artist ids.
-	snapshotVersion = 3
+	//
+	// Version 4 changed no field but what one holds: a Vorbis comment that
+	// repeats a field — three GENRE entries — is now read as all of them
+	// joined with "; " rather than as the first. The bump is the same lesson
+	// applied to a changed reading rather than a new field: an unchanged FLAC
+	// is never reopened, so without it the library would go on showing one
+	// genre until each file happened to be rewritten.
+	snapshotVersion = 4
 )
 
 const (

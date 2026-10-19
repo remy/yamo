@@ -256,3 +256,23 @@ func normaliseGenre(s string) string {
 	}
 	return s
 }
+
+// multiValueSep joins a field's several values into the one string the
+// catalogue holds for it: an ID3v2.4 frame's NUL-separated values, a Vorbis
+// field repeated, a MusicBrainz id per collaborator. One separator everywhere,
+// so "genre:trap" finds the song whichever container it came out of, and so
+// the Vorbis writer can take the string apart again.
+const multiValueSep = "; "
+
+// splitMultiValue is the inverse: the values in a joined string, trimmed,
+// empty ones dropped. Splitting on ";" rather than on "; " exactly means a
+// hand-typed "Hip Hop;Trap" is two genres as well.
+func splitMultiValue(s string) []string {
+	var out []string
+	for _, v := range strings.Split(s, ";") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}

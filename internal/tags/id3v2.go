@@ -346,7 +346,7 @@ func frameText(p []byte) string {
 			out = append(out, s)
 		}
 	}
-	return strings.Join(out, "; ")
+	return strings.Join(out, multiValueSep)
 }
 
 // commentText decodes COMM: encoding, 3-byte language, NUL-terminated short
