@@ -1202,7 +1202,7 @@ internal/tags/     format parsers and writers; no third-party tag library
 internal/catalog/  in-memory library, binary snapshot, search index
 internal/scan/     parallel directory walk and tag extraction
 internal/client/   Go client for the API, used by everything below
-internal/mcp/      the MCP endpoint: twenty tools over the same service
+internal/mcp/      the MCP endpoint: twenty-six tools over the same service
 internal/ui/       the terminal browser, a client like any other
 cmd/yamo/          serve, plus the client commands: scan, find, info, art, strip, browse, version
 tools/genlib/      synthetic library generator, for benchmarking
@@ -1262,8 +1262,9 @@ because nothing here is CPU-bound.
 - Transcoding produces AAC only, and does not carry ReplayGain or Sound Check
   values across. The Docker image ships without ffmpeg, so it is off there
   unless one is mounted in.
-- The MCP tools cannot upload an image, read audio, or use the artwork
-  clipboard; those need the HTTP API.
+- The MCP tools cannot upload an image, read audio, or fill the artwork
+  clipboard, so a Discogs cover found with `search_discogs` has to be applied
+  through the HTTP API or the browser.
 
 ## Connecting an assistant (MCP)
 
@@ -1328,7 +1329,7 @@ as its command.
 ### Letting it look without touching
 
 Give it the [read-only token](#a-read-only-token) instead and it is offered
-twelve of the twenty tools and no others — the ten under **Reading** below,
+fifteen of the twenty-six tools and no others — the thirteen under **Reading** below,
 plus `get_job` and `list_backups`, which only look at what a job did. The
 writing ones are absent from `tools/list`
 rather than refused afterwards, which is the part that matters: a model plans
@@ -1352,12 +1353,12 @@ OpenAPI schema and cannot be discovered from it.
 
 ### The tools
 
-Twenty, over forty-five endpoints, and the arithmetic is the design. A model
-choosing between forty-five near-identical operations chooses badly, and the
+Twenty-six, over forty-seven endpoints, and the arithmetic is the design. A model
+choosing between forty-seven near-identical operations chooses badly, and the
 endpoints that move bytes it cannot read are no use to it at all.
 
 Everything under **Reading**, plus `get_job` and `list_backups`, is what a
-read-only token is offered. The other eight need the full one.
+read-only token is offered. The other eleven need the full one.
 
 | Tool                  |                                                                              |
 | --------------------- | ---------------------------------------------------------------------------- |
@@ -1371,13 +1372,19 @@ read-only token is offered. The other eight need the full one.
 | `find_duplicates`     | The same recording more than once, and what it wastes                        |
 | `artwork_summary`     | Distinct covers across a selection, grouped, and how many have none          |
 | `library_stats`       | Counts, formats, missing fields, when it was scanned, what this build can do |
-| `lookup_album`        | Year and genre from Discogs. The only tool that leaves the machine           |
+| `lookup_album`        | Year and genre from Discogs                                                  |
+| `search_discogs`      | Album covers on Discogs, as image URLs                                       |
+| `get_discogs_master`  | Every image on one Discogs master                                            |
+| `find_musicbrainz_artist` | Candidate MusicBrainz ids for an artist name                             |
 | **Writing**           |                                                                              |
 | `edit_tracks`         | One set of field values across a selection. `null` clears a field            |
+| `edit_raw_tags`       | Change or remove one file's tags by native key. Not undoable                 |
 | `split_titles`        | Pull `$artist - $title` out of a title into its own tags                     |
 | `rename_files`        | Move files to a path built from their own tags                               |
 | `strip_tags`          | Remove everything but a keep list                                            |
 | `set_artwork`         | Embed the `cover.jpg` beside each track, paste the clipboard, or clear it    |
+| `export_artwork`      | Write embedded covers out as `cover.jpg` beside the music                    |
+| `delete_track`        | Delete one file. Not undoable                                                |
 | **Jobs and recovery** |                                                                              |
 | `scan_library`        | Bring the catalogue up to date                                               |
 | `get_job`             | Poll a job, optionally waiting for it                                        |
@@ -1393,7 +1400,10 @@ built on.
 can never be read as "everything". `expectCount` carries the number the
 assistant told you it was about to change, and the server refuses if the
 selection has moved since; it is the difference between a model with a stale
-count being obeyed and being corrected.
+count being obeyed and being corrected. The two exceptions are `edit_raw_tags`
+and `delete_track`, which take one id and the `version` the assistant read: a
+native tag key only means something in the file it came from, and a deletion
+should always be a file somebody chose.
 
 **Writes are dry runs by default.** This is the one place the MCP surface
 deliberately differs from the HTTP API, where only `strip` defaults that way.
@@ -1410,15 +1420,17 @@ round trip and invites it to report work it has not seen finish. A scan is the
 exception: it is expected to outlive the call, and `get_job` takes a
 `waitSeconds` for that.
 
-**Everything is undoable.** Edits, splits and renames record a journal without
-being asked; strips and artwork pastes do it on request. `undo_job` takes back
-what a job did, and `list_backups` finds the older ones once the job itself has
-aged out.
+**Nearly everything is undoable.** Edits, splits and renames record a journal
+without being asked; strips and artwork pastes do it on request. `undo_job`
+takes back what a job did, and `list_backups` finds the older ones once the job
+itself has aged out. `edit_raw_tags` and `delete_track` record nothing, and the
+deleted file is gone unless the filesystem keeps snapshots.
 
 Not offered here, and deliberately: uploading an image, reading audio, the
-artwork clipboard, the event streams, and the per-track write endpoints. The
+artwork clipboard, the event streams, and the single-track edit and rename. The
 first three move bytes a model cannot read, the fourth exists so a client can
-build its own concurrency, and the last is `edit_tracks` with one id in it.
+build its own concurrency, and the last two are `edit_tracks` and
+`rename_files` with one id in them.
 
 ## What the hell is  with the green character?
 

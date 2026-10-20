@@ -206,7 +206,7 @@ person there to do that.
 | `internal/library/` | 7,051 | **The service.** Owns the catalogue, all operations, jobs, events, and transcoding (`transcode.go`). |
 | `internal/api/` | 1,539 | **The server.** HTTP handlers over the service, SSE, docs page. |
 | `internal/auth/` | 116 | How a request presents a credential and what that credential may do. Shared by the API and MCP. |
-| `internal/mcp/` | 1,180 | The Model Context Protocol endpoint at `/mcp`, over the service. |
+| `internal/mcp/` | 1,434 | The Model Context Protocol endpoint at `/mcp`, over the service. |
 | `internal/discogs/` | 573 | Read-only Discogs client for the cover and album lookup. |
 | `internal/musicbrainz/` | 302 | Read-only MusicBrainz client for the artist id lookup, paced to one request a second. |
 | `internal/client/` | 687 | Go client for the API. Everything below is built on it. |
@@ -485,6 +485,33 @@ OpenAPI 3.1 is what the intended clients want, but the Go generators still
 trail it. `internal/api/conformance_test.go` walks the YAML and asserts every
 operation has a route and every route has an operation. **It has been verified
 to fail in both directions** — a test that cannot fail is worthless.
+
+### The MCP tools are a subset, and two writes take an id rather than a selection
+
+`internal/mcp` offers twenty-six tools over the forty-seven operations. What is
+left out moves bytes a model cannot read (audio, images, the clipboard), saves
+an interface a round trip (the folder tree, per-track artwork), or exists for a
+client's own concurrency (the event streams). The clipboard's two fillers,
+`from-track` and `from-url`, carry no bytes through the caller and could be
+added; until they are, `set_artwork`'s `clipboard` source works only after the
+interface has filled it, and `search_discogs` finds covers a model can show but
+not apply.
+
+Every MCP write is a dry run unless `dryRun: false` is passed, which differs
+from the HTTP API on purpose. Two of the writes have no dry run in the service,
+because the HTTP client calling them has just shown a person the file:
+`edit_raw_tags` and `delete_track`. The tool supplies one. For a delete that is
+simply the track. For a raw edit, `previewRawEdits` re-makes the checks
+`tags.EditNative` would — the version, that each key is in the file, that a
+string goes only where `editable` says one can — against the `RawTags` listing.
+That duplicates the rules, and a change to what the writer accepts has to be
+mirrored there or the preview will approve what the write then refuses.
+
+Both take one id and the `version` the caller read, where every other write
+takes a selector and `expectCount`. A native key means something only in the
+file it was read from, and a deletion has no journal, so it should always be a
+file somebody chose rather than whatever a query matched. The version does the
+job `expectCount` does: a caller acting on a stale reading is refused.
 
 ---
 
@@ -1099,6 +1126,10 @@ Recorded because several were invisible to the obvious test:
 - **ffmpeg exposes Ogg/Opus comments as *stream* tags, not format tags.**
   `ffprobe -show_entries format_tags` on an Ogg shows nothing even when the
   tags are fine. Use `stream_tags`.
+- **`make test` fails with "-race requires cgo"** wherever it runs. The
+  Makefile exports `CGO_ENABLED = 0` for the static release builds, and that
+  assignment beats the environment, so `CGO_ENABLED=1 make test` does not help.
+  Use `make CGO_ENABLED=1 test`, or `go test -race ./...` directly.
 - **The shell here is zsh**, which does *not* word-split unquoted parameters.
   `for spec in "a b"; do set -- $spec` behaves differently than in bash.
 - **Bubble Tea coalesces printable bytes** arriving in one read into a single

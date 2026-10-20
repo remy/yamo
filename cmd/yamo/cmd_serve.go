@@ -94,10 +94,10 @@ Access:
 
 Tools for an assistant:
   -mcp, or YAMO_MCP=1, mounts a Model Context Protocol endpoint at /mcp, so
-  an assistant can search the library and correct it. It offers twenty tools
-  over the forty-five endpoints: a model choosing between forty-five similar
-  operations chooses badly, and the ones that move bytes it cannot read — the
-  audio stream, artwork images — are no use to it.
+  an assistant can search the library and correct it. It offers twenty-six
+  tools over the forty-seven endpoints: a model choosing between forty-seven
+  similar operations chooses badly, and the ones that move bytes it cannot
+  read — the audio stream, artwork images — are no use to it.
 
   Every writing tool is a dry run unless asked otherwise, and every selection
   can carry the count the client expected, so a model that has lost track of

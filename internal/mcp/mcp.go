@@ -4,11 +4,12 @@
 //
 // It is a client of internal/library like every other front end here: it opens
 // no music file, holds no catalogue of its own, and can reach nothing the HTTP
-// API does not already offer. What it adds is a smaller surface — twenty tools
-// rather than forty-five endpoints — and that is the whole design. A model
-// choosing between forty-five near-identical operations chooses badly, and the
-// parts of the API that move bytes (the audio stream, artwork images, the
-// clipboard) are of no use to something that reads text. Those stay HTTP-only.
+// API does not already offer. What it adds is a smaller surface — twenty-six
+// tools rather than forty-seven endpoints — and that is the whole design. A
+// model choosing between forty-seven near-identical operations chooses badly,
+// and the parts of the API that move bytes (the audio stream, artwork images,
+// the clipboard) are of no use to something that reads text. Those stay
+// HTTP-only.
 //
 // The transport is the Streamable HTTP one, in its simplest legal form: a
 // single JSON-RPC message per POST, answered with a single JSON response. No
@@ -177,8 +178,8 @@ func (s *Server) dispatch(ctx context.Context, method string, params json.RawMes
 // The instructions are the most valuable thing in this response. A model that
 // has not been told the query language will guess at it, and a model that has
 // not been told writes are dry runs by default will report work it has not
-// done — so both are said here, once, rather than repeated into twenty tool
-// descriptions.
+// done — so both are said here, once, rather than repeated into every tool
+// description.
 func (s *Server) initialize(params json.RawMessage, role auth.Role) map[string]any {
 	var p struct {
 		ProtocolVersion string `json:"protocolVersion"`
@@ -229,12 +230,15 @@ Choosing what to change. Writing tools take a selection, not a list of files:
 give "query" (the same language), or "ids", or "all": true, which must be set
 explicitly so that "everything" is never reached by accident. Send
 "expectCount" with the number you told the user you were about to change; the
-server refuses if the selection has moved since you counted it.
+server refuses if the selection has moved since you counted it. The two
+single-file tools, edit_raw_tags and delete_track, take an id and the
+"version" you read instead, for the same reason.
 
 Writing. Every writing tool is a dry run unless you pass "dryRun": false. Run
 it dry, read "matched" and "changed" and the samples, say what it would do,
 and only then run it for real. Most writes record an undo journal, so
 undo_job takes back what a job did and list_backups finds older ones.
+edit_raw_tags and delete_track record nothing and cannot be undone.
 
 Waiting. Anything that can touch more than one file returns a job. These tools
 wait for it and return the finished job, including its result; if it is still
@@ -252,7 +256,7 @@ filesystem. library_stats says when it was scanned; scan_library refreshes it.`
 const readOnlyNote = `
 
 This token may only read. The writing tools — editing, splitting, renaming,
-stripping, artwork, scanning and undo — are not offered to it and are absent
+stripping, artwork, deleting, scanning and undo — are not offered to it and are absent
 from the tool list. Report what you find and what you would change; somebody
 holding the full token has to make the change.`
 
@@ -362,7 +366,7 @@ type Tool struct {
 	Idempotent  bool
 
 	// OpenWorld marks a tool that reaches outside this machine, which here
-	// means the Discogs lookup and nothing else.
+	// means the Discogs and MusicBrainz lookups and nothing else.
 	OpenWorld bool
 
 	Call func(ctx context.Context, svc *library.Service, opts Options, args json.RawMessage) (any, error)
