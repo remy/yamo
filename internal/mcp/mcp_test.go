@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/remy/yamo/internal/auth"
 	"github.com/remy/yamo/internal/library"
@@ -145,7 +148,8 @@ func TestWritingToolsAreMarkedDestructive(t *testing.T) {
 	writes := map[string]bool{
 		"edit_tracks": true, "split_titles": true, "rename_files": true,
 		"strip_tags": true, "set_artwork": true, "undo_job": true,
-		"restore_backup": true,
+		"restore_backup": true, "edit_raw_tags": true, "export_artwork": true,
+		"delete_track": true,
 	}
 	for _, tool := range tools() {
 		if writes[tool.Name] {
@@ -352,5 +356,140 @@ func TestGetIsRefusedWithAnExplanation(t *testing.T) {
 	}
 	if rec.Header().Get("Allow") != "POST" {
 		t.Errorf("no Allow header, got %q", rec.Header().Get("Allow"))
+	}
+}
+
+// newFileHarness scans one real MP3, for the tools that act on a single file.
+// It needs ffmpeg, as the service's own real-file tests do.
+func newFileHarness(t *testing.T) (*Server, library.Track) {
+	t.Helper()
+	ff, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	root := t.TempDir()
+	music := filepath.Join(root, "music")
+	if err := os.MkdirAll(music, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(music, "01 track.mp3")
+	cmd := exec.Command(ff, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "libmp3lame",
+		"-metadata", "title=Hound Dog", "-metadata", "artist=Elvis Presley",
+		"-metadata", "comment=ripped", out)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, b)
+	}
+	svc, err := library.Open(library.Options{
+		CatalogPath: filepath.Join(root, "catalog.db"),
+		NoDiscogs:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	job, err := svc.Scan(library.ScanRequest{Roots: []string{music}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(30 * time.Second); ; {
+		j, _ := svc.JobRegistry().Get(job.ID)
+		if j != nil && j.State != library.JobRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("scan did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	page := svc.List(library.ListParams{Limit: 1})
+	if len(page.Items) != 1 {
+		t.Fatalf("scanned %d tracks, expected 1", len(page.Items))
+	}
+	return New(svc, Options{}), page.Items[0]
+}
+
+// A deletion has no journal, so the dry-run default matters more here than
+// anywhere, and a stale version must stop it.
+func TestDeleteTrackIsDryUntilAsked(t *testing.T) {
+	s, track := newFileHarness(t)
+
+	if text, isErr := callTool(t, s, "delete_track", map[string]any{"id": track.ID}); isErr {
+		t.Fatalf("dry run failed: %s", text)
+	}
+	if _, err := os.Stat(track.Path); err != nil {
+		t.Fatalf("a dry run deleted the file: %v", err)
+	}
+
+	if _, isErr := callTool(t, s, "delete_track", map[string]any{
+		"id": track.ID, "version": "stale", "dryRun": false,
+	}); !isErr {
+		t.Fatal("a stale version was accepted")
+	}
+	if _, err := os.Stat(track.Path); err != nil {
+		t.Fatalf("a refused delete removed the file: %v", err)
+	}
+
+	if text, isErr := callTool(t, s, "delete_track", map[string]any{
+		"id": track.ID, "version": track.Version, "dryRun": false,
+	}); isErr {
+		t.Fatalf("delete failed: %s", text)
+	}
+	if _, err := os.Stat(track.Path); !os.IsNotExist(err) {
+		t.Errorf("the file is still there: %v", err)
+	}
+}
+
+// The service has no dry run for a raw edit, so this one is the tool's own and
+// has to make the checks the write would.
+func TestEditRawTagsPreviewsThenWrites(t *testing.T) {
+	s, track := newFileHarness(t)
+
+	text, isErr := callTool(t, s, "get_raw_tags", map[string]any{"id": track.ID})
+	if isErr {
+		t.Fatalf("get_raw_tags failed: %s", text)
+	}
+	var listing library.RawTags
+	if err := json.Unmarshal([]byte(text), &listing); err != nil {
+		t.Fatal(err)
+	}
+	key := ""
+	for _, tag := range listing.Tags {
+		if tag.Field == "title" {
+			key = tag.Key
+		}
+	}
+	if key == "" {
+		t.Fatalf("no title tag in %s", text)
+	}
+
+	if _, isErr := callTool(t, s, "edit_raw_tags", map[string]any{
+		"id": track.ID, "set": map[string]any{"NOPE": "x"},
+	}); !isErr {
+		t.Error("a key the file does not hold was accepted in a dry run")
+	}
+
+	text, isErr = callTool(t, s, "edit_raw_tags", map[string]any{
+		"id": track.ID, "set": map[string]any{key: "Jailhouse Rock"}, "version": listing.Version,
+	})
+	if isErr {
+		t.Fatalf("dry run failed: %s", text)
+	}
+	if !strings.Contains(text, `"from":"Hound Dog"`) || !strings.Contains(text, `"to":"Jailhouse Rock"`) {
+		t.Errorf("the dry run does not say what would change: %s", text)
+	}
+	if text, _ := callTool(t, s, "get_track", map[string]any{"id": track.ID}); !strings.Contains(text, "Hound Dog") {
+		t.Fatalf("a dry run wrote: %s", text)
+	}
+
+	text, isErr = callTool(t, s, "edit_raw_tags", map[string]any{
+		"id": track.ID, "set": map[string]any{key: "Jailhouse Rock"},
+		"version": listing.Version, "dryRun": false,
+	})
+	if isErr {
+		t.Fatalf("write failed: %s", text)
+	}
+	if !strings.Contains(text, "Jailhouse Rock") {
+		t.Errorf("the track was not re-read with the new title: %s", text)
 	}
 }

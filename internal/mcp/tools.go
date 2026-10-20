@@ -3,6 +3,10 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/remy/yamo/internal/auth"
@@ -11,27 +15,33 @@ import (
 
 // The tool set.
 //
-// It is twenty operations over an API of forty-five, and the arithmetic is the
-// design. Three kinds of endpoint are deliberately absent: the ones that move
-// bytes a model cannot read (the audio stream, artwork images, the clipboard),
-// the ones that exist only to let an interface avoid a round trip (per-track
-// artwork, the folder tree, distinct-value autocomplete beyond list_values),
-// and the ones a client uses to build its own concurrency (the event streams).
-// None of them are reachable here, and none of them are missed: an assistant
-// works by searching, reading a count, changing a selection and checking what
-// it did, which is what these twenty do.
+// It is twenty-six operations over an API of forty-seven, and the arithmetic is
+// the design. Three kinds of endpoint are deliberately absent: the ones that
+// move bytes a model cannot read (the audio stream, artwork images, the
+// clipboard), the ones that exist only to let an interface avoid a round trip
+// (per-track artwork, the folder tree, distinct-value autocomplete beyond
+// list_values), and the ones a client uses to build its own concurrency (the
+// event streams). None of them are reachable here, and none of them are
+// missed: an assistant works by searching, reading a count, changing a
+// selection and checking what it did, which is what these do.
 //
 // Every writing tool takes a selection rather than a file, because that is how
 // this API works and because it is what makes the safety rails possible:
 // expectCount can only mean something when the server resolves the selection
-// itself.
+// itself. Two are exceptions and take one id with its version instead:
+// edit_raw_tags, because a native key means something only in the file it was
+// read from, and delete_track, because a deletion has no journal and should
+// always be a file somebody chose rather than whatever a query matched. The
+// version is their expectCount.
 
 func tools() []*Tool {
 	return []*Tool{
 		searchTracks, getTrack, getRawTags,
 		listAlbums, listArtists, listValues,
 		findDuplicates, artworkSummary, libraryStats, lookupAlbum,
-		editTracks, splitTitles, renameFiles, stripTags, setArtwork,
+		searchDiscogs, getDiscogsMaster, findMusicBrainzArtist,
+		editTracks, editRawTags, splitTitles, renameFiles, stripTags,
+		setArtwork, exportArtwork, deleteTrack,
 		scanLibrary, getJob, listBackups, undoJob, restoreBackup,
 	}
 }
@@ -262,9 +272,9 @@ var lookupAlbum = &Tool{
 	Name:  "lookup_album",
 	Title: "Look an album up on Discogs",
 	Description: "The year, genre and styles Discogs holds for one release, for filling gaps " +
-		"rather than for overwriting what is already there. This is the only tool that reaches " +
-		"outside this machine, and it is rate limited; it is unavailable on a server started " +
-		"with -no-discogs.",
+		"rather than for overwriting what is already there. Like the other Discogs tools it " +
+		"reaches outside this machine and is rate limited; it is unavailable on a server " +
+		"started with -no-discogs.",
 	ReadOnly:  true,
 	OpenWorld: true,
 	Input: schema(props{
@@ -283,6 +293,84 @@ var lookupAlbum = &Tool{
 	},
 }
 
+var searchDiscogs = &Tool{
+	Name:  "search_discogs",
+	Title: "Search Discogs for album covers",
+	Description: "Master releases matching free text, each with its cover image URL, year and " +
+		"genres. A master is the album across every pressing, so one sleeve appears once. " +
+		"Each candidate costs a request against a budget of 25 a minute (60 with a token), and " +
+		"rateRemaining says what is left. The URLs are for a person to look at or for the HTTP " +
+		"API to apply; no tool here downloads them.",
+	ReadOnly:  true,
+	OpenWorld: true,
+	Input: schema(props{
+		"query": str("Free text, such as an artist and album name."),
+		"limit": integer("Candidates to fetch covers for. The server caps it to protect the rate limit."),
+	}, "query"),
+	Call: func(ctx context.Context, svc *library.Service, _ Options, raw json.RawMessage) (any, error) {
+		var a struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit,omitempty"`
+		}
+		if err := decodeArgs(raw, &a); err != nil {
+			return nil, err
+		}
+		return svc.DiscogsSearch(ctx, a.Query, a.Limit)
+	},
+}
+
+var getDiscogsMaster = &Tool{
+	Name:  "get_discogs_master",
+	Title: "Every image on a Discogs master",
+	Description: "All the pictures one master holds — back cover, inner sleeve, the disc — " +
+		"primary first, where search_discogs offers only the front. Free when the master was " +
+		"fetched recently.",
+	ReadOnly:  true,
+	OpenWorld: true,
+	Input:     schema(props{"id": integer("The master id, from search_discogs.")}, "id"),
+	Call: func(ctx context.Context, svc *library.Service, _ Options, raw json.RawMessage) (any, error) {
+		var a struct {
+			ID int64 `json:"id"`
+		}
+		if err := decodeArgs(raw, &a); err != nil {
+			return nil, err
+		}
+		if a.ID <= 0 {
+			return nil, errors.New("the master id must be a positive number")
+		}
+		return svc.DiscogsMaster(ctx, a.ID)
+	},
+}
+
+var findMusicBrainzArtist = &Tool{
+	Name:  "find_musicbrainz_artist",
+	Title: "Find an artist's MusicBrainz id",
+	Description: "Candidate MusicBrainz artists for a name, best match first, with " +
+		"MusicBrainz' own disambiguation note. Candidates, not an answer: a name alone is often " +
+		"ambiguous (\"Genesis\" is three bands), and a wrong id is worse than none, so confirm " +
+		"the match with the user before writing it with edit_tracks as mbartistid or " +
+		"mbalbumartistid. Paced to one request a second.",
+	ReadOnly:  true,
+	OpenWorld: true,
+	Input: schema(props{
+		"name":  str("The artist's name. Aliases and sort names are searched too."),
+		"limit": integer("Candidates to return."),
+	}, "name"),
+	Call: func(ctx context.Context, svc *library.Service, _ Options, raw json.RawMessage) (any, error) {
+		var a struct {
+			Name  string `json:"name"`
+			Limit int    `json:"limit,omitempty"`
+		}
+		if err := decodeArgs(raw, &a); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(a.Name) == "" {
+			return nil, errors.New("an artist name is required")
+		}
+		return svc.MusicBrainzArtistSearch(ctx, strings.TrimSpace(a.Name), a.Limit)
+	},
+}
+
 // --- writing -------------------------------------------------------------
 
 var editTracks = &Tool{
@@ -296,7 +384,8 @@ var editTracks = &Tool{
 	Input: schema(merge(selectorProps("edit"), props{
 		"set": mapOfNullableStrings("Field values to write, keyed by field name: " +
 			"title, artist, albumartist, album, genre, composer, comment, year, track, " +
-			"tracktotal, disc, disctotal, compilation, and the sort forms. " +
+			"tracktotal, disc, disctotal, compilation, the sort forms, and the " +
+			"MusicBrainz ids mbartistid and mbalbumartistid. " +
 			"A null value clears the field."),
 		"dryRun": flag("Report what would change without writing. Defaults to true — pass false to write."),
 		"backup": flag("Record the overwritten values so the job can be undone. Defaults to true."),
@@ -317,6 +406,96 @@ var editTracks = &Tool{
 		})
 		return settle(ctx, svc, job, err, jobWait)
 	},
+}
+
+var editRawTags = &Tool{
+	Name:  "edit_raw_tags",
+	Title: "Edit or remove one file's native tags",
+	Description: "Change or remove tags by the native keys get_raw_tags reports — a ReplayGain " +
+		"TXXX, an encoder COMM, a freeform atom — for metadata edit_tracks has no field for. " +
+		"One track only: a native key means something only in the file it was read from. Every " +
+		"key must already be in the file; only tags listed as editable take a string, anything " +
+		"else can only be removed. Nothing is journalled, so this cannot be undone.",
+	Destructive: true,
+	Input: schema(props{
+		"id": str("The track id."),
+		"set": mapOfNullableStrings("Native key to new value, using the keys exactly as " +
+			"get_raw_tags lists them. null or an empty string removes the tag."),
+		"version": str("The version get_raw_tags or get_track reported. The server refuses if " +
+			"the file has changed since, so send it."),
+		"dryRun": flag("Report what would change without writing. Defaults to true — pass false to write."),
+	}, "id", "set"),
+	Call: func(ctx context.Context, svc *library.Service, _ Options, raw json.RawMessage) (any, error) {
+		var a struct {
+			ID      string           `json:"id"`
+			Set     library.RawEdits `json:"set"`
+			Version string           `json:"version,omitempty"`
+			DryRun  *bool            `json:"dryRun,omitempty"`
+		}
+		if err := decodeArgs(raw, &a); err != nil {
+			return nil, err
+		}
+		if !yes(a.DryRun) {
+			return svc.EditRawTags(a.ID, a.Set, a.Version)
+		}
+		return previewRawEdits(svc, a.ID, a.Set, a.Version)
+	},
+}
+
+// rawChange is one line of an edit_raw_tags dry run.
+type rawChange struct {
+	Key  string  `json:"key"`
+	From string  `json:"from"`
+	To   *string `json:"to"`
+}
+
+// previewRawEdits answers a raw tag dry run from the listing.
+//
+// The service has no dry run for this, because the HTTP client that calls it
+// has just shown a person the listing. A model has not, and the rule that every
+// write here runs dry first holds for this one too, so the checks the write
+// would make — the version, that each key is present, that a string goes only
+// where one can be typed — are made here against the same listing.
+func previewRawEdits(svc *library.Service, id string, edits library.RawEdits, version string) (any, error) {
+	if len(edits) == 0 {
+		return nil, errors.New("no changes given")
+	}
+	listing, err := svc.RawTags(id)
+	if err != nil {
+		return nil, err
+	}
+	if version != "" && version != listing.Version {
+		return nil, library.ErrConflict
+	}
+	byKey := map[string]library.RawTag{}
+	for _, t := range listing.Tags {
+		if _, seen := byKey[t.Key]; !seen {
+			byKey[t.Key] = t
+		}
+	}
+	changes := make([]rawChange, 0, len(edits))
+	for key, value := range edits {
+		t, ok := byKey[key]
+		if !ok {
+			return nil, fmt.Errorf("the file holds no %q tag; use the keys get_raw_tags lists", key)
+		}
+		if value != nil && *value == "" {
+			value = nil
+		}
+		if value != nil && !t.Editable {
+			return nil, fmt.Errorf("%q can be removed but not set", key)
+		}
+		from := t.Text
+		if from == "" {
+			from = t.Value
+		}
+		changes = append(changes, rawChange{Key: key, From: from, To: value})
+	}
+	sort.Slice(changes, func(i, j int) bool { return changes[i].Key < changes[j].Key })
+	return map[string]any{
+		"dryRun": true, "id": listing.ID, "path": listing.Path,
+		"version": listing.Version, "changes": changes,
+	}, nil
 }
 
 var splitTitles = &Tool{
@@ -447,6 +626,76 @@ var setArtwork = &Tool{
 			DryRun: yes(a.DryRun), Backup: no(a.Backup),
 		})
 		return settle(ctx, svc, job, err, jobWait)
+	},
+}
+
+var exportArtwork = &Tool{
+	Name:  "export_artwork",
+	Title: "Write embedded covers out as files",
+	Description: "The other direction from set_artwork's \"folder\": write each directory's " +
+		"embedded cover out beside the music as cover.jpg, for media servers and file browsers " +
+		"that read a folder rather than a tag. One image per directory, taken from the first " +
+		"track there that has one. The extension follows the image, so a PNG becomes cover.png.",
+	Destructive: true,
+	Input: schema(merge(selectorProps("export the covers of"), props{
+		"filename":  str(`The image's name in each directory, without a path. Default "cover.jpg".`),
+		"overwrite": flag("Replace an image already there. Off by default: a folder's existing cover is usually the one somebody chose."),
+		"dryRun":    flag("Defaults to true. Pass false to write the files."),
+	})),
+	Call: func(ctx context.Context, svc *library.Service, _ Options, raw json.RawMessage) (any, error) {
+		var a struct {
+			selectorArgs
+			Filename  string `json:"filename,omitempty"`
+			Overwrite *bool  `json:"overwrite,omitempty"`
+			DryRun    *bool  `json:"dryRun,omitempty"`
+		}
+		if err := decodeArgs(raw, &a); err != nil {
+			return nil, err
+		}
+		job, err := svc.ExportArtwork(library.ExportArtworkRequest{
+			Selector: a.selector(), Filename: a.Filename,
+			Overwrite: no(a.Overwrite), DryRun: yes(a.DryRun),
+		})
+		return settle(ctx, svc, job, err, jobWait)
+	},
+}
+
+var deleteTrack = &Tool{
+	Name:  "delete_track",
+	Title: "Delete a file",
+	Description: "Remove one file from disk and from the catalogue — the end of a " +
+		"find_duplicates session. This is a real deletion with no journal: undo_job cannot " +
+		"bring it back, only the filesystem's own snapshots or bin can. One track per call, " +
+		"by id, so a deletion is always a file somebody chose rather than a query that matched.",
+	Destructive: true,
+	Input: schema(props{
+		"id":      str("The track id."),
+		"version": str("The version get_track reported. The server refuses if the file has changed since, so send it."),
+		"dryRun":  flag("Report which file would go without deleting it. Defaults to true — pass false to delete."),
+	}, "id"),
+	Call: func(ctx context.Context, svc *library.Service, _ Options, raw json.RawMessage) (any, error) {
+		var a struct {
+			ID      string `json:"id"`
+			Version string `json:"version,omitempty"`
+			DryRun  *bool  `json:"dryRun,omitempty"`
+		}
+		if err := decodeArgs(raw, &a); err != nil {
+			return nil, err
+		}
+		t, err := svc.Get(a.ID)
+		if err != nil {
+			return nil, err
+		}
+		if a.Version != "" && a.Version != t.Version {
+			return nil, library.ErrConflict
+		}
+		if yes(a.DryRun) {
+			return map[string]any{"dryRun": true, "deleted": false, "track": t}, nil
+		}
+		if err := svc.Delete(a.ID, a.Version); err != nil {
+			return nil, err
+		}
+		return map[string]any{"dryRun": false, "deleted": true, "id": t.ID, "path": t.Path}, nil
 	},
 }
 
